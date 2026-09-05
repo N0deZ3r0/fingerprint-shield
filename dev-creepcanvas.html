@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>CreepJS canvas lie checks, verbatim</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// Copied from creepjs/src/canvas/index.ts. The section is painted red by
+//   <div class="relative col-six${lied ? ' rejected' : ''}">
+// so the only question that matters is which of these makes `lied` true.
+const F = {canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:F
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER=['profile-injector.js','mw/mw-bag.js','mw/mw-core.js','mw/mw-timezone-screen.js',
+ 'mw/mw-navigator.js','mw/mw-canvas-audio.js','mw/mw-misc.js','mw/mw-workers.js','mw/mw-geo.js',
+ 'mw/mw-adblock.js','mw/mw-cleanup.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// ---- verbatim: getPixelMods() ----
+function getPixelMods(D) {
+  const pattern1 = [], pattern2 = [];
+  const len = 8, alpha = 255;
+  const options = { willReadFrequently: true, desynchronized: true };
+  const canvas1 = D.createElement('canvas');
+  const canvas2 = D.createElement('canvas');
+  const context1 = canvas1.getContext('2d', options);
+  const context2 = canvas2.getContext('2d', options);
+  canvas1.width = len; canvas1.height = len;
+  canvas2.width = len; canvas2.height = len;
+  [...Array(len)].forEach((e, x) => [...Array(len)].forEach((e, y) => {
+    const red = ~~(Math.random()*256), green = ~~(Math.random()*256), blue = ~~(Math.random()*256);
+    const colors = `${red}, ${green}, ${blue}, ${alpha}`;
+    context1.fillStyle = `rgba(${colors})`;
+    context1.fillRect(x, y, 1, 1);
+    return pattern1.push(colors);
+  }));
+  [...Array(len)].forEach((e, x) => [...Array(len)].forEach((e, y) => {
+    const { data: [red, green, blue, alpha] } = context1.getImageData(x, y, 1, 1) || {};
+    const colors = `${red}, ${green}, ${blue}, ${alpha}`;
+    context2.fillStyle = `rgba(${colors})`;
+    context2.fillRect(x, y, 1, 1);
+    return pattern2.push(colors);
+  }));
+  const patternDiffs = [];
+  [...Array(pattern1.length)].forEach((e, i) => {
+    if (pattern1[i] != pattern2[i]) patternDiffs.push([i, pattern1[i], pattern2[i]]);
+  });
+  return { pixels: patternDiffs.length || undefined, sample: patternDiffs.slice(0, 3) };
+}
+
+// ---- verbatim: getTextMetricsFloatLie() ----
+function getTextMetricsFloatLie(context) {
+  const isFloat = (n) => n % 1 !== 0;
+  const {
+    actualBoundingBoxAscent: abba, actualBoundingBoxDescent: abbd,
+    actualBoundingBoxLeft: abbl, actualBoundingBoxRight: abbr,
+    fontBoundingBoxAscent: fbba, fontBoundingBoxDescent: fbbd,
+  } = context.measureText('') || {};
+  const vals = { abba, abbd, abbl, abbr, fbba, fbbd };
+  const lied = [abba, abbd, abbl, abbr, fbba, fbbd].find((x) => isFloat((x || 0)));
+  return { lied, vals };
+}
+
+// ---- verbatim: the cleared-canvas readback ----
+function clearedCanvasMax(D) {
+  const canvas = D.createElement('canvas');
+  const context = canvas.getContext('2d');
+  canvas.width = 50; canvas.height = 50;
+  context.font = '35px sans-serif';
+  context.fillText('\u{1F47E}', 0, 37);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const data = context.getImageData(0, 0, 8, 8).data;
+  return { max: Math.max(...data), nonZero: [...data].filter((x) => x !== 0).length, total: data.length };
+}
+
+(async () => {
+  const ifr = document.createElement('iframe'); ifr.style.display='none';
+  document.body.appendChild(ifr);
+  const D2 = ifr.contentDocument;
+
+  const cleanMods = getPixelMods(D2);
+  const cleanClear = clearedCanvasMax(D2);
+  const cleanCtx = D2.createElement('canvas').getContext('2d');
+  cleanCtx.font = '10px sans-serif';
+  const cleanTM = getTextMetricsFloatLie(cleanCtx);
+
+  for (const f of ORDER) await load(f);
+
+  const ourMods = getPixelMods(document);
+  const ourClear = clearedCanvasMax(document);
+  const ourCtx = document.createElement('canvas').getContext('2d');
+  ourCtx.font = '10px sans-serif';
+  const ourTM = getTextMetricsFloatLie(ourCtx);
+
+  const L = [];
+  const row = (n, cleanV, ourV, ok) =>
+    L.push('  ' + (ok ? 'PASS  ' : 'FAIL  ') + n.padEnd(34) + 'clean ' + String(cleanV).padEnd(16) + 'ours ' + ourV);
+
+  L.push('lied = dataLie || contextLie || imageDataLie || textMetricsLie || codePointLie');
+  L.push('       || (mods.pixels || max(getImageData(0,0,8,8)) > 0)');
+  L.push('       || getTextMetricsFloatLie()');
+  L.push('');
+  L.push('check 1a — write 64 known pixels, read each back, compare:');
+  row('mods.pixels (differing pixels)', cleanMods.pixels === undefined ? 'none' : cleanMods.pixels,
+      ourMods.pixels === undefined ? 'none' : ourMods.pixels, ourMods.pixels === undefined);
+  ourMods.sample.forEach((s) => L.push('        pixel ' + s[0] + ': wrote [' + s[1] + '] read [' + s[2] + ']'));
+  L.push('');
+  L.push('check 1b — clearRect, then every byte of an 8x8 read must be 0:');
+  row('max(getImageData(0,0,8,8).data)', cleanClear.max, ourClear.max, ourClear.max === 0);
+  L.push('        non-zero bytes: clean ' + cleanClear.nonZero + ' / ours ' + ourClear.nonZero
+       + ' of ' + ourClear.total);
+  L.push('');
+  L.push('check 2 — measureText("") — all six metrics must be integers:');
+  ['abba','abbd','abbl','abbr','fbba','fbbd'].forEach((k) => {
+    const c = cleanTM.vals[k], o = ourTM.vals[k];
+    row('measureText("").' + k, c, o, !(o % 1 !== 0));
+  });
+  row('getTextMetricsFloatLie() verdict', cleanTM.lied === undefined ? 'no lie' : cleanTM.lied,
+      ourTM.lied === undefined ? 'no lie' : ourTM.lied, ourTM.lied === undefined);
+
+  const fails = [];
+  if (ourMods.pixels !== undefined) fails.push('pixel readback (1a)');
+  if (ourClear.max !== 0) fails.push('cleared canvas (1b)');
+  if (ourTM.lied !== undefined) fails.push('measureText("") float (2)');
+  L.push('');
+  L.push(fails.length
+    ? 'VERDICT  lied = true via: ' + fails.join(', ') + '\n         → the section gets class "rejected" → red.'
+    : 'VERDICT  none of the runtime checks fire; any red must come from lieProps.');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

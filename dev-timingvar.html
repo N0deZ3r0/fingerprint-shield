@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>is getTimingResolution stable at all?</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// The detector's timing row moved from 0.09999999962747097 to 0.09999999776482582
+// between two runs of ours. We do not patch performance.now (dev-perflag never
+// lists it, dev-wasm asserts normalizeTiming was removed), so either the value is
+// not stable run to run, or something else changed. Settle it by running THEIR
+// function repeatedly in a page with no extension code loaded at all.
+(function(){
+function getTimingResolution() {
+    const maxRuns = 5000
+    let valA = 1
+    let valB = 1
+    let res
+    for (let i = 0; i < maxRuns; i++) {
+        const a = performance.now()
+        const b = performance.now()
+        if (a < b) {
+            res = b - a
+            if (res > valA && res < valB) {
+                valB = res
+            } else if (res < valA) {
+                valB = valA
+                valA = res
+            }
+        }
+    }
+    return valA
+}
+
+const RUNS = 12;
+const vals = [];
+for (let i = 0; i < RUNS; i++) vals.push(getTimingResolution());
+
+const uniq = [...new Set(vals.map(String))];
+const L = [];
+L.push('performance.now is NOT patched by us — this page loads no extension code.');
+L.push('');
+L.push('getTimingResolution() run ' + RUNS + ' times back to back:');
+vals.forEach((v, i) => L.push('  ' + String(i + 1).padStart(2) + '  ' + v));
+L.push('');
+L.push('distinct values: ' + uniq.length);
+uniq.forEach(u => L.push('   ' + u + '   × ' + vals.filter(v => String(v) === u).length));
+L.push('');
+L.push(uniq.length > 1
+  ? 'VERDICT  the value is NOT stable even within one page — it is the float64\n'
+   +'         result of subtracting two large timestamps, so which multiple of the\n'
+   +'         0.1 ms clamp comes out exact depends on where the clock happens to be.\n'
+   +'         A change in this row between runs is measurement noise, not a patch.'
+  : 'VERDICT  stable across ' + RUNS + ' runs here — a changed value would be worth explaining.');
+L.push('');
+L.push('both observed values, for reference:');
+L.push('  0.09999999962747097  ' + (uniq.includes('0.09999999962747097') ? 'seen here' : 'not seen in this batch'));
+L.push('  0.09999999776482582  ' + (uniq.includes('0.09999999776482582') ? 'seen here' : 'not seen in this batch'));
+L.push('  both are float64 neighbours of 0.1: difference = '
+  + (0.09999999962747097 - 0.09999999776482582).toExponential(3) + ' ms');
+document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

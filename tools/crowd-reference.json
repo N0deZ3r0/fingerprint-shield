@@ -1,0 +1,140 @@
+{
+  "_README": [
+    "THE POPULATION REFERENCE. Every number here was read off a named public source on a",
+    "named date, and nothing here is interpolated, rounded to taste or filled in. That rule",
+    "is the whole point: tools/probe-crowd.mjs refused to score the profiles for months",
+    "because a WRONG reference is worse than none — the same rule that keeps invented values",
+    "out of the profiles themselves. If a number is not in a source below, it is absent here",
+    "and the tool prints a dash rather than guessing.",
+    "",
+    "BOTH SOURCES ARE BIASED, and the bias is written into each entry rather than mentioned",
+    "once and forgotten. Read `bias` before using a number to argue anything.",
+    "",
+    "THE UNITS TRAP, which is why the two sources disagree and both are right. Steam reports",
+    "the PHYSICAL display resolution the OS is set to. A browser reports screen.width in CSS",
+    "pixels — physical divided by devicePixelRatio — which is why StatCounter's table is full",
+    "of resolutions no panel is manufactured in: 1536x864 is a 1920x1080 panel at 125% Windows",
+    "scaling, and 1280x720 is the same panel at 150%. Measured on this project's own rig with",
+    "--force-device-scale-factor: screen.availWidth is exactly physical/dpr. So a profile's",
+    "CLAIMED PANEL is screenW * dpr, and that is a different question from what screen.width",
+    "should be. Both are scored below, against the source that actually measures each."
+  ],
+
+  "fetched": "2026-08-30",
+
+  "screen_css_px": {
+    "source": "StatCounter Global Stats — Desktop Screen Resolution, Worldwide",
+    "url": "https://gs.statcounter.com/screen-resolution-stats/desktop/worldwide",
+    "period": "July 2026",
+    "measures": "screen.width x screen.height as the BROWSER reports it, i.e. CSS pixels",
+    "bias": [
+      "Page-view weighted, not user weighted: heavy browsers count more than light ones.",
+      "'Desktop' is StatCounter's own classification and leaks — the 384x832 row below is",
+      "plainly not a desktop panel, and it sits at 4.33%, so treat the whole table as having",
+      "a few points of misfiled traffic in it.",
+      "Worldwide. A per-country table exists and would matter, because the profile is paired",
+      "with a country; it is not recorded here."
+    ],
+    "completeness": "TOP SIX ONLY. The site renders the tail with JavaScript and it was not readable; the remaining ~51% is not recorded. A resolution absent from this list is NOT thereby rare — it is unmeasured.",
+    "rows": [
+      ["1920x1080", 22.41],
+      ["1536x864", 7.3],
+      ["1366x768", 5.45],
+      ["1280x720", 5.36],
+      ["384x832", 4.33],
+      ["1280x1200", 3.71]
+    ],
+    "exclude_from_gaps": ["384x832"],
+    "_exclude_why": "384x832 is StatCounter mis-filing mobile traffic into its desktop bucket. It is not a gap in the profile set; a desktop profile claiming it would be the defect.",
+    "notes": {
+      "1536x864": "a 1920x1080 panel at 125% scaling — dpr 1.25",
+      "1280x720": "a 1920x1080 panel at 150% scaling — dpr 1.5",
+      "384x832": "not a desktop panel; StatCounter's device classification leaking"
+    }
+  },
+
+  "ram_gb": {
+    "source": "Steam Hardware & Software Survey — System RAM",
+    "url": "https://store.steampowered.com/hwsurvey/Steam-Hardware-Software-Survey-Welcome-to-Steam",
+    "period": "July 2026",
+    "measures": "installed system RAM in GB",
+    "maps_to": "navigator.deviceMemory, which Chrome reports as the RAM rounded DOWN to a power of two. Measured on the host of this repo: 16. There is no cap at 8 in this browser — that was checked rather than assumed.",
+    "bias": [
+      "GAMERS. This is the strongest bias in the file and it points one way: Steam's",
+      "population has far more RAM than the web's. 32 GB at 36.93% is not a fact about",
+      "browsers, it is a fact about people who install Steam.",
+      "So: a value that is common HERE may be uncommon on the web, but a value that is",
+      "uncommon here is almost certainly uncommon on the web too. Use it as an upper bound",
+      "on how well-equipped a machine can be while still being ordinary."
+    ],
+    "completeness": "top four rows as published",
+    "rows": [
+      ["16", 40.97],
+      ["32", 36.93],
+      ["8", 7.98],
+      ["12", 2.51]
+    ]
+  },
+
+  "cpu_physical_cores": {
+    "source": "Steam Hardware & Software Survey — Physical CPUs",
+    "url": "https://store.steampowered.com/hwsurvey/Steam-Hardware-Software-Survey-Welcome-to-Steam",
+    "period": "July 2026",
+    "measures": "PHYSICAL cores",
+    "maps_to": "NOTHING DIRECTLY, and this entry exists to say so. navigator.hardwareConcurrency reports LOGICAL processors — 6 physical cores with SMT is 12, and Intel's hybrid parts break even that rule. The host of this repo reports 18. No public source measuring the logical count was found, so the profiles' 4/8/12/16 are NOT scored against this table; it is here as context and as a marker that the right table is missing.",
+    "bias": ["GAMERS, as above."],
+    "completeness": "top four rows as published",
+    "rows": [
+      ["8", 27.85],
+      ["6", 27.52],
+      ["4", 13.12],
+      ["10", 7.45]
+    ]
+  },
+
+  "gpu_model": {
+    "source": "Steam Hardware & Software Survey — Video Card Description",
+    "url": "https://store.steampowered.com/hwsurvey/Steam-Hardware-Software-Survey-Welcome-to-Steam",
+    "period": "July 2026",
+    "measures": "primary GPU model",
+    "bias": [
+      "GAMERS, and here the bias is disqualifying rather than merely strong. Steam's list is",
+      "dominated by discrete NVIDIA parts because its population buys them; the web at large",
+      "runs mostly on Intel integrated graphics. So this table says which DISCRETE card is",
+      "commonest among gamers, and says nothing usable about how common a GPU string is on",
+      "the web.",
+      "Consequence for this project: the two Intel rows cannot be scored from here AT ALL,",
+      "and the two NVIDIA rows can only be compared to each other. No source measuring GPU",
+      "share across general web traffic was found."
+    ],
+    "completeness": "top four rows as published; every one of them is discrete NVIDIA, which is itself the evidence for the bias above",
+    "rows": [
+      ["NVIDIA GeForce RTX 3060", 3.71],
+      ["NVIDIA GeForce RTX 4060 Laptop", 3.44],
+      ["NVIDIA GeForce RTX 4060", 3.43],
+      ["NVIDIA GeForce RTX 3050", 3.04]
+    ]
+  },
+
+  "physical_panel": {
+    "source": "Steam Hardware & Software Survey — Primary Display Resolution",
+    "url": "https://store.steampowered.com/hwsurvey/Steam-Hardware-Software-Survey-Welcome-to-Steam",
+    "period": "July 2026",
+    "measures": "PHYSICAL primary display resolution, i.e. screenW * dpr for a browser",
+    "bias": [
+      "GAMERS — over-represents large and high-refresh panels, and under-represents the",
+      "1366x768 office laptop almost to nothing."
+    ],
+    "completeness": "top four rows as published",
+    "rows": [
+      ["1920x1080", 51.1],
+      ["2560x1440", 21.46],
+      ["2560x1600", 5.1],
+      ["3840x2160", 4.95]
+    ],
+    "notes": {
+      "7680x4320": "NOT in the table at any position. 8K panels exist as products but do not appear in a four-row top list where the fourth row is already at 4.95%.",
+      "2880x1620": "NOT in the table either, but it is a REAL manufactured panel — Lenovo ThinkPad W540/W550/T540p, ASUS Vivobook Pro 15 OLED '2.8K'. Rare, not invented."
+    }
+  }
+}

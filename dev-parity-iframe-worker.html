@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AFP parity — iframe / worker</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 1.25rem; }
+    pre { background: #111; color: #eee; padding: 12px; overflow: auto; font-size: 12px; }
+    .ok { color: #0a0; font-weight: 700; }
+    .bad { color: #c00; font-weight: 700; }
+    button { margin: 4px 8px 4px 0; padding: 8px 14px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+    td, th { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Fingerprint Shield — iframe / worker parity</h1>
+  <p>Load this page with the extension enabled. Click Run after Apply / F5.</p>
+  <button id="run">Run parity check</button>
+  <button id="stealthHint" type="button">Note: toggle stealth in popup, F5, Run again</button>
+  <div id="status"></div>
+  <table id="tbl"><thead><tr><th>field</th><th>top</th><th>iframe</th><th>blank</th><th>worker</th><th>ok</th></tr></thead><tbody></tbody></table>
+  <pre id="raw"></pre>
+  <script src="afp-parity-console.js"></script>
+  <script>
+    document.getElementById('run').onclick = async function () {
+      var r = await (window.__AFP_PARITY__ && false, eval('0'), (async function () {
+        // re-run by injecting the checker body if already executed
+        return await (async function () {
+          // afp-parity-console.js auto-runs; reload logic:
+          location.hash = '#run-' + Date.now();
+          return null;
+        })();
+      })());
+      // Always load fresh via dynamic script
+      var s = document.createElement('script');
+      s.src = 'afp-parity-console.js?t=' + Date.now();
+      s.onload = function () {
+        setTimeout(function () {
+          var rep = window.__AFP_PARITY__;
+          if (!rep) {
+            document.getElementById('status').innerHTML = '<span class="bad">No report — is the extension active?</span>';
+            return;
+          }
+          document.getElementById('status').innerHTML = rep.allPass
+            ? '<span class="ok">PASS</span> mode=' + rep.mode
+            : '<span class="bad">FAIL</span> mode=' + rep.mode;
+          var tb = document.querySelector('#tbl tbody');
+          tb.innerHTML = '';
+          rep.rows.forEach(function (row) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + row.field + '</td><td>' + row.top + '</td><td>' + row.iframe +
+              '</td><td>' + row.blank + '</td><td>' + row.worker + '</td><td>' +
+              (row.pass ? '✓' : '✗') + '</td>';
+            tb.appendChild(tr);
+          });
+          document.getElementById('raw').textContent = JSON.stringify(rep, null, 2);
+        }, 100);
+      };
+      document.body.appendChild(s);
+    };
+  </script>
+</body>
+</html>

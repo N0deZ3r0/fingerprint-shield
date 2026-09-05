@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Who Am I — Fingerprint Shield</title>
+  <!-- ui.css carries the shared tokens and must come first; the page sheet only
+       adds rules. See the header of ui.css for why the three surfaces share one file. -->
+  <link rel="stylesheet" href="ui.css" />
+  <link rel="stylesheet" href="whoami.css" />
+</head>
+<body>
+
+<!--
+  Grouped by what a VISITOR learns, not by which API answers.
+
+  The old layout was eight equal cards named after the browser interfaces they read —
+  Navigator, Hardware, Screen, WebGL, Location, Canvas, WebRTC, Signals — which is the
+  shape of the code, not of the question the page exists to answer. A user opening this
+  wants "who do sites think I am", and the parts of that answer do not line up with API
+  boundaries: `platform` and `language` identify you, `cpuCores` and `gpuRenderer`
+  describe your machine, `timezone` places you.
+
+  Every id whoami.js writes is still here and still unique — it fills 36 of them by id
+  and rebuilds #protectionsGrid and #parityOut wholesale. Nothing was renamed; fields
+  moved between sections.
+-->
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2.6 4.4 5.8v5.6c0 4.7 3.2 8.4 7.6 10 4.4-1.6 7.6-5.3 7.6-10V5.8Z"/>
+          <path d="m8.9 11.9 2.2 2.2 4-4.4"/>
+        </svg>
+      </span>
+      <span>
+        <b>Who Am I</b>
+        <i>Что видят сайты с текущим профилем</i>
+      </span>
+    </div>
+    <div class="topbar-actions">
+      <span class="protection-status" id="protectionStatus">
+        <span class="status-indicator active"></span>
+        <span class="status-text">Active</span>
+      </span>
+      <button type="button" class="btn ghost" id="refreshBtn">Обновить</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ── identity ─────────────────────────────────────────────────────── -->
+  <!-- The hash is the number a visitor is recognised by, so it is the one thing on the
+       page set at display size. The three facts beside it are the shortest honest answer
+       to "who am I to a site": the OS it thinks I run, the language it will serve me, and
+       where it thinks I am. -->
+  <section class="identity">
+    <div class="identity-hash">
+      <span class="eyebrow">Fingerprint</span>
+      <code class="hash" id="fingerprintHash" data-copy>…</code>
+      <span class="copyhint">нажмите, чтобы скопировать</span>
+    </div>
+    <dl class="identity-facts">
+      <div><dt>Платформа</dt><dd id="platform">…</dd></div>
+      <div><dt>Язык</dt><dd id="language">…</dd></div>
+      <div><dt>Часовой пояс</dt><dd id="timezone">…</dd></div>
+    </dl>
+    <!-- The UA lives inside the identity block rather than in a card of its own: it is the
+         same answer as the three facts above, spelled out, and a separate card spent a
+         heading, two borders and ~120px of page on one string. -->
+    <div class="identity-ua">
+      <span class="eyebrow">User-Agent</span>
+      <code class="v mono ua" id="userAgent" data-copy>…</code>
+    </div>
+  </section>
+
+  <!-- ── machine ──────────────────────────────────────────────────────── -->
+  <h2 class="section-h">Машина</h2>
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>Оборудование</h2><span class="badge">spoofed</span></div>
+      <div class="stats">
+        <div class="stat"><span class="stat-v" id="cpuCores">—</span><span class="stat-l">ядра CPU</span></div>
+        <div class="stat"><span class="stat-v" id="memory">—</span><span class="stat-l">память, ГБ</span></div>
+        <div class="stat"><span class="stat-v" id="touchPoints">—</span><span class="stat-l">касания</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Экран</h2></div>
+      <div class="rows">
+        <div class="row"><span class="k">Разрешение</span><span class="v" id="resolution">…</span></div>
+        <div class="row split">
+          <div><span class="k">Глубина цвета</span><span class="v" id="colorDepth">…</span></div>
+          <div><span class="k">Pixel ratio</span><span class="v" id="pixelRatio">…</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Графика</h2><span class="badge" id="webglStatus">…</span></div>
+      <div class="rows">
+        <div class="row"><span class="k">Vendor</span><span class="v" id="gpuVendor">…</span></div>
+        <div class="row"><span class="k">Renderer</span><span class="v mono" id="gpuRenderer">…</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Локаль и место</h2><span class="badge" id="locationStatus">…</span></div>
+      <div class="rows">
+        <div class="row"><span class="k">Смещение UTC</span><span class="v" id="timezoneOffset">…</span></div>
+        <div class="row"><span class="k">Геолокация</span><span class="v" id="geolocation">…</span></div>
+        <div class="row"><span class="k">Список языков</span><span class="v" id="languages">…</span></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ── fingerprints ─────────────────────────────────────────────────── -->
+  <h2 class="section-h">Отпечатки и сигналы</h2>
+  <div class="grid">
+    <section class="card">
+      <div class="card-head"><h2>Canvas</h2><span class="badge" id="canvasStatus">…</span></div>
+      <div class="rows">
+        <div class="row"><span class="k">Режим</span><span class="v" id="canvasProtection">…</span></div>
+        <div class="row"><span class="k">Шум</span><span class="v" id="canvasNoise">…</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>WebRTC</h2><span class="badge" id="webrtcStatus">…</span></div>
+      <div class="rows">
+        <div class="row"><span class="k">Режим</span><span class="v" id="webrtcMode">…</span></div>
+        <div class="row"><span class="k">Утечка IP</span><span class="v" id="webrtcLeak">…</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Прочие сигналы</h2></div>
+      <div class="rows">
+        <div class="row split">
+          <div><span class="k">Do Not Track</span><span class="v" id="dntSignal">…</span></div>
+          <div><span class="k">Global Privacy Control</span><span class="v" id="gpcSignal">…</span></div>
+        </div>
+        <div class="row split">
+          <div><span class="k">Видимость</span><span class="v" id="visibilitySignal">…</span></div>
+          <div><span class="k">window.name</span><span class="v" id="windowNameSignal">…</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Активные модули</h2></div>
+      <div class="chips" id="protectionsGrid"></div>
+    </section>
+  </div>
+
+  <!-- ── scope parity ─────────────────────────────────────────────────── -->
+  <!--
+    The one invariant everything else rests on: a page can read the same signal from its
+    window, from a Worker and from an iframe, and if the three disagree the spoof is worse
+    than none — a site does not need to know the true value to know it is being lied to.
+    Every dev-*.html page checks this, but only for whoever runs the suite. This runs it
+    on a real site, in the browser the user actually browses with.
+
+    It cannot run here: this page is chrome-extension://, which the content scripts do not
+    match, so its own navigator is unpatched. The probe is injected into a chosen tab.
+
+    Given the full width and a heading of its own because it is the only thing on the page
+    that MEASURES rather than reports — everything above is a readout of stored state.
+  -->
+  <section class="card parity-card">
+    <div class="card-head">
+      <h2>Согласованность областей</h2>
+      <span class="badge" id="parityBadge">не проверено</span>
+    </div>
+    <p class="sub" id="parityHint">
+      Сравнивает окно, Worker и iframe по ключевым сигналам на выбранной вкладке.
+      Расхождение — это то, что сайту достаточно увидеть, чтобы понять, что его обманывают.
+    </p>
+    <div class="parity-controls">
+      <select id="parityTab" class="sel" aria-label="Вкладка для проверки"></select>
+      <button type="button" class="btn" id="parityBtn">Проверить</button>
+    </div>
+    <div id="parityOut"></div>
+  </section>
+
+  <footer class="footer">
+    <a href="options.html">Настройки модулей</a>
+    <span>·</span>
+    <span>Fingerprint Shield</span>
+  </footer>
+</main>
+
+<script src="whoami.js"></script>
+</body>
+</html>

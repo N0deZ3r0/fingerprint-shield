@@ -1,0 +1,342 @@
+/* Fingerprint Shield — popup
+   Dark-first, adapts to a light OS theme. Every colour is a token so the two themes stay
+   in step; only the tokens are redefined below, never the rules.
+
+   The DOM contract is popup.js's, not this file's: it sets `chip tag on|off` on the module
+   badges, `open` on either picker, `active` on .mode, `selected` on .option, `is-off` on the hero, `on` on the
+   switch, and it REWRITES tabBadge.className to exactly "badge pill" (+ " warn") and
+   statusBar.className to "status-bar" (+ " err"). Those class names are the only hooks that
+   survive a re-render — style them, and do not expect any others to be there. */
+/* Tokens live in ui.css, linked ahead of this file — one palette for the popup, the
+   options page and Who Am I. They used to be written out here as well, which is how the
+   three surfaces ended up on different blues and only one of them answering
+   prefers-color-scheme. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 360px;
+  background: var(--bg);
+  color: var(--tx);
+  font: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app { padding: 11px; display: flex; flex-direction: column; gap: 6px; }
+
+/* keyboard focus is visible everywhere, mouse focus never is */
+:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; border-radius: 8px; }
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── hero ─────────────────────────────────────────────────────────────── */
+.hero {
+  position: relative;
+  background:
+    radial-gradient(130% 120% at 6% -10%, var(--ok-bg), transparent 62%),
+    var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 11px 12px 10px;
+  box-shadow: var(--edge);
+  overflow: hidden;
+}
+/* A hairline of the state colour along the top edge — the one place the whole popup
+   states its status without words. */
+.hero::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, var(--ok), transparent 72%);
+}
+.hero.is-off { background: radial-gradient(130% 120% at 6% -10%, var(--wn-bg), transparent 62%), var(--card); }
+.hero.is-off::before { background: linear-gradient(90deg, var(--wn), transparent 72%); }
+
+.hero-row { display: flex; align-items: center; gap: 10px; }
+
+.mark {
+  flex: 0 0 auto; width: 36px; height: 36px; border-radius: 11px;
+  display: grid; place-items: center;
+  background: var(--ok-bg); color: var(--ok);
+  box-shadow: var(--edge), 0 0 0 1px rgba(53, 223, 160, .16);
+}
+.mark svg { width: 20px; height: 20px; }
+.hero.is-off .mark { background: var(--wn-bg); color: var(--wn); box-shadow: var(--edge), 0 0 0 1px rgba(246, 198, 105, .18); }
+
+.hero-txt { flex: 1; min-width: 0; display: block; }
+.hero-ttl { display: block; font-size: 14px; font-weight: 660; letter-spacing: -.15px; }
+.hero-sub { display: block; font-size: 11.5px; color: var(--mu); margin-top: 2px; }
+
+.hero-site {
+  display: flex; align-items: center; gap: 7px;
+  margin-top: 7px; padding: 6px 9px;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: var(--r-xs);
+  font-size: 11.5px; color: var(--tx-2); min-width: 0;
+}
+.hero-site svg { width: 13px; height: 13px; flex: 0 0 auto; color: var(--mu); }
+.hero-site span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* This pill names the MODE, not the protection state, so it is deliberately neutral: when
+   the shield goes amber a green pill beside it reads as a contradiction. Exactly one
+   element carries status colour — the shield. */
+.badge.pill {
+  flex: 0 0 auto; font-size: 10px; font-weight: 660; letter-spacing: .3px;
+  padding: 4px 9px; border-radius: 99px;
+  background: var(--raise); color: var(--tx-2);
+  border: 1px solid var(--line); box-shadow: var(--edge);
+}
+/* stealth is the one mode worth calling out — fewer patches applied */
+.badge.pill.warn { background: var(--wn-bg); color: var(--wn); border-color: transparent; }
+
+.note {
+  font-size: 11.5px; color: var(--wn); background: var(--wn-bg);
+  border: 1px solid var(--line); border-radius: var(--r-s); padding: 9px 11px;
+}
+.note[hidden] { display: none !important; }
+
+/* [CLEANUP] The module-chip block lived here: .chips grid, .chips span/.chip/.tag and the
+   state dot. All six chips were removed from popup.html — the hero line already carries
+   the same answer — and popup.js no longer emits `chip`/`tag`/`on`/`off` on anything, so
+   every one of these rules styled an element that cannot exist. */
+
+/* ── cards ────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 8px 11px;
+  display: flex; flex-direction: column; gap: 7px;
+  box-shadow: var(--edge);
+}
+/* [CLEANUP] .card-h lived here — the section heading. The device card was its only user
+   and that heading is gone (see the note in popup.html), so these rules styled nothing.
+   options.html and whoami.html use `card-head`, a different class in different
+   stylesheets, so nothing else depended on it. */
+.hint { font-size: 11px; color: var(--mu); }
+
+/* ── segmented mode switch ────────────────────────────────────────────── */
+.seg {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r-s); padding: 3px;
+}
+.mode {
+  border: 0; background: transparent; color: var(--mu);
+  font: inherit; font-size: 12px; font-weight: 620;
+  padding: 6px 4px; border-radius: 7px; cursor: pointer;
+  transition: color .15s, background .15s, box-shadow .15s;
+}
+.mode:hover { color: var(--tx-2); }
+.mode.active {
+  background: var(--raise); color: var(--tx);
+  box-shadow: var(--edge), 0 1px 3px rgba(0, 0, 0, .3);
+}
+
+/* The mode switch is a two-state toggle that explains itself, so it gets less room than the
+   sections carrying real content. Scoped to this card rather than done by shrinking the
+   shared .card/.seg rules, which would drag every other section with it. */
+.card.compact { padding: 6px 9px; gap: 4px; }
+.card.compact .mode { padding: 5px 4px; font-size: 11.5px; }
+.card.compact .hint { font-size: 10.5px; }
+
+/* ── device cards ─────────────────────────────────────────────────────── */
+/* The profile picker shares the country picker's classes below (.country-select,
+   .country-btn, .dropdown, .option-list, .option) — one look, one set of rules. The tile
+   grid that stood here (.devices / .prof) is gone: two tiles per row meant a fifth profile
+   opened a third row and pushed the popup past Chrome's 600px cap. Only what is specific
+   to a machine row lives here: the icon box in the button and the two-line option. */
+.prof-ic {
+  flex: 0 0 auto; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  color: var(--ac); background: var(--ac-bg); border-radius: var(--r-xs);
+}
+.prof-ic svg { width: 16px; height: 16px; }
+.option .opt-2 { display: flex; flex-direction: column; min-width: 0; }
+.option .sub {
+  display: block; font-size: 10.5px; font-weight: 400; color: var(--mu); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.option.selected .sub { color: var(--ac); }
+/* The profile picker is the LAST control before the footer, so its list opens UPWARD: a
+   list opening down from there runs past the bottom edge of the popup, and Chrome answers
+   a document taller than its window with a scrollbar — the very thing the picker replaced
+   the tile grid to avoid. Above it there are ~330px of cards to cover, so the list can be
+   taller than the country one and still show most of the seven rows at once. */
+#profileSelect .dropdown { top: auto; bottom: calc(100% + 6px); }
+#profileList { max-height: 264px; }
+/* the "this machine" row: hardware is NOT substituted, and the option says so in amber */
+.option .tag {
+  flex: 0 0 auto; font-size: 9.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+  color: var(--wn); background: var(--wn-bg); border-radius: var(--r-xs); padding: 2px 5px;
+}
+.warnings {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 10.5px; color: var(--wn); background: var(--wn-bg);
+  border-radius: var(--r-s); padding: 8px 10px;
+}
+.warnings[hidden] { display: none !important; }
+.warning { line-height: 1.4; }
+
+/* ── country picker ───────────────────────────────────────────────────── */
+.country-select { position: relative; }
+.country-btn {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: var(--r-s);
+  padding: 8px 10px; color: var(--tx); font: inherit; cursor: pointer; text-align: left;
+  transition: border-color .15s, background .15s;
+}
+.country-btn:hover { border-color: var(--line-str); background: var(--raise); }
+.country-select.open .country-btn { border-color: var(--ac); background: var(--raise); }
+.country-code {
+  flex: 0 0 auto; font-size: 11px; font-weight: 720; letter-spacing: .4px;
+  color: var(--ac); background: var(--ac-bg); border-radius: var(--r-xs); padding: 6px 8px;
+}
+.country-meta { flex: 1; min-width: 0; }
+.country-name { display: block; font-size: 12.5px; font-weight: 620; }
+.country-tz {
+  display: block; font-size: 10.5px; color: var(--mu); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The exit-country disagreement rides in this line instead of a new row: the popup rests
+   at 590px against Chrome's 600px cap, so a row would have put the warning behind a
+   scrollbar. Only the colour changes — nowrap + ellipsis above already guarantee one line
+   whatever the text says, which is what keeps the height fixed. */
+.country-tz.warn { color: var(--wn); font-weight: 600; }
+.chev { width: 16px; height: 16px; color: var(--mu); flex: 0 0 auto; transition: transform .18s; }
+.country-select.open .chev { transform: rotate(180deg); }
+
+.dropdown {
+  display: none; position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 6px);
+  background: var(--card); border: 1px solid var(--line-str); border-radius: var(--r);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.country-select.open .dropdown { display: block; }
+
+.search-wrap {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 11px; border-bottom: 1px solid var(--line); background: var(--card-2);
+}
+.search-wrap svg { width: 14px; height: 14px; color: var(--mu); flex: 0 0 auto; }
+.menu-search {
+  flex: 1; min-width: 0; border: 0; background: transparent; color: var(--tx);
+  padding: 10px 0; font: inherit; font-size: 12.5px; outline: 0;
+}
+.menu-search::placeholder { color: var(--mu); }
+.menu-search::-webkit-search-cancel-button { filter: grayscale(1) opacity(.5); }
+
+.option-list { max-height: 168px; overflow: auto; overscroll-behavior: contain; padding: 4px; }
+.option-list::-webkit-scrollbar { width: 9px; }
+.option-list::-webkit-scrollbar-thumb { background: var(--line-str); border-radius: 99px; border: 3px solid transparent; background-clip: content-box; }
+.option {
+  width: 100%; display: flex; gap: 8px; align-items: center; justify-content: space-between;
+  border: 0; background: 0; color: var(--tx); padding: 8px 9px; border-radius: var(--r-xs);
+  font: inherit; font-size: 12.5px; cursor: pointer; text-align: left;
+}
+.option:hover { background: var(--card-2); }
+.option.selected { background: var(--ac-bg); color: var(--ac); font-weight: 620; }
+.option .code { font-size: 10.5px; font-weight: 720; color: var(--mu); }
+.option.selected .code { color: var(--ac); }
+
+/* ── row card (WebRTC) ────────────────────────────────────────────────── */
+.card.row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 11px; }
+/* Both per-site switches share one card and one host line — see popup.html. Tighter than
+   two .card.row blocks by ~40px, which is what put the popup back under Chrome's 600. */
+.card.site { padding: 7px 11px; gap: 6px; }
+.card.site .hint { margin-bottom: 1px; }
+.row-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.row-t.warn { color: #d98324; }
+.row-t.warn svg { color: #d98324; }
+.row-t.off { opacity: 0.5; }
+.row-txt { min-width: 0; }
+.row-t {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; font-weight: 620; color: var(--tx);
+}
+.row-t svg { width: 15px; height: 15px; color: var(--mu); }
+.row-txt .hint {
+  margin-top: 2px; max-width: 220px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.switch {
+  flex: 0 0 auto; width: 44px; height: 25px; border-radius: 99px; border: 1px solid var(--line);
+  background: var(--raise); position: relative; cursor: pointer; padding: 0;
+  box-shadow: var(--edge);
+  transition: background .18s, border-color .18s;
+}
+.knob {
+  position: absolute; top: 2px; left: 2px; width: 19px; height: 19px;
+  border-radius: 50%; background: var(--mu);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+  transition: transform .2s cubic-bezier(.3, 1.4, .6, 1), background .2s;
+}
+.switch.on { background: var(--ok-bg); border-color: transparent; }
+.switch.on .knob { transform: translateX(19px); background: var(--ok); }
+
+/* ── actions ──────────────────────────────────────────────────────────── */
+.foot { display: flex; flex-direction: column; gap: 8px; margin-top: 1px; }
+.cta {
+  width: 100%; border: 0; border-radius: var(--r-s); padding: 10px;
+  font: inherit; font-size: 13.5px; font-weight: 660; letter-spacing: .1px;
+  color: #fff; cursor: pointer;
+  background: linear-gradient(180deg, var(--ac), var(--ac-2));
+  box-shadow: 0 6px 18px var(--ac-gl), inset 0 1px 0 rgba(255, 255, 255, .18);
+  transition: filter .15s, box-shadow .15s, transform .1s;
+}
+.cta:hover { filter: brightness(1.08); box-shadow: 0 8px 22px var(--ac-gl), inset 0 1px 0 rgba(255, 255, 255, .22); }
+.cta:active { transform: translateY(1px); box-shadow: 0 3px 10px var(--ac-gl); }
+.cta:disabled { opacity: .5; cursor: default; box-shadow: none; filter: none; transform: none; }
+
+.links { display: flex; align-items: center; justify-content: center; gap: 11px; }
+.links a { font-size: 11.5px; color: var(--mu); text-decoration: none; transition: color .15s; }
+.links a:hover { color: var(--ac); }
+.sep { width: 3px; height: 3px; border-radius: 50%; background: var(--line-str); }
+
+/* A transient message must not resize a window that Chrome caps at 600px. In the flow it
+   added 53px on every click — measured — which is exactly what put the scrollbar back the
+   moment anyone touched a switch. So it is taken out of the flow: zero effect on layout.
+
+   [FIX the-status-message-sat-on-the-apply-button] It used to be `position: fixed` against
+   the VIEWPORT, at bottom: 11px, and 37px tall. Measured with the real popup geometry:
+
+       Apply button   515 → 555
+       status bar     552 → 589      3px on the button, and all 16px of the links row
+
+   So it covered the control the user had just pressed and might press again, and both
+   footer links with it. Anchoring to the VIEWPORT was the mistake: the popup's height is
+   its content height, so where the bar lands depends on how tall the page happens to be,
+   and the button is right above the bottom edge.
+
+   It is absolutely positioned inside .foot now, so the geometry is structural rather than
+   arithmetic and holds at any popup height.
+
+   [FIX the-status-message-had-nowhere-to-land] Three positions were tried by moving it a
+   little each time — over the button, over the footer links, over the profile tiles — and
+   each one landed on something, because at 590px of content in a 600px window this popup
+   has no slack anywhere near the bottom. The answer came from measuring the whole layout
+   instead of nudging:
+
+       11-111   hero            <- nothing interactive at all
+      117-187   country card    countryBtn
+      193-288   site card       webrtcToggle, swToggle
+      294-362   mode card       two mode buttons
+      368-508   profiles card   four tiles
+      515-579   footer          applyBtn, Настройки, Who Am I
+
+   The hero is the ONLY band with no control in it, and it is 100px tall against a 21px
+   bar. So the message goes there. `top` is also the one viewport edge that does not move:
+   the popup's height is its content height, so anchoring to the bottom made the landing
+   spot depend on how tall the page happened to be — which is what made this take three
+   tries. Covering "Защита активна" for two seconds costs nothing; it is a restatement of
+   what the switches below already show. */
+.status-bar {
+  position: fixed; left: 11px; right: 11px; top: 11px; z-index: 50;
+  text-align: center; font-size: 11px; font-weight: 620; line-height: 15px;
+  padding: 3px 8px; border-radius: var(--r-s);
+  background: var(--ok-bg); color: var(--ok);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.status-bar.err { background: var(--er-bg); color: var(--er); }
+.status-bar[hidden] { display: none !important; }
+
+/* [FIX the-off-state-was-invisible] The WebRTC row's hint when protection is OFF for the
+   current site. The switch alone did not read as a state anyone could notice a week later
+   — see the note in popup.js updateWebrtcToggle. */
+.hint.warn {
+  color: #d98324;
+  font-weight: 600;
+}

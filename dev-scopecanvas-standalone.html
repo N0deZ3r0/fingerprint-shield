@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>canvas row by worker kind (standalone)</title></head>
+<body style="font:13px/1.5 monospace;white-space:pre-wrap">
+<pre id="out">running…</pre>
+<script>
+// STANDALONE — no server, no test harness. Open directly in the browser that has
+// the extension installed.
+//
+// A plain blob worker agreed with the window, yet CreepJS still split. CreepJS
+// does NOT use a plain blob worker: its Dedicated row comes from a NESTED blob
+// worker (a worker that spawns a second worker and relays its answer) and its
+// Shared row from a SharedWorker. This page runs the detector's canvas probe in
+// all four scopes so we can see which construction diverges.
+const hashMini = (x) => {
+  if (!x) return x;
+  const json = `${JSON.stringify(x)}`;
+  const hash = json.split('').reduce((hash, char, i) => {
+    return Math.imul(31, hash) + json.charCodeAt(i) | 0;
+  }, 0x811c9dc5);
+  return ('0000000' + (hash >>> 0).toString(16)).substr(-8);
+};
+
+// verbatim from creepjs getWorkerData(), trimmed to what the canvas row needs
+const PROBE = `
+async function probe() {
+  let canvasData;
+  try {
+    const canvas = new OffscreenCanvas(500, 200);
+    const context = canvas.getContext('2d');
+    context.font = '14px Arial';
+    context.fillText('\u{1F603}', 0, 20);
+    context.fillStyle = 'rgba(0, 0, 0, 0)';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const blob = await canvas.convertToBlob();
+    const reader = new FileReader();
+    reader.readAsDataURL(blob);
+    canvasData = await new Promise((r) => { reader.onloadend = () => r(reader.result); });
+  } catch (e) { canvasData = 'ERR ' + (e && e.message || e); }
+  return { canvas: canvasData, hc: navigator.hardwareConcurrency, ua: navigator.userAgent.slice(-24) };
+}`;
+eval(PROBE);
+
+// --- the three worker constructions CreepJS actually uses ---
+function plainWorker() {
+  return new Promise((r) => {
+    const src = PROBE + `\nonmessage = () => { probe().then((d) => postMessage(d)); };`;
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'application/javascript' })));
+      w.onmessage = (e) => r(e.data);
+      w.onerror = () => r({ err: 'worker error' });
+      w.postMessage(1);
+      setTimeout(() => r({ err: 'timeout' }), 20000);
+    } catch (e) { r({ err: String(e) }); }
+  });
+}
+
+function nestedWorker() {
+  return new Promise((r) => {
+    const inner = PROBE + `\n(async function(){ postMessage(await probe()); close(); })();`;
+    const outer = `
+      !function(){
+        const inner = ${JSON.stringify(inner)};
+        const w = new Worker(URL.createObjectURL(new Blob([inner], { type: 'application/javascript' })));
+        w.onmessage = (m) => { w.terminate(); postMessage(m.data); close(); };
+        w.onerror = () => { postMessage({ err: 'inner worker error' }); close(); };
+      }();`;
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([outer], { type: 'application/javascript' })));
+      w.onmessage = (e) => r(e.data);
+      w.onerror = () => r({ err: 'outer worker error' });
+      setTimeout(() => r({ err: 'timeout' }), 20000);
+    } catch (e) { r({ err: String(e) }); }
+  });
+}
+
+function sharedWorker() {
+  return new Promise((r) => {
+    if (typeof SharedWorker === 'undefined') return r({ err: 'no SharedWorker' });
+    const src = PROBE + `\nonconnect = (m) => { const p = m.ports[0]; probe().then((d) => p.postMessage(d)); };`;
+    try {
+      const w = new SharedWorker(URL.createObjectURL(new Blob([src], { type: 'application/javascript' })));
+      w.port.start();
+      w.port.onmessage = (e) => r(e.data);
+      setTimeout(() => r({ err: 'timeout' }), 20000);
+    } catch (e) { r({ err: String(e) }); }
+  });
+}
+
+(async () => {
+  const L = [];
+  const win = await probe();
+  const plain = await plainWorker();
+  const nested = await nestedWorker();
+  const shared = await sharedWorker();
+
+  const rows = [
+    ['window', win],
+    ['dedicated (plain blob)', plain],
+    ['dedicated (NESTED blob) — CreepJS uses this', nested],
+    ['SharedWorker — CreepJS uses this', shared],
+  ];
+
+  L.push('CreepJS canvas probe (OffscreenCanvas 500x200 -> convertToBlob),');
+  L.push('hashed the way the detector hashes it, in each scope it actually uses.');
+  L.push('');
+  L.push('  scope                                          canvas     hwConc');
+  rows.forEach(([name, d]) => {
+    if (!d || d.err) { L.push('  ' + name.padEnd(46) + 'ERR ' + (d && d.err)); return; }
+    L.push('  ' + name.padEnd(46) + hashMini(d.canvas) + '   ' + d.hc);
+  });
+
+  const ok = (d) => d && !d.err && typeof d.canvas === 'string';
+  const h = (d) => ok(d) ? hashMini(d.canvas) : null;
+  L.push('');
+  [['plain blob', plain], ['nested blob', nested], ['SharedWorker', shared]].forEach(([n, d]) => {
+    if (!ok(d)) return;
+    L.push('  window vs ' + n.padEnd(14) + (h(d) === h(win) ? 'match' : '<<< SPLIT'));
+  });
+  L.push('');
+  L.push('  hwConcurrency must be the SPOOFED value in every row. A row showing the');
+  L.push('  machine\'s real core count means the patch never reached that scope, and');
+  L.push('  everything else in that row is meaningless.');
+  L.push('');
+  // ---- the decisive one: is the window's WASM seeded with the same value the
+  // worker uses? The worker noises with profile.noiseSeed straight out of
+  // sessionStorage. The window noises through window.__w0 (WASM), seeded by the
+  // background script via its own, separate computation. If those two disagree the
+  // canvas row splits and nothing about the read path can fix it.
+  L.push('');
+  L.push('--- seed check (the one that matters) ---');
+  try {
+    const raw = sessionStorage.getItem('v.ui.s');
+    const prof = raw ? JSON.parse(raw) : null;
+    const seed = prof && typeof prof.noiseSeed === 'number' ? prof.noiseSeed >>> 0 : null;
+    L.push('  profile.noiseSeed (what the WORKER uses): ' + (seed === null ? 'MISSING' : seed));
+    const W = window.__w0;
+    L.push('  window.__w0 (WASM) present: ' + !!(W && W.addCanvasNoise));
+    if (seed !== null && W && W.addCanvasNoise) {
+      // one known 8x8 buffer, noised both ways
+      const mk = () => {
+        const d = new ImageData(8, 8);
+        for (let i = 0; i < d.data.length; i += 4) {
+          d.data[i] = 100; d.data[i+1] = 150; d.data[i+2] = 200; d.data[i+3] = 255;
+        }
+        return d;
+      };
+      const wasm = mk(); W.addCanvasNoise(wasm, 0, 0);
+      const js = mk();
+      const hp = (x, y, s) => {
+        let h = (s ^ ((x + 1) * 0x27D4EB2F) ^ ((y + 1) * 0x85EBCA6B)) >>> 0;
+        h = Math.imul(h ^ (h >>> 15), 0x2545F491) >>> 0;
+        return (h ^ (h >>> 13)) >>> 0;
+      };
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+        const i = (y * 8 + x) * 4, hh = hp(x, y, seed);
+        js.data[i]   = Math.max(0, Math.min(255, js.data[i]   + ((hh & 3) - 1)));
+        js.data[i+1] = Math.max(0, Math.min(255, js.data[i+1] + ((hh >>> 4 & 3) - 1)));
+        js.data[i+2] = Math.max(0, Math.min(255, js.data[i+2] + ((hh >>> 8 & 3) - 1)));
+      }
+      let diff = 0;
+      for (let i = 0; i < wasm.data.length; i++) if (wasm.data[i] !== js.data[i]) diff++;
+      L.push('  WASM noise vs the worker\'s formula on the same buffer: '
+        + (diff === 0 ? 'IDENTICAL — same seed, this is not the cause'
+          : diff + ' of ' + wasm.data.length + ' bytes differ  <<< THE WINDOW IS SEEDED\n'
+          + '        WITH A DIFFERENT VALUE THAN THE WORKER. That is the split.'));
+    }
+  } catch (e) { L.push('  seed check failed: ' + (e && e.message || e)); }
+
+  L.push('');
+  L.push('Paste this whole block back — especially the seed check.');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

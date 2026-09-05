@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WebGL readPixels & getParameter Parity</title>
+  <style>
+    body { font: 13px/1.5 ui-monospace, Consolas, monospace; margin: 16px; max-width: 1000px; }
+    h3 { margin: 0 0 6px; }
+    .info { opacity: .65; margin-bottom: 12px; }
+    .ok  { color: #137333; font-weight: 700; }
+    .bad { color: #c5221f; font-weight: 700; }
+    .skip { color: #888; }
+    table { border-collapse: collapse; margin: 12px 0; width: 100%; }
+    th, td { padding: 3px 10px; text-align: left; border-bottom: 1px solid #8884; }
+    #sum { margin: 14px 0; padding: 10px 12px; border-radius: 6px; font-weight: 700; }
+    .green { background: #e6f4ea; color: #137333; }
+    .red   { background: #fce8e6; color: #c5221f; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #ddd; }
+      .green { background: #0d2a17; color: #7ee2a8; }
+      .red   { background: #2d1210; color: #ffa9a3; }
+    }
+  </style>
+</head>
+<body>
+<h3>WebGL — readPixels & getParameter Parity</h3>
+<p class="info">
+  Shield патчит в основном <code>getParameter</code> (VENDOR / RENDERER / UNMASKED_* / params).
+  <code>readPixels</code> обычно <b>не шумится</b> — тест проверяет self-consistency
+  readPixels и согласованность getParameter с профилем + worker.
+</p>
+<div id="sum">running…</div>
+<table id="t">
+  <thead><tr><th>check</th><th>verdict</th><th>detail</th></tr></thead>
+  <tbody></tbody>
+</table>
+<pre id="log" style="margin-top:14px;white-space:pre-wrap;"></pre>
+
+<script>
+// ============================================================
+// Bootstrap profile
+// ============================================================
+const F = {
+  canvas:true, audio:true, webgl:true, webrtc:true, navigator:true,
+  screen:true, timezone:true, geolocation:true, battery:true, fonts:true,
+  clientRects:false, plugins:true, network:true, hideAdBlocker:true
+};
+
+const PROFILE = {
+  mode: 'normal',
+  screenWidth: 1920, screenHeight: 1080, colorDepth: 32, devicePixelRatio: 1,
+  platform: 'Win32', hwConcurrency: 8, deviceMemory: 8,
+  vendor: 'Google Inc.',
+  language: 'et-EE', locale: 'et-EE', countryCode: 'EE',
+  languages: ['et-EE','et','en','en-US'],
+  timezone: 'Europe/Tallinn',
+  noiseSeed: 0x12345678,
+  maxTouchPoints: 0,
+  userAgent: navigator.userAgent,
+  appVersion: '5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor: 'Google Inc. (Intel)',
+  webglRenderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+  webglParams: {
+    0x0D33: 16384, 0x84E8: 16384, 0x851C: 16384,
+    0x8B4D: 192,   0x8B4C: 64,    0x8872: 64
+  },
+  clientHints: {
+    platform: 'Windows', mobile: false, platformVersion: '10.0.0',
+    architecture: 'x86', bitness: '64', wow64: false, model: '',
+    formFactors: ['Desktop']
+  },
+  allowedFonts: ['Arial','Segoe UI','Tahoma'],
+  mediaDevices: [], plugins: [], mimeTypes: [],
+  features: F
+};
+
+sessionStorage.setItem('v.ui.s', JSON.stringify(PROFILE));
+sessionStorage.setItem('v.ui.m', 'normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER = [
+  'profile-injector.js',
+  'mw/mw-bag.js',
+  'mw/mw-core.js',
+  'mw/mw-timezone-screen.js',
+  'mw/mw-navigator.js',
+  'mw/mw-canvas-audio.js',
+  'mw/mw-misc.js',
+  'mw/mw-workers.js',
+  'mw/mw-geo.js',
+  'mw/mw-adblock.js',
+  'mw/mw-cleanup.js'
+];
+
+function load(src) {
+  return new Promise(r => {
+    const s = document.createElement('script');
+    s.src = src + '?t=' + Date.now();
+    s.onload = () => r(true);
+    s.onerror = () => r(false);
+    document.head.appendChild(s);
+  });
+}
+
+const results = [];
+const logLines = [];
+
+function add(name, pass, detail, skipped) {
+  results.push({ name, pass, detail, skipped: !!skipped });
+  const tag = skipped ? 'SKIP  ' : (pass ? 'PASS  ' : 'FAIL  ');
+  logLines.push(tag + name + (detail ? '  —  ' + detail : ''));
+}
+
+function h32(arr) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < arr.length; i++) {
+    h ^= arr[i];
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+// Рисуем простой треугольник + clear color, чтобы было что читать
+function drawGL(gl, W, H) {
+  gl.viewport(0, 0, W, H);
+  gl.clearColor(0.2, 0.4, 0.6, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  const vsSrc = `
+    attribute vec2 a;
+    void main() { gl_Position = vec4(a, 0.0, 1.0); }
+  `;
+  const fsSrc = `
+    precision mediump float;
+    void main() { gl_FragColor = vec4(0.9, 0.3, 0.1, 1.0); }
+  `;
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0.0,  0.6,
+   -0.6, -0.6,
+    0.6, -0.6
+  ]), gl.STATIC_DRAW);
+
+  const loc = gl.getAttribLocation(prog, 'a');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+function createGLCanvas(W, H, attrs) {
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const gl = c.getContext('webgl', attrs) || c.getContext('experimental-webgl', attrs);
+  return { c, gl };
+}
+
+(async () => {
+  const tbody = document.querySelector('#t tbody');
+  const sumEl = document.getElementById('sum');
+  const logEl = document.getElementById('log');
+
+  for (const f of ORDER) await load(f);
+  await new Promise(r => setTimeout(r, 60));
+
+  const W = 128, H = 96;
+
+  // -------------------------------------------------------
+  // 1. WebGL context available
+  // -------------------------------------------------------
+  const { c, gl } = createGLCanvas(W, H, { antialias: false, preserveDrawingBuffer: true });
+  if (!gl) {
+    add('WebGL context', false, 'not available');
+    finish();
+    return;
+  }
+  add('WebGL context', true, gl.getParameter(gl.VERSION) || 'ok');
+
+  drawGL(gl, W, H);
+
+  // -------------------------------------------------------
+  // 2. readPixels repeated — byte stable
+  // -------------------------------------------------------
+  const pixels1 = new Uint8Array(W * H * 4);
+  const pixels2 = new Uint8Array(W * H * 4);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels1);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, pixels2);
+
+  let repDiff = 0;
+  for (let i = 0; i < pixels1.length; i++) if (pixels1[i] !== pixels2[i]) repDiff++;
+  add(
+    'readPixels repeated stable',
+    repDiff === 0,
+    repDiff === 0 ? 'hash ' + h32(pixels1) : repDiff + ' differing bytes'
+  );
+
+  // -------------------------------------------------------
+  // 3. readPixels position consistency (1×1 vs full)
+  // -------------------------------------------------------
+  const POINTS = [[10, 10], [64, 48], [100, 20], [5, H - 5], [W - 5, 5]];
+  let posFail = 0;
+  const posDetails = [];
+
+  for (const [x, y] of POINTS) {
+    // WebGL origin is bottom-left; y for readPixels is from bottom
+    const gy = H - 1 - y;
+    const single = new Uint8Array(4);
+    gl.readPixels(x, gy, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, single);
+
+    const idx = ((H - 1 - gy) * W + x) * 4; // convert back to top-left indexing in our buffer
+    // pixels1 was read with origin bottom-left, stored row0 = bottom
+    const fromFull = [
+      pixels1[(gy * W + x) * 4],
+      pixels1[(gy * W + x) * 4 + 1],
+      pixels1[(gy * W + x) * 4 + 2],
+      pixels1[(gy * W + x) * 4 + 3]
+    ];
+    if (single[0] !== fromFull[0] || single[1] !== fromFull[1] ||
+        single[2] !== fromFull[2] || single[3] !== fromFull[3]) {
+      posFail++;
+      posDetails.push(`(${x},${y}): 1x1=[${[...single]}] full=[${fromFull}]`);
+    }
+  }
+  add(
+    'readPixels position consistency',
+    posFail === 0,
+    posFail === 0 ? POINTS.length + ' points match' : posFail + ' fail — ' + posDetails.slice(0, 2).join('; ')
+  );
+
+  // -------------------------------------------------------
+  // 4. Partial region vs full
+  // -------------------------------------------------------
+  const rx = 20, ry = 15, rw = 40, rh = 30;
+  const region = new Uint8Array(rw * rh * 4);
+  gl.readPixels(rx, ry, rw, rh, gl.RGBA, gl.UNSIGNED_BYTE, region);
+
+  let regDiff = 0;
+  for (let ly = 0; ly < rh; ly++) {
+    for (let lx = 0; lx < rw; lx++) {
+      const ri = (ly * rw + lx) * 4;
+      const fi = ((ry + ly) * W + (rx + lx)) * 4;
+      if (region[ri] !== pixels1[fi] || region[ri+1] !== pixels1[fi+1] ||
+          region[ri+2] !== pixels1[fi+2] || region[ri+3] !== pixels1[fi+3]) {
+        regDiff++;
+      }
+    }
+  }
+  add(
+    'readPixels partial region vs full',
+    regDiff === 0,
+    regDiff === 0 ? `region ${rw}×${rh} OK` : regDiff + ' pixel mismatches'
+  );
+
+  // -------------------------------------------------------
+  // 5. Same draw → same readPixels (redraw stability)
+  // -------------------------------------------------------
+  const { c: c2, gl: gl2 } = createGLCanvas(W, H, { antialias: false, preserveDrawingBuffer: true });
+  if (gl2) {
+    drawGL(gl2, W, H);
+    const p2 = new Uint8Array(W * H * 4);
+    gl2.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, p2);
+    let d = 0;
+    for (let i = 0; i < pixels1.length; i++) if (pixels1[i] !== p2[i]) d++;
+    add(
+      'Same GL draw → same readPixels',
+      d === 0,
+      d === 0 ? 'identical hash ' + h32(pixels1) : d + ' differing bytes'
+    );
+  } else {
+    add('Same GL draw → same readPixels', false, 'second context failed', true);
+  }
+
+  // -------------------------------------------------------
+  // 6. getParameter — UNMASKED_VENDOR / RENDERER match profile
+  // -------------------------------------------------------
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  let vendor = null, renderer = null;
+  if (dbg) {
+    vendor = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL);
+    renderer = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
+  }
+  const vendorOk = vendor === PROFILE.webglVendor;
+  const rendererOk = renderer === PROFILE.webglRenderer;
+  add(
+    'getParameter UNMASKED_VENDOR',
+    vendorOk,
+    vendorOk ? vendor : `got "${vendor}" expected "${PROFILE.webglVendor}"`
+  );
+  add(
+    'getParameter UNMASKED_RENDERER',
+    rendererOk,
+    rendererOk ? (renderer || '').slice(0, 60) + (renderer && renderer.length > 60 ? '…' : '')
+               : `got "${renderer}" expected profile renderer`
+  );
+
+  // -------------------------------------------------------
+  // 7. getParameter VENDOR / RENDERER (masked)
+  // -------------------------------------------------------
+  const vMask = gl.getParameter(gl.VENDOR);
+  const rMask = gl.getParameter(gl.RENDERER);
+  // Chrome normally returns "WebKit" / "WebKit WebGL"
+  const maskOk = (vMask === 'WebKit' || vMask === PROFILE.webglVendor) &&
+                 (typeof rMask === 'string' && rMask.length > 0);
+  add(
+    'getParameter VENDOR/RENDERER present',
+    maskOk,
+    `VENDOR="${vMask}" RENDERER="${(rMask || '').slice(0, 40)}"`
+  );
+
+  // -------------------------------------------------------
+  // 8. webglParams from profile (sample)
+  // -------------------------------------------------------
+  let paramsOk = true;
+  const paramDetails = [];
+  for (const [enumStr, expected] of Object.entries(PROFILE.webglParams)) {
+    const e = Number(enumStr);
+    const got = gl.getParameter(e);
+    if (got !== expected) {
+      // Некоторые реализации могут не оверрайдить все enums — не hard-fail,
+      // если значение числовое и разумное
+      if (typeof got !== 'number') {
+        paramsOk = false;
+        paramDetails.push(`0x${e.toString(16)}: ${got} vs ${expected}`);
+      }
+    }
+  }
+  add(
+    'getParameter webglParams sample',
+    paramsOk,
+    paramsOk ? Object.keys(PROFILE.webglParams).length + ' enums checked' : paramDetails.slice(0, 3).join('; ')
+  );
+
+  // -------------------------------------------------------
+  // 9. WebGL2 context (if available) — same UNMASKED
+  // -------------------------------------------------------
+  const c3 = document.createElement('canvas');
+  c3.width = 64; c3.height = 64;
+  const gl2ctx = c3.getContext('webgl2', { preserveDrawingBuffer: true });
+  if (gl2ctx && dbg) {
+    const dbg2 = gl2ctx.getExtension('WEBGL_debug_renderer_info');
+    if (dbg2) {
+      const v2 = gl2ctx.getParameter(dbg2.UNMASKED_VENDOR_WEBGL);
+      const r2 = gl2ctx.getParameter(dbg2.UNMASKED_RENDERER_WEBGL);
+      const ok = v2 === vendor && r2 === renderer;
+      add(
+        'WebGL2 UNMASKED matches WebGL1',
+        ok,
+        ok ? 'same vendor/renderer' : `v2="${v2}" r2="${(r2||'').slice(0,40)}"`
+      );
+    } else {
+      add('WebGL2 UNMASKED matches WebGL1', true, 'no debug ext on webgl2', true);
+    }
+  } else {
+    add('WebGL2 UNMASKED matches WebGL1', true, 'WebGL2 not available', true);
+  }
+
+  // -------------------------------------------------------
+  // 10. Worker getParameter parity
+  // -------------------------------------------------------
+  let workerPass = false;
+  let workerDetail = '';
+  try {
+    const workerCode = `
+      self.onmessage = function() {
+        try {
+          var off = new OffscreenCanvas(64, 64);
+          var gl = off.getContext('webgl') || off.getContext('experimental-webgl');
+          if (!gl) { self.postMessage({ ok: false, error: 'no gl' }); return; }
+          var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+          var out = {
+            ok: true,
+            vendor: gl.getParameter(gl.VENDOR),
+            renderer: gl.getParameter(gl.RENDERER),
+            unmaskedVendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null,
+            unmaskedRenderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null,
+            version: gl.getParameter(gl.VERSION)
+          };
+          self.postMessage(out);
+        } catch (e) {
+          self.postMessage({ ok: false, error: String(e) });
+        }
+      };
+    `;
+    const wblob = new Blob([workerCode], { type: 'application/javascript' });
+    const worker = new Worker(URL.createObjectURL(wblob));
+    const wres = await new Promise(resolve => {
+      const t = setTimeout(() => resolve({ ok: false, error: 'timeout' }), 2500);
+      worker.onmessage = e => { clearTimeout(t); worker.terminate(); resolve(e.data); };
+      worker.onerror = e => { clearTimeout(t); worker.terminate(); resolve({ ok: false, error: e.message }); };
+      worker.postMessage({});
+    });
+
+    if (!wres.ok) {
+      workerDetail = wres.error || 'failed';
+    } else {
+      // Критично для CreepJS hasBadWebGL: main UNMASKED_RENDERER === worker
+      const sameVendor = wres.unmaskedVendor === vendor;
+      const sameRenderer = wres.unmaskedRenderer === renderer;
+      workerPass = sameVendor && sameRenderer;
+      workerDetail = workerPass
+        ? 'UNMASKED match main'
+        : `worker V="${wres.unmaskedVendor}" R="${(wres.unmaskedRenderer||'').slice(0,40)}" ` +
+          `main V="${vendor}" R="${(renderer||'').slice(0,40)}"`;
+    }
+  } catch (e) {
+    workerDetail = e.message;
+  }
+  add('Worker WebGL UNMASKED parity', workerPass, workerDetail);
+
+  // -------------------------------------------------------
+  // 11. readPixels not obviously noised (optional info)
+  // Clear color was (0.2, 0.4, 0.6, 1) ≈ (51, 102, 153, 255)
+  // Corner pixel should be close to that if no heavy noise
+  // -------------------------------------------------------
+  const corner = new Uint8Array(4);
+  gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, corner);
+  // Allow small variance (driver rounding); large noise would be ±10+
+  const expected = [51, 102, 153, 255];
+  const drift = Math.abs(corner[0] - expected[0]) +
+                Math.abs(corner[1] - expected[1]) +
+                Math.abs(corner[2] - expected[2]);
+  // Info-level: if drift is huge, something is heavily noising readPixels
+  add(
+    'readPixels clear-color sanity',
+    drift < 30,
+    `got [${[...corner]}] expected ~[${expected}] drift=${drift}`
+  );
+
+  // -------------------------------------------------------
+  finish();
+
+  function finish() {
+    const active = results.filter(r => !r.skipped);
+    const passed = active.filter(r => r.pass).length;
+    const total = active.length;
+    const allOk = passed === total;
+
+    sumEl.textContent = allOk
+      ? `ALL ${total} CHECKS PASSED` + (results.some(r => r.skipped) ? ` (${results.filter(r=>r.skipped).length} skipped)` : '')
+      : `${passed}/${total} passed — ${total - passed} FAILED`;
+    sumEl.className = allOk ? 'green' : 'red';
+
+    for (const r of results) {
+      const tr = document.createElement('tr');
+      const cls = r.skipped ? 'skip' : (r.pass ? 'ok' : 'bad');
+      const label = r.skipped ? 'SKIP' : (r.pass ? 'PASS' : 'FAIL');
+      tr.innerHTML =
+        `<td>${r.name}</td>` +
+        `<td class="${cls}">${label}</td>` +
+        `<td>${r.detail || ''}</td>`;
+      tbody.appendChild(tr);
+    }
+    logEl.textContent = logLines.join('\n');
+  }
+})();
+</script>
+</body>
+</html>

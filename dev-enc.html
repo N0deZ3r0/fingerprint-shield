@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>encoded canvas parity</title></head>
+<body><pre id="out">running…</pre>
+<script>
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  // deliberately NARROW: 'Comic Sans MS' below is NOT allowed → window normalises it
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:{canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true}
+}));
+sessionStorage.setItem('v.ui.m','normal');
+
+const L=[]; const t=(n,p,d)=>L.push((p?'PASS  ':'FAIL  ')+n+(d?'  ::  '+d:''));
+const ORDER=['profile-injector.js','mw/mw-bag.js','mw/mw-core.js','mw/mw-timezone-screen.js',
+ 'mw/mw-navigator.js','mw/mw-canvas-audio.js','mw/mw-misc.js','mw/mw-workers.js','mw/mw-geo.js','mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// CreepJS-like scene: gradients, arcs, curves, text, emoji — deterministic
+const DRAW = `function draw(ctx,w,h){
+  const g=ctx.createRadialGradient(w/2,h/2,5,w/2,h/2,w/2);
+  g.addColorStop(0,'#f0a'); g.addColorStop(0.5,'#0af'); g.addColorStop(1,'#af0');
+  ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+  for(let i=0;i<10;i++){
+    ctx.beginPath(); ctx.arc(20+i*20,40+i*7,15+i,0,Math.PI*1.5);
+    ctx.strokeStyle='rgba('+(i*23)+','+(255-i*11)+','+(i*17)+',0.7)'; ctx.lineWidth=1+i%3; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10,200-i*5); ctx.bezierCurveTo(60,100+i,150,220-i,240,150+i);
+    ctx.strokeStyle='rgba(20,'+(i*20)+',200,0.5)'; ctx.stroke();
+  }
+  ctx.fillStyle='#123'; ctx.fillRect(30,30,60,60);        // flat block → flat-restore territory
+  ctx.font='50px Comic Sans MS, sans-serif'; ctx.fillStyle='#fff'; ctx.fillText('A',40,120);
+  ctx.font='35px sans-serif'; ctx.fillText(String.fromCodePoint(0x1F47E),140,200);
+  ctx.font='20px Arial'; ctx.strokeStyle='#000'; ctx.strokeText('Fp42',150,60);
+}`;
+eval(DRAW);
+const h32=(a)=>{let h=2166136261>>>0;for(let i=0;i<a.length;i++){h^=a[i];h=Math.imul(h,16777619)>>>0}return h.toString(16)};
+const b64ToBytes=(u)=>{const b=atob(u.split(',')[1]);const a=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a};
+
+const WORKER_SRC = DRAW + `
+onmessage=async()=>{
+  const o={};
+  try{
+    const c=new OffscreenCanvas(256,256), x=c.getContext('2d');
+    draw(x,256,256);
+    const blob=await c.convertToBlob();
+    o.blobBytes=new Uint8Array(await blob.arrayBuffer());
+    o.pixels=Array.from(x.getImageData(0,0,256,256).data);
+  }catch(e){ o.err=e.message; }
+  postMessage(o);
+}`;
+
+(async()=>{
+  for(const f of ORDER) await load(f);
+
+  // window: HTMLCanvasElement + toDataURL (what CreepJS's main canvas module uses)
+  const c=document.createElement('canvas'); c.width=256;c.height=256;
+  const x=c.getContext('2d'); draw(x,256,256);
+  const winPng=b64ToBytes(c.toDataURL());
+  const winPixels=Array.from(x.getImageData(0,0,256,256).data);
+
+  const wk=await new Promise(r=>{
+    try{
+      const url=URL.createObjectURL(new Blob([WORKER_SRC],{type:'application/javascript'}));
+      const w=new Worker(url);
+      w.onmessage=e=>r(e.data); w.onerror=e=>r({err:'worker error '+(e.message||'?')});
+      w.postMessage(1); setTimeout(()=>r({err:'timeout'}),15000);
+    }catch(e){ r({err:'spawn '+e.message}); }
+  });
+  if (wk.err){ t('worker ran',false,wk.err); document.getElementById('out').textContent=L.join('\n'); return; }
+
+  const wkPng=new Uint8Array(wk.blobBytes);
+  t('window toDataURL bytes == worker convertToBlob bytes',
+    winPng.length===wkPng.length && winPng.every((v,i)=>v===wkPng[i]),
+    'win '+winPng.length+'B/'+h32(winPng)+'  worker '+wkPng.length+'B/'+h32(wkPng));
+  t('window getImageData == worker getImageData',
+    winPixels.length===wk.pixels.length && winPixels.every((v,i)=>v===wk.pixels[i]),
+    'win '+h32(winPixels)+'  worker '+h32(wk.pixels));
+
+  // is the worker's encoded output noised at all? compare against a pristine re-render
+  L.push('');
+  L.push('   window  PNG hash: '+h32(winPng)+'   getImageData hash: '+h32(winPixels));
+  L.push('   worker  PNG hash: '+h32(wkPng)+'   getImageData hash: '+h32(wk.pixels));
+  let firstPixDiff=-1;
+  for(let i=0;i<Math.min(winPixels.length,wk.pixels.length);i++)
+    if(winPixels[i]!==wk.pixels[i]){firstPixDiff=i;break;}
+  L.push('   first differing pixel byte: '+(firstPixDiff<0?'none':firstPixDiff+
+    ' (win '+winPixels[firstPixDiff]+' vs worker '+wk.pixels[firstPixDiff]+')'));
+
+  document.getElementById('out').textContent=L.join('\n')+
+    '\n\nFAILURES: '+L.filter(s=>s.startsWith('FAIL')).length;
+})();
+</script>
+</body></html>

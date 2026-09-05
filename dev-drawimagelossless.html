@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>is drawImage onto a fresh canvas lossless?</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// _renderNoisedCopy reads the PAGE's canvas directly (mw-canvas-audio.js), once per
+// toDataURL/toBlob. Chrome warns from the second readback of the same context, so a
+// page that exports several times gets the warning — and it names our file.
+// A FRESH canvas read exactly once never triggers it. So the warning disappears if
+// we always go through a fresh copy — provided drawImage reproduces the source
+// pixels exactly. The old [FIX getImageData-vs-encoded-mismatch] assumed it does
+// not, but that was measured while we forced willReadFrequently on every context,
+// i.e. while copy and source sat on DIFFERENT rasterisation backends.
+// Test it now, with the backends matched.
+function h32(b){ let h=2166136261>>>0;
+  for(let i=0;i<b.length;i++){ h^=b[i]; h=Math.imul(h,16777619)>>>0; }
+  return h.toString(16).padStart(8,'0'); }
+
+// scenes chosen to stress exactly what premultiplied alpha round-trips damage
+const SCENES = {
+  'opaque fill + text': (x, w, h) => {
+    x.fillStyle = '#2b6cb0'; x.fillRect(0,0,w,h);
+    x.font = '16px sans-serif'; x.fillStyle = '#fff'; x.fillText('opaque', 6, 24);
+  },
+  'partial alpha over transparent': (x, w, h) => {
+    x.fillStyle = 'rgba(255,0,0,0.13)'; x.fillRect(0,0,w,h);
+    x.fillStyle = 'rgba(0,255,0,0.07)'; x.fillRect(5,5,w-10,h-10);
+    x.fillStyle = 'rgba(0,0,255,0.5)';  x.beginPath(); x.arc(w/2,h/2,20,0,7); x.fill();
+  },
+  'gradient + shadow + curves': (x, w, h) => {
+    const g = x.createLinearGradient(0,0,w,h);
+    g.addColorStop(0,'#f0f'); g.addColorStop(0.5,'#0f08'); g.addColorStop(1,'#00f');
+    x.fillStyle=g; x.fillRect(0,0,w,h);
+    x.shadowBlur = 9; x.shadowColor = 'rgba(0,0,0,0.6)';
+    x.lineWidth = 2.5; x.strokeStyle = 'rgba(255,255,0,0.45)';
+    x.beginPath(); x.moveTo(4,h-6); x.bezierCurveTo(w/3,4,2*w/3,h-4,w-4,8); x.stroke();
+  },
+  'fully transparent (cleared)': (x, w, h) => { x.clearRect(0,0,w,h); },
+};
+
+function run(sceneName, srcOpts, copyOpts){
+  const w = 140, h = 80;
+  const src = document.createElement('canvas'); src.width=w; src.height=h;
+  const sctx = srcOpts === undefined ? src.getContext('2d') : src.getContext('2d', srcOpts);
+  SCENES[sceneName](sctx, w, h);
+
+  const direct = sctx.getImageData(0,0,w,h).data;           // what we read today
+
+  const copy = document.createElement('canvas'); copy.width=w; copy.height=h;
+  const cctx = copyOpts === undefined ? copy.getContext('2d') : copy.getContext('2d', copyOpts);
+  cctx.drawImage(src, 0, 0);
+  const viaDraw = cctx.getImageData(0,0,w,h).data;          // what a fresh copy gives
+
+  let diff = 0, worst = 0, firstIdx = -1;
+  for (let i=0;i<direct.length;i++){
+    const d = Math.abs(direct[i]-viaDraw[i]);
+    if (d) { diff++; if (d>worst) worst=d; if (firstIdx<0) firstIdx=i; }
+  }
+  return { diff, worst, firstIdx, total: direct.length, hDirect: h32(direct), hDraw: h32(viaDraw) };
+}
+
+(function(){
+  const L = [];
+  const combos = [
+    ['source default, copy default          ', undefined, undefined],
+    ['source default, copy willReadFrequently', undefined, { willReadFrequently: true }],
+    ['source wrf,     copy wrf              ', { willReadFrequently: true }, { willReadFrequently: true }],
+  ];
+  let allClean = true;
+  combos.forEach(([label, so, co]) => {
+    L.push(label.trim() + ':');
+    Object.keys(SCENES).forEach((s) => {
+      const r = run(s, so, co);
+      const ok = r.diff === 0;
+      if (!ok) allClean = false;
+      L.push('   ' + (ok ? 'PASS  ' : 'FAIL  ') + s.padEnd(32)
+        + (ok ? 'identical' : r.diff + ' of ' + r.total + ' bytes differ, worst Δ ' + r.worst
+            + '  (' + r.hDirect + ' vs ' + r.hDraw + ')'));
+    });
+    L.push('');
+  });
+  L.push(allClean
+    ? 'VERDICT  drawImage onto a fresh canvas reproduces the source exactly, in every\n'
+     +'         combination. Routing the read through the copy is therefore free, and\n'
+     +'         a fresh canvas read once never triggers the readback warning.'
+    : 'VERDICT  drawImage is NOT lossless in at least one combination — read the rows\n'
+     +'         above before changing _renderNoisedCopy.');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

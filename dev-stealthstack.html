@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>stealth stack leak</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// Does an error stack still name this extension's files in STEALTH?
+//
+// mw/mw-misc.js gates the Error.prototype.stack filter on `!_STEALTH`, so in stealth that
+// filter is absent. mw-core's _stripOwnFrames is NOT gated and cleans anything a wrapper
+// RETHROWS — so the question is whether those two cover the same ground, or whether the
+// gate leaves a path that names the extension.
+//
+// Guessing either way is what this project's history warns against, so this measures it:
+// the same probes in both modes, and the answer is the difference. ?mode=stealth|normal.
+//
+// !! THIS PAGE CANNOT ANSWER THAT QUESTION WHEN SERVED OVER http. MEASURED, AND THE
+// !! RESULT WAS A RIG ARTEFACT — recorded here so nobody reads its output as a verdict.
+//
+// Both cleaners key on the SAME string, and a dev page has neither:
+//     mw/mw-misc.js   var _extPfx = 'chrome-extension://';  ... if (s.indexOf(_extPfx) === -1) return s;
+//     mw/mw-core.js   _isOwnFrame: 'chrome-extension://' first, else _selfUrl
+// Served from http://127.0.0.1 the filter returns every stack untouched, and _isOwnFrame
+// falls back to _selfUrl — which is mw-core.js's OWN url and therefore does not match a
+// frame from mw-timezone-screen.js or mw-misc.js. So both mechanisms are inert here.
+//
+// The first run showed 4 leaking probes of 7 in BOTH modes — identical — which looks like
+// "the stealth gate changes nothing" and is nothing of the sort: it is both cleaners being
+// switched off by the URL scheme. A conclusion either way would have been unearned.
+//
+// To actually answer it this has to run under the REAL extension, where every module is
+// chrome-extension://<id>/mw/... — i.e. the rig in test/coldstart.mjs, not this one. Until
+// then the stealth gate on the Error.stack filter stays as it is.
+//
+// It also means something broader: stack cleaning has NEVER been covered by the dev-page
+// suite and structurally cannot be, for the same reason. Both fixes it implements
+// ([FIX extension-id-leaked-through-error-stacks] and the filter in mw-misc) were verified
+// by hand against a real install and have no regression test.
+const MODE = new URLSearchParams(location.search).get('mode') || 'normal';
+const FIXTURE = {
+  mode: MODE, screenWidth:1920, screenHeight:1080, colorDepth:24, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en-US','en'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)',
+  webglRenderer:'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+  webglParams:{}, allowedFonts:['Arial','Segoe UI'], mediaDevices:[], plugins:[], mimeTypes:[]
+};
+sessionStorage.setItem('v.ui.s', JSON.stringify(FIXTURE));
+sessionStorage.setItem('v.ui.m', MODE);
+
+const MODULES = ['profile-injector.js','mw/mw-bag.js','mw/mw-core.js','mw/mw-timezone-screen.js',
+  'mw/mw-navigator.js','mw/mw-canvas-audio.js','mw/mw-misc.js','mw/mw-workers.js',
+  'mw/mw-geo.js','mw/mw-adblock.js','mw/mw-cleanup.js'];
+const load = (s) => new Promise((r) => {
+  const e = document.createElement('script'); e.src = s + '?x=' + Date.now();
+  e.onload = e.onerror = r; document.head.appendChild(e);
+});
+
+// Each probe forces an error through a surface that is patched IN STEALTH (navigator,
+// screen, Date/Intl, WebGL are four of the flags stealth keeps on — webrtc is a fifth
+// since [FIX stealth-turned-the-webrtc-switch-into-a-decoration], but it patches no
+// surface a synchronous probe here can throw through), then reports the stack.
+const PROBES = [
+  ['Screen.width getter, null this', () => {
+    Object.getOwnPropertyDescriptor(Screen.prototype, 'width').get.call(null);
+  }],
+  ['Navigator.userAgent getter, null this', () => {
+    Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgent').get.call(null);
+  }],
+  ['getParameter brand check', () => {
+    WebGLRenderingContext.prototype.getParameter.call({}, 0x1F00);
+  }],
+  ['Date.getTimezoneOffset, null this', () => {
+    Date.prototype.getTimezoneOffset.call(null);
+  }],
+  ['new Intl.DateTimeFormat("!!!")', () => { new Intl.DateTimeFormat('!!!'); }],
+  ['Intl.DateTimeFormat.resolvedOptions, plain this', () => {
+    Intl.DateTimeFormat.prototype.resolvedOptions.call({});
+  }],
+  ['Function.prototype.toString on a patched getter', () => {
+    const g = Object.getOwnPropertyDescriptor(Screen.prototype, 'width').get;
+    Function.prototype.toString.call(Object.create(g));
+  }],
+  ['matchMedia matches getter, plain this', () => {
+    Object.getOwnPropertyDescriptor(MediaQueryList.prototype, 'matches').get.call({});
+  }]
+];
+
+const OWN = /\/mw\/|profile-injector\.js/;
+
+(async () => {
+  const L = [];
+  for (const m of MODULES) await load(m);
+  L.push('mode: ' + MODE + '   (fixture says ' + FIXTURE.mode + ')');
+  L.push('');
+
+  let leaks = 0, threw = 0;
+  for (const [name, fn] of PROBES) {
+    let stack = null, err = null;
+    try { fn(); } catch (e) { err = e; try { stack = String(e && e.stack || ''); } catch (e2) {} }
+    if (!err) { L.push('  --   ' + name.padEnd(46) + 'did not throw'); continue; }
+    threw++;
+    const own = String(stack).split('\n').filter((l) => OWN.test(l));
+    if (own.length) {
+      leaks++;
+      L.push('  LEAK ' + name.padEnd(46) + own[0].trim().slice(0, 78));
+    } else {
+      L.push('  ok   ' + name.padEnd(46) + 'no extension frame');
+    }
+  }
+
+  L.push('');
+  L.push('probes that threw: ' + threw + ' of ' + PROBES.length);
+  L.push('stacks naming an extension file: ' + leaks);
+  L.push('');
+  // Not a pass/fail page: BOTH modes are expected to be measured and compared by hand.
+  // Reported as a verdict line so test/run.mjs can carry it without inventing a threshold.
+  L.push('VERDICT ' + MODE + ': ' + leaks + ' leaking probe(s) of ' + threw + ' that threw');
+  L.push('FAILURES: ' + leaks);
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

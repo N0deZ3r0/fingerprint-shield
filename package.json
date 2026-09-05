@@ -1,0 +1,13 @@
+{
+  "scripts": {
+    "test": "node test/all.mjs",
+    "test:all": "node test/all.mjs --browser",
+    "test:browser": "node test/run.mjs",
+    "lint": "eslint .",
+    "build": "node tools/gen-dyn.mjs && node tools/gen-bundle.mjs"
+  },
+  "devDependencies": {
+    "eslint": "^10.8.1",
+    "playwright": "^1.62.1"
+  }
+}

@@ -1,0 +1,138 @@
+<!doctype html><html><head><meta charset="utf-8"><title>verify today</title></head>
+<body style="font:13px/1.5 monospace;white-space:pre-wrap">
+<h3 style="font:bold 15px monospace">Every fix from today, checked in one page</h3>
+<pre id="out">running...</pre>
+<script>
+/*__HEADERS__*/
+// Served with `Permissions-Policy: sync-xhr=()` on purpose: the worker checks below are
+// also the regression test for the violation that named mw-bundle.js on stackoverflow.
+var NL = String.fromCharCode(10);
+var R = [];
+function chk(n, c, d) { R.push((c ? 'PASS ' : 'FAIL ') + n + ' :: ' + (d === undefined ? '' : String(d))); }
+function val(n, v) { R.push('     ' + n + ' :: ' + String(v)); }
+
+(async function () {
+  val('host', location.hostname);
+  val('markers', '__p0=' + !!window.__p0 + ' __t0=' + !!window.__t0 + ' __r0=' + !!window.__r0);
+
+  // 1. dpr — the field that made the first tab of a session a different visitor
+  var dpr = devicePixelRatio;
+  val('devicePixelRatio', dpr);
+  chk('dpr is the profile value, not the host default',
+    dpr === 1.5 || dpr === 2 || dpr === 1.25, 'got ' + dpr + ' (a profile ratio, not a bare 1)');
+  var cssDpr = matchMedia('(resolution: ' + dpr + 'dppx)').matches;
+  chk('CSS resolution agrees with devicePixelRatio', cssDpr, '(resolution: ' + dpr + 'dppx)');
+  var c2 = document.createElement('canvas').getContext('2d');
+  c2.font = '16px sans-serif';
+  val('text width (scales with dpr)', c2.measureText('mmmmmmmmmmlli WWWW').width);
+
+  // 2. machine coherence — cores/screen against the graphics card
+  var glR = 'ERR', glV = 'ERR';
+  try {
+    var gl = document.createElement('canvas').getContext('webgl');
+    var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    glV = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL);
+    glR = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
+  } catch (e) {}
+  val('machine', navigator.hardwareConcurrency + 'c / ' + navigator.deviceMemory + 'GB / ' +
+    screen.width + 'x' + screen.height + ' / ' + glR.slice(0, 52));
+  var isIntegrated = /Intel/i.test(glR), bigBox = navigator.hardwareConcurrency >= 12 || screen.width >= 2560;
+  chk('the machine is coherent (no big box on integrated graphics)', !(bigBox && isIntegrated),
+    navigator.hardwareConcurrency + 'c with ' + (isIntegrated ? 'Intel' : 'discrete'));
+
+  // 3. workers — the module first-message drop, and the sync-xhr fallback
+  var wsrc = 'self.onmessage=function(){postMessage({hw:navigator.hardwareConcurrency,tz:Intl.DateTimeFormat().resolvedOptions().timeZone,dpr:0})}';
+  function ask(type) {
+    return new Promise(function (res) {
+      var d = false, w;
+      try {
+        w = new Worker(URL.createObjectURL(new Blob([wsrc], { type: 'text/javascript' })), type ? { type: type } : undefined);
+      } catch (e) { return res({ err: String(e.message).slice(0, 60) }); }
+      w.onmessage = function (e) { if (!d) { d = true; res(e.data); } };
+      w.onerror = function () { if (!d) { d = true; res({ err: 'worker error' }); } };
+      w.postMessage(1);            // same tick — the case that used to be dropped
+      setTimeout(function () { if (!d) { d = true; res(null); } }, 4000);
+    });
+  }
+  var cw = await ask(null), mw = await ask('module');
+  chk('classic blob worker answers and matches the window',
+    !!cw && cw.hw === navigator.hardwareConcurrency, JSON.stringify(cw));
+  chk('MODULE worker answers a same-tick message',
+    !!mw && mw.hw === navigator.hardwareConcurrency, JSON.stringify(mw));
+  chk('sync-xhr=() did not cost the patch', !!cw && cw.tz === Intl.DateTimeFormat().resolvedOptions().timeZone,
+    'worker tz ' + (cw && cw.tz));
+
+  // 4. service worker — the refusal must look like the browser's own.
+  // [FIX local-subresources-can-be-blocked] A service worker script is a subresource, and
+  // a blocker that refuses local subresources (measured: AdGuard does) makes registration
+  // fail for a reason that has nothing to do with us. Probed first, so the run says "not
+  // testable here" instead of reporting someone else's block as our failure.
+  var swTestable = true;
+  try { await fetch('/sw-normal.js', { method: 'HEAD', cache: 'no-store' }); }
+  catch (eF) { swTestable = false; }
+  if (!swTestable) {
+    val('service worker checks', 'skipped — this page cannot make subresource requests ' +
+      '(a local-network blocker is refusing them), so a registration failure would not be ours');
+  } else try {
+    var reg = await navigator.serviceWorker.register('/sw-normal.js');
+    chk('a normal service worker still registers', true, reg.scope);
+    try { await reg.unregister(); } catch (e) {}
+  } catch (e) {
+    chk('a normal service worker still registers', false, e.name + ': ' + e.message.slice(0, 70));
+  }
+  if (swTestable) try {
+    await navigator.serviceWorker.register('/creepjs-sw.js');
+    chk('a fingerprinter service worker is refused', false, 'it registered');
+  } catch (e) {
+    chk('a fingerprinter service worker is refused', true, e.name);
+    chk('the refusal is a DOMException, code 9, like the browser own',
+      e instanceof DOMException && e.name === 'NotSupportedError' && e.code === 9,
+      e.constructor.name + '/' + e.name + '/' + e.code);
+    chk('the refusal carries no stack to name the extension', !('stack' in Object(e)), 'hasStack=' + ('stack' in Object(e)));
+    chk('the refusal message is the whole-origin one',
+      / The user denied permission to use Service Worker\.$/.test(e.message), e.message.slice(-60));
+  }
+
+  // 5. WebRTC — all three channels must agree with each other and with the switch
+  var wr = { ev: 0, sdp: 0, stats: 0, err: null };
+  try {
+    var pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    pc.createDataChannel('p');
+    pc.onicecandidate = function (e) {
+      if (e.candidate && String(e.candidate.candidate).indexOf(' srflx ') !== -1) wr.ev++;
+    };
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise(function (res) {
+      if (pc.iceGatheringState === 'complete') return res();
+      var t = setTimeout(res, 9000);
+      pc.onicegatheringstatechange = function () { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } };
+    });
+    var sdp = (pc.localDescription && pc.localDescription.sdp) || '';
+    wr.sdp = sdp.split(NL).filter(function (l) { return l.indexOf(' srflx ') !== -1; }).length;
+    var rep = await pc.getStats();
+    rep.forEach(function (s) { if (s && s.type === 'local-candidate' && s.candidateType === 'srflx') wr.stats++; });
+    pc.close();
+  } catch (e) { wr.err = String(e); }
+  var swi = (window.__t0 && window.__t0.webrtc);
+  val('WebRTC switch for this host', swi === true ? 'ON (protected)' : swi === false ? 'OFF (allowed)' : 'n/a');
+  val('WebRTC channels', 'event=' + wr.ev + ' sdp=' + wr.sdp + ' stats=' + wr.stats + (wr.err ? ' err ' + wr.err : ''));
+  chk('the three WebRTC channels agree with each other',
+    (wr.ev > 0) === (wr.sdp > 0) && (wr.sdp > 0) === (wr.stats > 0), 'no half-applied switch');
+  if (swi === true) chk('switch ON: the address is hidden everywhere', wr.ev + wr.sdp + wr.stats === 0, '');
+  if (swi === false) chk('switch OFF: the marker agrees with __r0', window.__r0 === true, '__r0=' + window.__r0);
+
+  // 6. nothing of ours is readable
+  var leak = Object.keys(window).filter(function (k) {
+    return ['__p0', '__t0', '__w0', '__w1', '__r0'].indexOf(k) !== -1 || /afp|shield/i.test(k);
+  });
+  chk('no extension global is enumerable', leak.length === 0, leak.join(',') || '(none)');
+  var st = '';
+  try { null.x; } catch (e) { st = e.stack || ''; }
+  chk('error stacks name no extension file', st.indexOf('chrome-extension://') === -1, '');
+
+  var fails = R.filter(function (r) { return r.indexOf('FAIL') === 0; });
+  document.getElementById('out').textContent =
+    (fails.length ? '*** ' + fails.length + ' FAIL ***' : 'ALL PASS (' +
+      R.filter(function (r) { return r.indexOf('PASS') === 0; }).length + ' checks)') + NL + NL + R.join(NL);
+})();
+</script></body></html>

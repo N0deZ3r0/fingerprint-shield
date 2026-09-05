@@ -1,0 +1,70 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "sec-ch-ua-platform",
+          "operation": "set",
+          "value": "\"Windows\""
+        },
+        {
+          "header": "sec-ch-ua-mobile",
+          "operation": "set",
+          "value": "?0"
+        },
+        {
+          "header": "downlink",
+          "operation": "remove"
+        },
+        {
+          "header": "ect",
+          "operation": "remove"
+        },
+        {
+          "header": "rtt",
+          "operation": "remove"
+        },
+        {
+          "header": "accept-language",
+          "operation": "remove"
+        },
+        {
+          "header": "sec-ch-ua-arch",
+          "operation": "remove"
+        },
+        {
+          "header": "sec-ch-ua-bitness",
+          "operation": "remove"
+        },
+        {
+          "header": "sec-ch-ua-model",
+          "operation": "remove"
+        },
+        {
+          "header": "sec-ch-ua-wow64",
+          "operation": "remove"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "*://*/*",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "stylesheet",
+        "script",
+        "image",
+        "font",
+        "object",
+        "xmlhttprequest",
+        "ping",
+        "csp_report",
+        "media",
+        "other"
+      ]
+    }
+  }
+]

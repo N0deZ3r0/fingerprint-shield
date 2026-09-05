@@ -1,0 +1,130 @@
+/* Options page. Tokens come from ui.css, which is linked first — this file defines no
+   colours of its own so the popup, this page and Who Am I cannot drift apart again.
+
+   The DOM contract is options.js's: it builds `label.feat` (+ `.risky`) containing the
+   checkbox and `span.feat-text` > `.feat-name` + `.feat-desc`, and it toggles `err` on
+   #status. Those are the hooks — style them, expect no others. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--tx);
+  font: var(--font);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 680px; margin: 0 auto; padding: 32px 20px 56px; }
+
+:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; border-radius: 8px; }
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── header ───────────────────────────────────────────────────────────── */
+header { margin-bottom: 22px; }
+header h1 {
+  margin: 0 0 5px;
+  font-size: 22px; font-weight: 660; letter-spacing: -.3px;
+}
+.sub { margin: 0; color: var(--mu); font-size: 13px; }
+
+/* ── cards ────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: var(--edge);
+}
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 6px;
+}
+.card h2 { margin: 0; font-size: 15px; font-weight: 640; letter-spacing: -.1px; }
+
+.hint { margin: 0 0 16px; color: var(--mu); font-size: 12.5px; line-height: 1.5; }
+.hint code {
+  font-family: var(--mono); font-size: 11.5px;
+  background: var(--card-2); border: 1px solid var(--line);
+  padding: 1px 6px; border-radius: 5px; color: var(--tx-2);
+}
+
+/* ── feature toggles ──────────────────────────────────────────────────── */
+/* Two columns of real rows rather than a bare checkbox list: each one is a click target
+   the size of its text, which is what makes a 13-item grid usable without hunting for a
+   16px box. options.js writes the <label>, so the whole row is already the control. */
+.feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+@media (max-width: 560px) { .feat-grid { grid-template-columns: 1fr; } }
+
+.feat {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 10px 12px; border-radius: var(--r-s);
+  background: var(--card-2); border: 1px solid var(--line);
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.feat:hover { background: var(--raise); border-color: var(--line-str); }
+/* The row reads as ON at a glance — a checked box alone is a 16px signal in a 13-row grid.
+   :has() is safe here: this page is extension UI on Chrome 119+, which the manifest already
+   requires, and the checkbox styling below still carries the state if it ever is not. */
+.feat:has(input:checked) { border-color: var(--ac-bg); background: var(--ac-bg); }
+.feat:has(input:checked) .feat-name { color: var(--tx); }
+
+.feat input {
+  margin-top: 1px; accent-color: var(--ac);
+  width: 16px; height: 16px; flex-shrink: 0; cursor: pointer;
+}
+.feat-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.feat-name { font-size: 13px; font-weight: 600; color: var(--tx-2); }
+.feat-desc { color: var(--mu); font-size: 11.5px; line-height: 1.35; }
+
+/* clientRects is off by default because CreepJS reddens with it on — the row says so
+   rather than leaving the user to find out from the readout. */
+.feat.risky .feat-name::after {
+  content: " · осторожно";
+  color: var(--wn); font-weight: 550; font-size: 11px;
+}
+
+/* ── notes card ───────────────────────────────────────────────────────── */
+.warn-card ul { margin: 10px 0 0; padding-left: 18px; color: var(--tx-2); }
+.warn-card li { margin-bottom: 7px; font-size: 12.5px; line-height: 1.5; }
+.warn-card li:last-child { margin-bottom: 0; }
+.warn-card strong { color: var(--tx); font-weight: 620; }
+
+/* ── actions ──────────────────────────────────────────────────────────── */
+.actions { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+
+.btn {
+  border: 0; border-radius: var(--r-s); padding: 11px 20px;
+  font: inherit; font-size: 13.5px; font-weight: 640; cursor: pointer;
+  transition: filter .15s, box-shadow .15s, transform .1s, color .15s, border-color .15s;
+}
+.btn.primary {
+  color: #fff;
+  background: linear-gradient(180deg, var(--ac), var(--ac-2));
+  box-shadow: 0 6px 18px var(--ac-gl), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.primary:active { transform: translateY(1px); box-shadow: 0 3px 10px var(--ac-gl); }
+.btn.primary:disabled { opacity: .5; cursor: default; box-shadow: none; filter: none; transform: none; }
+.btn.ghost {
+  background: var(--card-2); color: var(--tx-2);
+  border: 1px solid var(--line); box-shadow: var(--edge);
+  padding: 7px 13px; font-size: 12.5px; font-weight: 600;
+}
+.btn.ghost:hover { color: var(--tx); border-color: var(--line-str); background: var(--raise); }
+
+/* options.js toggles `err` on this and drives [hidden] */
+.status {
+  color: var(--ok); background: var(--ok-bg);
+  font-size: 12.5px; font-weight: 620;
+  padding: 8px 12px; border-radius: var(--r-s);
+}
+.status.err { color: var(--er); background: var(--er-bg); }
+.status[hidden] { display: none !important; }
+
+/* The exit-country switch sits in a card head beside the heading, like the Clear buttons. */
+.geocheck { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mu); cursor: pointer; }
+.geocheck input { cursor: pointer; }

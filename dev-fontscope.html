@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>font detection: window vs worker vs clean</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// CreepJS "font B" flips from "unsupported" (clean, and all worker scopes) to
+// "Windows" in OUR window as soon as the fonts flag is on. Hypothesis: the fonts
+// patch is window-only — the worker payload emits chunks for navigator/timezone/
+// webgl/canvas/geolocation and nothing for fonts — so measureText is normalised
+// in the window and left native in workers.
+const ON = new URLSearchParams(location.search).get('fonts') !== '0';
+const F = {canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:ON,clientRects:true,plugins:true,network:true,hideAdBlocker:true};
+const ALLOW = (new URLSearchParams(location.search).get('allow')||'Arial,Segoe UI,Tahoma').split(',').filter(Boolean);
+// The modules take this fixture off v.ui.s once, as they load, and wipe the key — the
+// profile lives in the mw-core closure now, so it cannot be read back out further down.
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:ALLOW,
+  mediaDevices:[], plugins:[], mimeTypes:[],
+  features:F
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER=['profile-injector.js','mw/mw-bag.js','mw/mw-core.js','mw/mw-timezone-screen.js',
+ 'mw/mw-navigator.js','mw/mw-canvas-audio.js','mw/mw-misc.js','mw/mw-workers.js','mw/mw-geo.js','mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// Font set chosen the way an OS-guesser does it: fonts that ship only with a
+// particular OS. Detection = probe width differs from the generic baseline.
+const PROBE = `
+const OSFONTS = {
+  Windows: ['Segoe UI','Calibri','Consolas','MS Gothic','Cambria','Candara','Corbel','Sylfaen','Marlett'],
+  Apple:   ['Helvetica Neue','Lucida Grande','Geneva','Menlo','Monaco','Apple Chancery','Skia'],
+  Linux:   ['DejaVu Sans','Liberation Sans','Ubuntu','Cantarell','FreeSerif','Nimbus Roman']
+};
+function detect(mk){
+  const x = mk();
+  const base = {};
+  for (const g of ['monospace','sans-serif','serif']){
+    x.font = '72px ' + g; base[g] = x.measureText('mmmmmmmmmmlli').width;
+  }
+  const found = {}, widths = {};
+  for (const os of Object.keys(OSFONTS)){
+    found[os] = [];
+    for (const f of OSFONTS[os]){
+      let hit = false;
+      for (const g of ['monospace','sans-serif','serif']){
+        x.font = '72px "' + f + '",' + g;
+        const w = x.measureText('mmmmmmmmmmlli').width;
+        widths[f] = Math.round(w * 100) / 100;
+        if (Math.abs(w - base[g]) > 0.5) hit = true;
+      }
+      if (hit) found[os].push(f);
+    }
+  }
+  // the OS guess: whichever exclusive set is present, "unsupported" if none
+  const hits = Object.keys(found).filter(o => found[o].length > 0);
+  return { guess: hits.length === 1 ? hits[0] : (hits.length ? hits.join('+') : 'unsupported'),
+           found: found, widths: widths };
+}
+// ---- verbatim from the detector: this is exactly how "font A" is produced ----
+// It compares the FULL 7-metric tuple against a monospace baseline, not just width.
+function detectorMeasure(context, font) {
+  context.font = \`16px \${font}\`;
+  const { actualBoundingBoxAscent, actualBoundingBoxDescent, actualBoundingBoxLeft,
+    actualBoundingBoxRight, fontBoundingBoxAscent, fontBoundingBoxDescent, width
+  } = context.measureText('mwmwmwmwlli');
+  return [actualBoundingBoxAscent, actualBoundingBoxDescent, actualBoundingBoxLeft,
+    actualBoundingBoxRight, fontBoundingBoxAscent, fontBoundingBoxDescent, width];
+}
+function detectorFonts(context) {
+  const detected = [];
+  const fallbackFont = detectorMeasure(context, 'monospace');
+  ;[\`'Segoe UI', monospace\`, \`'Helvetica Neue', monospace\`].forEach((fontFamily) => {
+    const dimensions = detectorMeasure(context, fontFamily);
+    const font = /'(.+)'/.exec(fontFamily)?.[1] || '';
+    if (String(dimensions) !== String(fallbackFont)) detected.push(font);
+  });
+  const FontMap = { 'Segoe UI': 'Windows', 'Helvetica Neue': 'Apple' };
+  return { list: detected, label: FontMap[detected] || (detected.length ? 'Other' : 'unsupported') };
+}`;
+eval(PROBE);
+
+const mkWin  = () => document.createElement('canvas').getContext('2d');
+function inWorker(){
+  return new Promise(r=>{
+    const src = PROBE + `
+onmessage=()=>{ try{
+  const mk = () => new OffscreenCanvas(300,150).getContext('2d');
+  const r = detect(mk);
+  r.fontA = detectorFonts(new OffscreenCanvas(300,150).getContext('2d'));
+  postMessage(r);
+}catch(e){ postMessage({err:String(e&&e.message||e)}); } };`;
+    try{
+      const w=new Worker(URL.createObjectURL(new Blob([src],{type:'application/javascript'})));
+      w.onmessage=e=>r(e.data); w.onerror=e=>r({err:'worker error '+(e.message||'?')});
+      w.postMessage(1); setTimeout(()=>r({err:'timeout'}),15000);
+    }catch(e){ r({err:'spawn '+e.message}); }
+  });
+}
+
+(async()=>{
+  const ifr=document.createElement('iframe'); ifr.style.display='none';
+  document.body.appendChild(ifr);
+  const cleanCtx = () => ifr.contentDocument.createElement('canvas').getContext('2d');
+  const clean = detect(cleanCtx);
+  clean.fontA = detectorFonts(cleanCtx());
+  const nativeWorker = await inWorker();      // before modules: nothing patched anywhere
+
+  for (const f of ORDER) await load(f);
+  const win = detect(mkWin);
+  win.fontA = detectorFonts(mkWin());
+  const wk  = await inWorker();
+
+  const L=[];
+  const line=(n,o)=>L.push('  '+n.padEnd(22)+(o.err?('ERR '+o.err):
+    (o.guess.padEnd(14)+'  Windows-only found: '+(o.found.Windows.length?o.found.Windows.join(', '):'none'))));
+  L.push('fonts flag: '+(ON?'ON':'OFF'));
+  L.push('allowedFonts: '+JSON.stringify(ALLOW));
+  L.push('');
+  L.push('"font A" exactly as the detector computes it (7-metric tuple, 16px, mwmwmwmwlli):');
+  const fa = o => o.err ? 'ERR' : (o.fontA.label + '   detected: [' + o.fontA.list.join(', ') + ']');
+  L.push('  clean iframe          '+fa(clean));
+  L.push('  patched window        '+fa(win));
+  L.push('  patched worker        '+fa(wk));
+  L.push('  '+((!wk.err && win.fontA.label===wk.fontA.label &&
+                String(win.fontA.list)===String(wk.fontA.list))
+      ? 'PASS  font A identical Window↔Worker' : 'FAIL  font A differs Window↔Worker'));
+  L.push('');
+  L.push('OS guess from measureText (this is what "font B" reports):');
+  line('clean iframe', clean);
+  line('native worker', nativeWorker);
+  line('patched window', win);
+  line('patched worker', wk);
+  L.push('');
+  const parity = !wk.err && win.guess === wk.guess;
+  L.push((parity?'PASS  ':'FAIL  ')+'window guess == worker guess   ('+win.guess+' vs '+(wk.err?'ERR':wk.guess)+')');
+  const vsClean = win.guess === clean.guess;
+  L.push((vsClean?'note  ':'note  ')+'window guess vs clean          ('+win.guess+' vs '+clean.guess+')');
+  L.push('');
+  L.push('per-font widths (window vs worker) — a differing width means the patch');
+  L.push('reached one scope and not the other:');
+  if (!wk.err){
+    const keys=Object.keys(win.widths);
+    const diff=keys.filter(k=>win.widths[k]!==wk.widths[k]);
+    L.push('  '+diff.length+' of '+keys.length+' differ'+(diff.length?':':''));
+    diff.slice(0,12).forEach(k=>L.push('    '+k.padEnd(18)+win.widths[k]+'  vs  '+wk.widths[k]));
+  }
+  document.getElementById('out').textContent=L.join('\n');
+})();
+</script>
+</body></html>

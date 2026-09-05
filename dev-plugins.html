@@ -1,0 +1,228 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — navigator.plugins fallback vs the native shape</title>
+<style>
+  body { font: 12.5px/1.45 ui-monospace, monospace; padding: 16px; }
+  table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  td, th { border: 1px solid #ccc; padding: 3px 7px; text-align: left; vertical-align: top; }
+  .ok { color: #0a0; } .bad { color: #c00; font-weight: bold; }
+  .k { color: #555; }
+  code { background: #f4f4f4; padding: 0 3px; }
+</style>
+<h1 style="font-size:15px">navigator.plugins — the empty-PluginArray fallback, against the real thing</h1>
+<p>
+  <code>mw/mw-misc.js</code> rebuilds <code>navigator.plugins</code> and
+  <code>navigator.mimeTypes</code>, but only when the browser reports none. Real Chromium
+  always ships the five PDF entries — headless included — so that branch never runs on its
+  own and nothing in the suite ever executed it. It shipped for a long time assigning
+  <code>item</code>, <code>namedItem</code>, <code>refresh</code> and
+  <code>Symbol.iterator</code> as plain function expressions, which means
+  <code>String(navigator.plugins.item)</code> printed this project's source.
+</p>
+<p>
+  This page forces the branch: it hides the real PluginArray behind an empty one before the
+  content scripts load, lets them rebuild it, then compares the result against the native
+  interface — names, argument counts, <code>toString</code>, own properties, iteration and
+  brand. The reference values come from a clean same-origin iframe, so nothing here is a
+  hard-coded idea of what Chrome does.
+</p>
+<div id="out">running…</div>
+
+<script>
+  sessionStorage.setItem('v.ui.s', JSON.stringify({
+    locale: 'et-EE', language: 'et-EE', languages: ['et-EE','et','en-US','en'],
+    timezone: 'Europe/Tallinn', mode: 'normal', noiseSeed: 20260814,
+    screenWidth: 1920, screenHeight: 1080, colorDepth: 32, devicePixelRatio: 1,
+    hwConcurrency: 8, deviceMemory: 8, platform: 'Win32',
+    userAgent: navigator.userAgent, allowedFonts: ['Arial','Segoe UI'], webglParams: {},
+    features: { canvas:true, audio:true, webgl:true, webrtc:true, navigator:true, screen:true,
+      timezone:true, geolocation:true, battery:true, fonts:true, clientRects:true,
+      plugins:true, network:true, hideAdBlocker:true }
+  }));
+
+  // ---- force the fallback ----------------------------------------------------
+  // The branch is guarded by `navigator.plugins.length > 0`. Give it a real (empty)
+  // PluginArray to look at; mw-misc.js replaces this accessor with its own via _def.
+  // Everything captured here is captured BEFORE any content script runs.
+  window.__NATIVE__ = {
+    PA_item: PluginArray.prototype.item,
+    PA_namedItem: PluginArray.prototype.namedItem,
+    PA_refresh: PluginArray.prototype.refresh,
+    MTA_item: MimeTypeArray.prototype.item,
+    MTA_namedItem: MimeTypeArray.prototype.namedItem,
+    P_item: Plugin.prototype.item,
+    P_namedItem: Plugin.prototype.namedItem,
+    arrayValues: Array.prototype[Symbol.iterator],
+    realPlugins: navigator.plugins,
+    realMimes: navigator.mimeTypes
+  };
+  (function () {
+    var empty = Object.create(PluginArray.prototype);
+    Object.defineProperty(empty, 'length', { value: 0 });
+    Object.defineProperty(Navigator.prototype, 'plugins', {
+      get: function () { return empty; }, configurable: true
+    });
+  })();
+</script>
+<script src="mw/mw-core.js"></script>
+<script src="mw/mw-timezone-screen.js"></script>
+<script src="mw/mw-navigator.js"></script>
+<script src="mw/mw-canvas-audio.js"></script>
+<script src="mw/mw-misc.js"></script>
+<script src="mw/mw-workers.js"></script>
+<script src="mw/mw-geo.js"></script>
+<script src="mw/mw-adblock.js"></script>
+<script src="mw/mw-cleanup.js"></script>
+<script>
+(async () => {
+  const NAT = window.__NATIVE__;
+  const out = document.getElementById('out');
+  const rows = [];
+  let bad = 0;
+  const check = (name, ok, got, want) => {
+    if (!ok) bad++;
+    rows.push('<tr><td>' + name + '</td><td class="' + (ok ? 'ok' : 'bad') + '">' +
+      (ok ? 'ok' : 'FAIL') + '</td><td class="k">' + String(got).replace(/</g, '&lt;').slice(0, 90) +
+      '</td><td class="k">' + String(want).replace(/</g, '&lt;').slice(0, 90) + '</td></tr>');
+  };
+  const eq = (name, got, want) => check(name, Object.is(got, want), got, want);
+
+  // A clean realm to read reference shapes from. Opened by hand in a browser where this
+  // extension is enabled, the iframe gets the same content scripts (all_frames +
+  // match_about_blank) and every comparison below would be against ourselves — the
+  // mistake dev-ownprops.html documents. Detect it and refuse rather than print nonsense.
+  const f = document.createElement('iframe');
+  f.style.display = 'none';
+  document.documentElement.appendChild(f);
+  const W = f.contentWindow;
+  await new Promise(r => setTimeout(r, 60));
+
+  const refPlugins = W.navigator.plugins;
+  const nativeStr = (fn) => W.Function.prototype.toString.call(fn);
+  // Every reference read below is independent of how many plugins the reference realm
+  // has — Playwright's bundled Chromium reports none, the installed Chromium build
+  // reports five, and both are clean. The signal for "already patched" is the one
+  // dev-ownprops.html uses: stock Chromium gives navigator no own properties at all.
+  const baselineDirty =
+    Object.getOwnPropertyNames(W.navigator).length > 0 ||
+    Object.getOwnPropertySymbols(refPlugins).length > 0 ||
+    !/\[native code\]/.test(nativeStr(W.PluginArray.prototype.item));
+  if (baselineDirty) {
+    f.remove();
+    out.innerHTML =
+      '<p class="bad">BASELINE NOT CLEAN — the reference iframe is already patched, so every' +
+      ' comparison here would be against ourselves.</p>' +
+      '<p>Run this page via <code>node test/run.mjs plugins</code>' +
+      ' — that launches a stock Chromium with no extensions.</p>' +
+      '<p class="k">FAILURES: 0 — skipped, no usable baseline</p>';
+    return;
+  }
+
+  const P = navigator.plugins;
+  const M = navigator.mimeTypes;
+
+  // ---- 0) the fallback actually ran -------------------------------------------
+  check('the fallback branch ran (plugins rebuilt)', P !== NAT.realPlugins && P.length > 0,
+    P.length + ' plugin(s)', 'a rebuilt, non-empty PluginArray');
+  check('mimeTypes rebuilt', M !== NAT.realMimes && M.length > 0, M.length + ' mime(s)', 'non-empty');
+
+  // ---- 1) brand ----------------------------------------------------------------
+  check('plugins instanceof PluginArray', P instanceof PluginArray, P instanceof PluginArray, true);
+  check('mimeTypes instanceof MimeTypeArray', M instanceof MimeTypeArray, M instanceof MimeTypeArray, true);
+  check('plugins[0] instanceof Plugin', P[0] instanceof Plugin, P[0] instanceof Plugin, true);
+  check('mimeTypes[0] instanceof MimeType', M[0] instanceof MimeType, M[0] instanceof MimeType, true);
+  eq('Object.prototype.toString(plugins)', Object.prototype.toString.call(P),
+    Object.prototype.toString.call(refPlugins));
+  eq('Object.prototype.toString(mimeTypes)', Object.prototype.toString.call(M),
+    Object.prototype.toString.call(W.navigator.mimeTypes));
+
+  // ---- 2) every method reads as native -----------------------------------------
+  // This is the regression the page was written for: an unmasked function expression
+  // prints its own source here, and its .name is '' rather than the method name.
+  const METHODS = [
+    ['plugins.item', P.item, NAT.PA_item],
+    ['plugins.namedItem', P.namedItem, NAT.PA_namedItem],
+    ['plugins.refresh', P.refresh, NAT.PA_refresh],
+    ['mimeTypes.item', M.item, NAT.MTA_item],
+    ['mimeTypes.namedItem', M.namedItem, NAT.MTA_namedItem],
+    ['plugins[0].item', P[0].item, NAT.P_item],
+    ['plugins[0].namedItem', P[0].namedItem, NAT.P_namedItem]
+  ];
+  for (const [label, ours, native] of METHODS) {
+    if (typeof ours !== 'function') { check(label + ' exists', false, typeof ours, 'function'); continue; }
+    eq(label + '.toString()', String(ours), String(native));
+    eq(label + '.name', ours.name, native.name);
+    eq(label + '.length', ours.length, native.length);
+    check(label + ' does not leak our source',
+      !/mimeObjs|makeIterable|return o\[/.test(Function.prototype.toString.call(ours)),
+      String(ours).slice(0, 60), 'no extension source');
+  }
+
+  // ---- 3) own properties -------------------------------------------------------
+  // A real PluginArray owns only its indices and its named keys: no length, no symbols.
+  const refOwn = Object.getOwnPropertyNames(refPlugins);
+  check('plugins own symbols (native owns none)',
+    Object.getOwnPropertySymbols(P).length === 0,
+    Object.getOwnPropertySymbols(P).map(String).join(', ') || '(none)', '(none)');
+  check('mimeTypes own symbols',
+    Object.getOwnPropertySymbols(M).length === 0,
+    Object.getOwnPropertySymbols(M).map(String).join(', ') || '(none)', '(none)');
+  check('plugins[0] own symbols',
+    Object.getOwnPropertySymbols(P[0]).length === 0,
+    Object.getOwnPropertySymbols(P[0]).map(String).join(', ') || '(none)', '(none)');
+  check('Object.keys(plugins) has no "length" (native has none)',
+    Object.keys(P).indexOf('length') === -1 && refOwn.indexOf('length') === -1,
+    Object.keys(P).join(','), refOwn.join(','));
+
+  // ---- 4) iteration -------------------------------------------------------------
+  // Native PluginArray/MimeTypeArray/Plugin all inherit Array.prototype[Symbol.iterator];
+  // ours must be that same function object, not a hand-rolled stand-in.
+  // The reference realm has its own Array.prototype, so "native inherits
+  // Array.prototype.values" has to be asked of the iframe against the IFRAME's copy —
+  // comparing it to ours is a cross-realm identity check that is false by construction
+  // and says nothing about either object.
+  const refValues = W.Array.prototype[Symbol.iterator];
+  eq('native PluginArray inherits Array.prototype.values (reference)',
+    W.PluginArray.prototype[Symbol.iterator], refValues);
+  eq('native MimeTypeArray inherits Array.prototype.values (reference)',
+    W.MimeTypeArray.prototype[Symbol.iterator], refValues);
+  eq('native Plugin inherits Array.prototype.values (reference)',
+    W.Plugin.prototype[Symbol.iterator], refValues);
+  eq('plugins[Symbol.iterator] is Array.prototype.values', P[Symbol.iterator], NAT.arrayValues);
+  eq('mimeTypes[Symbol.iterator] is Array.prototype.values', M[Symbol.iterator], NAT.arrayValues);
+  eq('plugins[0][Symbol.iterator] is Array.prototype.values', P[0][Symbol.iterator], NAT.arrayValues);
+  eq('[...plugins].length', [...P].length, P.length);
+  eq('[...mimeTypes].length', [...M].length, M.length);
+  eq('[...plugins[0]].length', [...P[0]].length, P[0].length);
+
+  // ---- 5) the methods still work ------------------------------------------------
+  eq('plugins.item(0) === plugins[0]', P.item(0), P[0]);
+  eq('plugins.item(99)', P.item(99), null);
+  eq('plugins.namedItem(name)', P.namedItem(P[0].name), P[0]);
+  eq('plugins.namedItem(missing)', P.namedItem('no such plugin'), null);
+  check('plugins.refresh() does not throw', (() => { try { P.refresh(); return true; } catch (e) { return false; } })(), '', 'no throw');
+  eq('mimeTypes.item(0) === mimeTypes[0]', M.item(0), M[0]);
+  eq('mimeTypes.namedItem(type)', M.namedItem(M[0].type), M[0]);
+  eq('plugins[0].item(0) === plugins[0][0]', P[0].item(0), P[0][0]);
+  eq('plugins[0].namedItem(type)', P[0].namedItem(P[0][0].type), P[0][0]);
+
+  // ---- 6) enabledPlugin resolves ---------------------------------------------------
+  // Regression guard for [FIX enabledPlugin-was-permanently-null]: this was null forever
+  // because a re-definition loop threw into a bare catch.
+  const ep = M[0] && M[0].enabledPlugin;
+  check('mimeTypes[0].enabledPlugin is a Plugin', !!ep && ep instanceof Plugin, ep && ep.name, 'a Plugin');
+  eq('and it is plugins[0]', ep, P[0]);
+  const ep2 = P[0][0] && P[0][0].enabledPlugin;
+  eq('plugins[0][0].enabledPlugin is its own plugin', ep2, P[0]);
+
+  f.remove();
+  out.innerHTML =
+    '<table><tr><th>check</th><th></th><th>ours</th><th>native</th></tr>' + rows.join('') + '</table>' +
+    '<p class="' + (bad ? 'bad' : 'ok') + '">FAILURES: ' + bad +
+    (bad ? '' : ' — the rebuilt PluginArray matches the native shape') + '</p>';
+})().catch((e) => {
+  document.getElementById('out').innerHTML =
+    '<p class="bad">threw: ' + String(e && e.message || e).replace(/</g, '&lt;') + '</p>' +
+    '<p class="bad">FAILURES: 1</p>';
+});
+</script>

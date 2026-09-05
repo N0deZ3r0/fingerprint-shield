@@ -1,0 +1,196 @@
+# Four jobs, split by cost and by failure mode rather than by tidiness.
+#
+#   node     lint + the six Node suites + the package check. Seconds, no browser, no
+#            display. Every push and every pull request. This is the one that should gate
+#            anything: it includes test/parity-static.mjs, which re-runs BOTH generators in
+#            memory and fails if mw-bundle.js or dyn/ on disk are stale — the single most
+#            common way to break this repo is to edit a module and forget
+#            `node tools/gen-bundle.mjs`.
+#
+#   package  builds dist/ and uploads it as the run's artifact, so what you download from
+#            GitHub is the extension rather than the workshop it was built in. Expires
+#            after 90 days and cannot be linked to.
+#
+#   release  the same dist/, zipped and attached to a GitHub Release. Tag-triggered,
+#            permanent, and its URL does not move. This is the one to link to.
+#
+#   browser  the twenty Playwright suites. Six to eight minutes, needs a real Chromium and
+#            loads the extension for real. NOT on every push, deliberately — see the note
+#            on that job.
+#
+# Node is pinned to 24 rather than "latest". test/tz-icu.mjs compares 845 timezone
+# assertions against the ICU that Node bundles, so the runtime's version is part of the
+# measurement; a floating major would turn an ICU data update into a red build that has
+# nothing to do with this code.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # A tag is what publishes a release. `node` still runs first on that push, so a tag can
+    # only become a release if the suites passed on exactly the commit being released.
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# The actions are pinned to v7 and not v4. v4 declares `using: node20`, and GitHub
+# deprecated that action runtime in September 2025 — it still runs them, forced onto Node 24,
+# and annotates every job with a warning about it. Nothing was broken; the warning is about
+# the runtime GitHub executes the ACTION in, which has nothing to do with the `node-version`
+# below, that being the Node our own suites run under.
+#
+# Checked before bumping rather than guessed, because a version that does not exist turns a
+# warning into a job that cannot start: checkout v7.0.1, setup-node v7.0.0, upload-artifact
+# v7.0.1, all three declaring `using: node24`, and every input used here — node-version,
+# cache, name, path, if-no-files-found — still accepted.
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: lint + Node suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      # `npm ci` and not `npm install`: it installs exactly what package-lock.json pins and
+      # fails instead of quietly updating it. It also does NOT download browser binaries —
+      # the playwright package alone is enough for the Node suites, which never launch one.
+      - run: npm ci
+      - run: node test/all.mjs
+
+  package:
+    name: extension artifact
+    # The repository has to keep the suites — CI cannot run what is not there — but what you
+    # DOWNLOAD from GitHub should be the extension and nothing else. tools/pack.mjs builds
+    # exactly that: 234 files against the working tree's ~600, no dev pages, no suites, no
+    # generators, not even the eleven mw/ modules the bundle was generated from.
+    #
+    # It runs after `node`, not instead of it, because pack.mjs verifies completeness and
+    # not correctness: it will happily package a build whose bundle is stale. The node job
+    # is what catches that, through test/parity-static.mjs.
+    needs: node
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node tools/pack.mjs
+      - id: v
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+      # upload-artifact zips what it is given, so the download is a single archive that
+      # unpacks straight into chrome://extensions → Load unpacked.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fingerprint-shield-${{ steps.v.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: release zip
+    # Publishes on a tag only: `git tag v2.3.4 && git push origin v2.3.4`.
+    #
+    # WHY A RELEASE AND NOT JUST THE ARTIFACT. The `package` artifact above expires after 90
+    # days, cannot be linked to, and is not versioned by anything but the run it came from.
+    # A release asset is permanent, carries the version in its name, and has a URL that does
+    # not move:
+    #
+    #   https://github.com/<owner>/<repo>/releases/download/v2.3.4/fingerprint-shield-2.3.4.zip
+    #
+    # The repository is public, so that URL is a link anyone can follow — no token, no
+    # sign-in. It was not always: on a private repository the same URL needs authentication.
+    needs: node
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # The only job that writes anything. The rest of the workflow stays read-only.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # THE TAG MUST AGREE WITH THE MANIFEST. Publishing v2.3.5 whose manifest.json says
+      # 2.3.4 is a trap that only shows up after someone installs it, so it fails here
+      # instead — a mistyped tag costs one deleted tag rather than a wrong release.
+      - name: tag matches manifest.json
+        id: v
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          man=$(node -p "require('./manifest.json').version")
+          if [ "$tag" != "$man" ]; then
+            echo "tag v$tag does not match manifest.json $man" >&2
+            exit 1
+          fi
+          echo "version=$man" >> "$GITHUB_OUTPUT"
+      - run: node tools/pack.mjs
+      # Zipped from INSIDE dist/, so manifest.json sits at the root of the archive. That is
+      # what the Chrome Web Store requires, and Windows' own "Extract All" still unpacks it
+      # into a folder named after the zip, which is what Load unpacked wants.
+      - name: zip
+        run: cd dist && zip -qr "../fingerprint-shield-${{ steps.v.outputs.version }}.zip" .
+      # gh is preinstalled on the runner, so this needs no third-party action — one less
+      # thing with write access to the repository.
+      - name: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "fingerprint-shield-${{ steps.v.outputs.version }}.zip" \
+            --title "Fingerprint Shield ${{ steps.v.outputs.version }}" \
+            --notes "Unpacked extension, built by CI from \`$GITHUB_SHA\`.
+
+          Install: download the zip, extract it, then \`chrome://extensions\` → Developer mode → **Load unpacked** → point at the extracted folder.
+
+          Contents are the extension only — no dev pages, no suites, no generators. Built and verified by \`tools/pack.mjs\`, which refuses to package if anything the manifest, \`background.js\` or any shipped page references is missing."
+
+  browser:
+    name: Playwright suites (Windows)
+    # MANUAL ONLY to begin with. Three reasons, all of them measured rather than assumed:
+    #
+    #   1. This suite drives a browser for six to eight minutes. Public repositories do not
+    #      bill runner minutes, so cost is no longer the argument — but a six-minute wait on
+    #      a push that only touched a comment still is.
+    #   2. It runs on WINDOWS because that is what it measures. The assertions are full of
+    #      Windows facts — the ANGLE renderer strings, the five PDF plugins, the font list,
+    #      `outerHeight - innerHeight` = 95 — and on ubuntu they would fail for reasons that
+    #      have nothing to do with the extension.
+    #   3. Even on windows-latest the runner is a Server SKU with a different font set from
+    #      a Windows 11 desktop, so the font-dependent pages may disagree with a developer's
+    #      machine. Run it once by hand before deciding whether it is allowed to gate a
+    #      merge; a red build that only means "the runner has no Gabriola" is worse than no
+    #      build at all.
+    #
+    # `--load-extension` is what makes this job possible AND what keeps it off branded
+    # Chrome: Chrome has refused that switch since 136 (re-measured on 152), while the
+    # Chromium that Playwright installs still honours it.
+    #
+    # To make it nightly once the runner's environment is known, add to `on:` above:
+    #     schedule:
+    #       - cron: '0 3 * * *'
+    # and add `|| github.event_name == 'schedule'` to the condition below. At six to eight
+    # minutes billed 2x, that is roughly 450 of the 2000 free private-repo minutes a month.
+    runs-on: windows-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # Only chromium. test/harness.mjs defaults to channel:'chromium', and installing
+      # firefox and webkit alongside it would download several hundred megabytes this repo
+      # never touches.
+      - run: npx playwright install chromium
+      - run: node test/all.mjs --browser

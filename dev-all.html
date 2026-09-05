@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>run every dev check</title>
+<style>
+ body{font:13px/1.55 ui-monospace,Consolas,monospace;margin:16px;max-width:1100px}
+ table{border-collapse:collapse;width:100%}
+ td,th{padding:3px 10px;text-align:left;border-bottom:1px solid #8884}
+ .ok{color:#137333}.bad{color:#c5221f;font-weight:700}.info{opacity:.65}
+ #sum{margin:14px 0;padding:10px 12px;border-radius:6px;font-weight:700}
+ .green{background:#e6f4ea;color:#137333}.red{background:#fce8e6;color:#c5221f}
+ @media (prefers-color-scheme:dark){body{background:#111;color:#ddd}
+  .green{background:#0d2a17;color:#7ee2a8}.red{background:#2d1210;color:#ffa9a3}}
+</style></head>
+<body>
+<h3>every dev check, one run</h3>
+<div id="sum">running…</div>
+<table id="t"><thead><tr><th>check</th><th>verdict</th><th>detail</th></tr></thead><tbody></tbody></table>
+<script>
+// Running the suite by hand meant 15 navigations, and a check skipped by accident
+// looked exactly like a check that passed. This page runs each of them in its own
+// iframe, one at a time, and reports a single number.
+//
+// Sequential on purpose: the pages seed their own profile into sessionStorage, which
+// is shared across same-origin frames. Overlapping them would let one page's profile
+// leak into another's measurement.
+const VERDICT = [
+  'dev-allofff.html',
+  'dev-syntaxcheck.html',
+  'dev-runtime.html',
+  'dev-wasm.html',
+  'dev-wvw.html',
+  'dev-enc.html',
+  'dev-allfn.html',
+  'dev-vsnative.html',
+  'dev-allofff.html',
+  'dev-perflag.html',
+  'dev-symmetry.html',
+  'dev-creepcanvas.html',
+  'dev-creepcanvashash.html',
+  'dev-canvasconsistency.html',
+  'dev-fontcheck.html',
+  'dev-fontscope.html',
+  'dev-textmetrics.html',
+  'dev-textwidth-port.html',
+  'dev-clientcode.html',
+  'dev-drawimagelossless.html',
+  'dev-lies.html',
+  'dev-behavior.html',
+  'dev-async.html',
+];
+// These report by console output or are descriptive rather than pass/fail; they are
+// listed so nobody assumes the suite covers something it does not.
+const INFO = [
+  'dev-readbackwarn.html  — counts Chrome readback warnings; read the console',
+  'dev-warnvisible.html   — proves the page cannot trap that warning',
+  'dev-timingvar.html     — shows getTimingResolution is not stable',
+  'dev-backendmatrix.html — native GPU/CPU canvas matrix, no extension code',
+  'dev-scopecanvas-standalone.html — run in the REAL browser with the extension on',
+];
+
+const tb = document.querySelector('#t tbody');
+function row(name, cls, verdict, detail) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td>' + name + '</td><td class="' + cls + '">' + verdict + '</td><td class="info">'
+    + (detail || '').replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</td>';
+  tb.appendChild(tr);
+}
+
+function run(page) {
+  return new Promise((resolve) => {
+    const f = document.createElement('iframe');
+    f.style.cssText = 'position:absolute;left:-9999px;width:1000px;height:700px';
+    let done = false;
+    const finish = (r) => { if (done) return; done = true; clearInterval(poll); clearTimeout(cap);
+      try { f.remove(); } catch (e) {} resolve(r); };
+    f.src = page + (page.indexOf('?') < 0 ? '?' : '&') + 'all=' + Date.now();
+    document.body.appendChild(f);
+
+    // A page whose script throws never replaces its "running…" placeholder, so without
+    // this the runner could only ever report an opaque TIMEOUT. An async IIFE that
+    // rejects does not even reach window.onerror, so listen for both.
+    let firstError = '';
+    f.addEventListener('load', () => {
+      try {
+        const w = f.contentWindow;
+        w.addEventListener('error', (e) => {
+          if (!firstError) firstError = 'threw: ' + (e.message || e.error || '?');
+        });
+        w.addEventListener('unhandledrejection', (e) => {
+          const r = e.reason;
+          if (!firstError) firstError = 'rejected: ' + ((r && (r.message || r)) || '?');
+        });
+      } catch (e) { /* cross-origin cannot happen here, but never break the run */ }
+    });
+
+    const read = () => {
+      let t = null;
+      try {
+        const d = f.contentDocument;
+        const el = d && (d.getElementById('out') || d.body);
+        t = el && el.textContent;
+      } catch (e) { return null; }               // still loading
+      if (!t || /^\s*running/i.test(t)) return null;
+      return t;
+    };
+
+    const poll = setInterval(() => {
+      const t = read();
+      if (t === null) return;
+      // A page is finished when it states a verdict. Three shapes are in use.
+      const m = /FAILURES:\s*(\d+)/.exec(t);
+      const fails = t.split('\n').filter((l) => /^\s*FAIL\b/.test(l));
+      const verdictLine = /^\s*VERDICT\b.*$/m.exec(t);
+      if (!m && !fails.length && !verdictLine) return;
+      const n = m ? parseInt(m[1], 10) : fails.length;
+      const bad = n > 0 || (verdictLine && /\bFAIL|SPLIT|WE\b/.test(verdictLine[0]) && !/no lie|not the cause|did not/i.test(verdictLine[0]));
+      finish({ n, bad: !!bad, detail: fails.slice(0, 2).join(' | ') || (verdictLine ? verdictLine[0].trim().slice(0, 90) : '') });
+    }, 120);
+
+    const cap = setTimeout(() => finish({
+      n: -1, bad: true,
+      detail: firstError || 'no verdict and no error — the page never finished'
+    }), 40000);
+  });
+}
+
+(async () => {
+  let bad = 0, total = 0, missing = 0;
+  for (const p of VERDICT) {
+    const r = await run(p);
+    total++;
+    if (r.n === -1) { missing++; row(p, 'bad', 'TIMEOUT', r.detail); bad++; continue; }
+    if (r.bad) { bad++; row(p, 'bad', r.n > 0 ? r.n + ' FAILED' : 'FAILED', r.detail); }
+    else row(p, 'ok', 'ok', r.detail);
+  }
+  const sum = document.getElementById('sum');
+  sum.className = bad ? 'red' : 'green';
+  sum.textContent = bad
+    ? bad + ' of ' + total + ' checks failed — see the rows above'
+    : 'all ' + total + ' checks passed';
+
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td colspan="3" class="info" style="padding-top:14px">'
+    + 'not covered by this runner (console-based or descriptive):<br>'
+    + INFO.map((s) => '&nbsp;&nbsp;' + s).join('<br>') + '</td>';
+  tb.appendChild(tr);
+})();
+</script>
+</body></html>

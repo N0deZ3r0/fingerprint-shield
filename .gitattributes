@@ -1,0 +1,9 @@
+# The working tree is LF today and the generated artefacts are byte-compared by
+# test/parity-static.mjs, so line endings are pinned rather than left to core.autocrlf.
+# Without this, a clone on a machine with autocrlf=true rewrites every file on checkout and
+# the generator comparison fails for a reason that has nothing to do with the code.
+* text=auto eol=lf
+
+*.png  binary
+*.wasm binary
+*.rar  binary

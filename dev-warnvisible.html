@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>can the page see the Canvas2D readback warning?</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// Chrome prints "Canvas2D: Multiple readback operations using getImageData are
+// faster with the willReadFrequently attribute set to true." when a context
+// created WITHOUT the flag is read back repeatedly. Our defence reads the page's
+// own canvas once per toDataURL/toBlob, so the message appears in devtools.
+// The only thing that matters: can the PAGE observe it? If it routes through the
+// console API, a detector can trap it and learn that something is reading its
+// canvas behind its back. If Chrome emits it straight to devtools, it is
+// cosmetic and invisible to script.
+(function(){
+  const captured = [];
+  const methods = ['log','warn','error','info','debug','trace'];
+  const original = {};
+  methods.forEach((m) => {
+    original[m] = console[m];
+    console[m] = function(...args){
+      captured.push(m + ': ' + args.map(String).join(' '));
+      return original[m].apply(console, args);
+    };
+  });
+
+  // also try the two other channels a page could plausibly use
+  let onerrorHits = 0, rejectionHits = 0;
+  window.addEventListener('error', () => onerrorHits++);
+  window.addEventListener('unhandledrejection', () => rejectionHits++);
+
+  // Provoke the warning: a context WITHOUT willReadFrequently, read back many times
+  const c = document.createElement('canvas');
+  c.width = 120; c.height = 60;
+  const x = c.getContext('2d');
+  x.fillStyle = '#369'; x.fillRect(0, 0, 120, 60);
+  x.font = '16px sans-serif'; x.fillStyle = '#fff'; x.fillText('readback', 8, 34);
+  let acc = 0;
+  for (let i = 0; i < 12; i++) {
+    const d = x.getImageData(0, 0, 120, 60).data;
+    acc += d[0];
+  }
+
+  const hits = captured.filter((s) => /readback|willReadFrequently|Canvas2D/i.test(s));
+
+  methods.forEach((m) => { console[m] = original[m]; });
+
+  const L = [];
+  L.push('12 getImageData readbacks on a context created without willReadFrequently.');
+  L.push('(check the devtools console — the warning itself should be visible there)');
+  L.push('');
+  L.push('console.* calls captured by the page: ' + captured.length);
+  captured.slice(0, 5).forEach((s) => L.push('   ' + s.slice(0, 120)));
+  L.push('matching the warning text: ' + hits.length);
+  L.push('window "error" events: ' + onerrorHits + '   unhandledrejection: ' + rejectionHits);
+  L.push('');
+  L.push(hits.length === 0
+    ? 'VERDICT  the page cannot see it. Chrome emits this message straight to\n'
+     +'         devtools, not through the console API, so no script can trap it.\n'
+     +'         It is cosmetic: it costs nothing in fingerprinting terms.'
+    : 'VERDICT  the page CAN trap it — this is an observable side channel and the\n'
+     +'         reads have to be restructured.');
+  L.push('');
+  L.push('(acc ' + acc + ' — keeps the loop from being optimised away)');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

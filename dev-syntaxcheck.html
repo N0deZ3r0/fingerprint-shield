@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>syntax check</title></head>
+<body><pre id="out">running…</pre>
+<script>
+const FILES = [
+  'background.js','defaults.js','options.js','popup.js','profile-injector.js',
+  'storage-bridge.js','whoami.js','test-defaults.cjs',
+  'mw/mw-adblock.js','mw/mw-bag.js','mw/mw-canvas-audio.js','mw/mw-cleanup.js',
+  'mw/mw-core.js','mw/mw-geo.js','mw/mw-misc.js','mw/mw-navigator.js',
+  'mw/mw-timezone-screen.js','mw/mw-workers.js',
+  'afp-console-check.js','afp-full-console-check.js'
+];
+(async () => {
+  const lines = [];
+  for (const f of FILES) {
+    try {
+      const r = await fetch(f + '?t=' + Date.now());
+      if (!r.ok) { lines.push('HTTP ' + r.status + '  ' + f); continue; }
+      let src = await r.text();
+      // Node strips a leading #! line before parsing; new Function() does not, so
+      // test-defaults.cjs reported "Invalid or unexpected token" purely because of its
+      // shebang. Strip it the same way Node does, otherwise this check is permanently
+      // red for a file that is perfectly valid — and a permanently red check is one
+      // nobody reads.
+      src = src.replace(/^#![^\n]*\n/, '\n');
+      try { new Function(src); lines.push('OK    ' + f); }
+      catch (e) { lines.push('SYNTAX ' + f + ' :: ' + e.message); }
+    } catch (e) { lines.push('FETCH ' + f + ' :: ' + e.message); }
+  }
+  // also validate the JSON assets
+  for (const j of ['manifest.json','rules/static.json']) {
+    try {
+      const r = await fetch(j + '?t=' + Date.now());
+      JSON.parse(await r.text());
+      lines.push('OK    ' + j);
+    } catch (e) { lines.push('JSON  ' + j + ' :: ' + e.message); }
+  }
+  document.getElementById('out').textContent = lines.join('\n') +
+    '\n\nFAILURES: ' + lines.filter(l => !l.startsWith('OK')).length;
+})();
+</script>
+</body></html>

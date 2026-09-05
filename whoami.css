@@ -1,0 +1,324 @@
+/* Who Am I. Tokens come from ui.css, which is linked first — this file defines no colours
+   of its own so the popup, the options page and this one cannot drift apart again.
+
+   The DOM contract is whoami.js's: it toggles `ok` on the badges and `active`/`inactive` on
+   the status dot and the protection items, and it BUILDS the parity table markup
+   (.parity-table, tr.split, td.mark/.sig, .parity-ok/-bad/-na, .parity-verdict,
+   .parity-note) plus .toast. Style those; expect no others to survive a re-render. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--tx);
+  font: var(--font);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; border-radius: 8px; }
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── topbar ───────────────────────────────────────────────────────────── */
+/* Sticky: the protection pill is the page's running state, and on a report this long it is
+   the one thing worth keeping in view while scrolling. */
+/* [FIX scrolled-content-read-through-the-topbar] The background was
+   `color-mix(in srgb, var(--bg) 82%, transparent)` with a 12px backdrop blur. Both are
+   supported here (checked: CSS.supports says yes to each) — that was not the problem. 18%
+   translucency simply is not enough to hide text: scrolled to the bottom, the card
+   headings underneath were legible straight through the bar, so the page read as two
+   layers printed on top of each other rather than one bar over content.
+   Frosted glass only works when what is behind it is texture. Behind this bar is prose,
+   and prose has to be covered, not tinted. Opaque, with the border and a soft shadow doing
+   the work of separating the layer instead. */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, .28);
+}
+.topbar-in {
+  width: 100%; max-width: clamp(320px, 96vw, 1500px);
+  margin: 0 auto; padding: 10px clamp(12px, 1.6vw, 24px);
+  display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: space-between; gap: 12px;
+}
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand-mark {
+  flex: 0 0 auto; width: 34px; height: 34px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: var(--ok-bg); color: var(--ok);
+  box-shadow: var(--edge), 0 0 0 1px rgba(53, 223, 160, .16);
+}
+.brand-mark svg { width: 19px; height: 19px; }
+.brand b { display: block; font-size: 15px; font-weight: 660; letter-spacing: -.2px; }
+.brand i { display: block; font-style: normal; font-size: 11.5px; color: var(--mu); margin-top: 1px; }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+
+.protection-status {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 13px; border-radius: 999px;
+  background: var(--ok-bg); border: 1px solid transparent;
+  font-size: 12px; font-weight: 640; color: var(--ok);
+}
+.status-indicator {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-bg);
+}
+.status-indicator.inactive { background: var(--mu); box-shadow: none; }
+
+/* No pinned page width: the shell tracks the window and only stops growing where a line
+   of text gets too long to scan. clamp() carries the whole rule — min, preferred, max —
+   so there is no breakpoint to keep in sync with the grid rules below. */
+.wrap {
+  width: 100%; max-width: clamp(320px, 96vw, 1500px);
+  margin: 0 auto; padding: 16px clamp(12px, 1.6vw, 24px) 24px;
+}
+
+/* ── identity ─────────────────────────────────────────────────────────── */
+.identity {
+  /* flex-wrap, not a nested auto-fit grid: this block has two side-by-side parts plus a
+     full-width one, and an auto-fit grid inside an auto-fit grid fought over the tracks —
+     at 1600px the outer one opened four columns and the three facts split across two
+     lines. Flex basis says "give me at least this much, otherwise wrap", which is the same
+     rule expressed where it belongs, on the items. Still no breakpoint. */
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 14px clamp(16px, 2vw, 26px);
+  background:
+    radial-gradient(110% 180% at 0% 0%, var(--ac-bg), transparent 60%),
+    var(--card);
+  border: 1px solid var(--line); border-radius: var(--r);
+  padding: 16px 20px; margin-bottom: 10px;
+  box-shadow: var(--edge);
+}
+
+.identity-hash { flex: 1 1 14rem; min-width: 0; }
+.identity-facts { flex: 2.2 1 21rem; }
+.identity-ua  { flex: 1 1 100%; min-width: 0; }
+
+.eyebrow {
+  display: block; font-size: 10px; font-weight: 680; text-transform: uppercase;
+  letter-spacing: .8px; color: var(--mu); margin-bottom: 7px;
+}
+.hash {
+  display: block; font-family: var(--mono);
+  font-size: clamp(20px, 2.2vw, 30px); font-weight: 650; letter-spacing: .4px;
+  color: var(--ac); word-break: break-all; line-height: 1.15;
+}
+.identity-ua { flex: 1 1 100%; min-width: 0; }
+.identity-ua .eyebrow { margin-bottom: 5px; }
+.copyhint { display: block; font-size: 10.5px; color: var(--mu); margin-top: 7px; }
+
+/* The three facts that answer "who am I to a site" in one line each. <dl> because that is
+   what a term/value list is, and it keeps the label attached to the value for a screen
+   reader instead of relying on visual adjacency. */
+.identity-facts {
+  display: grid; gap: 10px; margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+}
+.identity-facts > div {
+  background: var(--card-2); border: 1px solid var(--line);
+  border-radius: var(--r-s); padding: 11px 13px; min-width: 0;
+  box-shadow: var(--edge);
+}
+.identity-facts dt {
+  font-size: 10px; font-weight: 680; text-transform: uppercase;
+  letter-spacing: .6px; color: var(--mu); margin-bottom: 5px;
+}
+.identity-facts dd {
+  margin: 0; font-size: 13.5px; font-weight: 600; color: var(--tx);
+  word-break: break-word; overflow-wrap: anywhere;
+}
+
+/* ── copyable values ──────────────────────────────────────────────────── */
+/* whoami.js attaches one delegated handler for [data-copy]; it adds .copied for a moment
+   after a successful write. */
+[data-copy] { cursor: pointer; position: relative; transition: color .15s; }
+[data-copy]:hover { color: var(--ac-2); }
+[data-copy].copied::after {
+  content: "скопировано";
+  position: absolute; top: -4px; right: 0; transform: translateY(-100%);
+  font-family: var(--font); font-size: 10.5px; font-weight: 640;
+  color: var(--ok); background: var(--ok-bg);
+  padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+}
+
+/* ── section rhythm ───────────────────────────────────────────────────── */
+/* Named groups instead of one undifferentiated field of cards. Eight equal panels give a
+   reader no way in; three labelled zones do. */
+.section-h {
+  margin: 14px 0 8px; font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .9px; color: var(--mu);
+}
+
+/* ── cards ────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 13px 15px;
+  box-shadow: var(--edge);
+}
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px;
+}
+.card-head h2 { margin: 0; font-size: 13.5px; font-weight: 660; letter-spacing: -.1px; }
+
+.ua-card { margin-bottom: 12px; }
+.ua {
+  display: block; background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--r-s); padding: 11px 13px;
+  font-size: 12px; line-height: 1.55; color: var(--tx-2);
+  word-break: break-all;
+}
+
+/* A strict two-column grid, cards stretched to equal height per row.
+   This went back and forth three times, so the reasoning is written down.
+   Masonry (CSS columns) packs the cards with no wasted pixels, but it leaves every card
+   in a visual row ending at a different height — and read as a page, that is what
+   "everything has fallen apart" looks like, whatever the pixel count says.
+   A grid trades those pixels for alignment: the bottom edges line up, the page reads as
+   rows, and the extra room inside a short card is padding rather than a hole, BECAUSE its
+   neighbour is exactly as tall. That is what every dashboard this was meant to resemble
+   does. The card is a flex column so its content stays pinned to the top instead of
+   stretching to fill. */
+.grid {
+  display: grid; gap: 10px;
+  /* auto-fit + minmax IS the responsiveness: the browser fits as many whole columns of at
+     least ~15rem as the container has room for and shares the remainder between them, so
+     the count follows the real window at every width instead of stepping at two numbers
+     someone wrote down. min() keeps a single column from overflowing a phone-width shell,
+     where 15rem would be wider than the container itself.
+     Wider window -> more columns -> fewer rows -> a shorter page, which is also what keeps
+     this off the scrollbar without pinning a height anywhere. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+/* [FIX parity-card-touched-the-row-above] The grid had no bottom margin. It never needed
+   one while every grid was followed by a .section-h, whose own top margin did the job —
+   but the "Проверка" heading was removed to save height, and the parity card then sat
+   directly against the bottom edge of the row above with zero gap between the borders.
+   The value matches the grid's own gap, so the space between a card and the next block is
+   the same as between two cards. */
+.grid { margin-bottom: 10px; }
+.grid .card { display: flex; flex-direction: column; }
+.grid .card > .rows, .grid .card > .stats, .grid .card > .chips { align-content: start; }
+
+.badge {
+  font-size: 10.5px; font-weight: 660; padding: 4px 9px; border-radius: 999px;
+  background: var(--ac-bg); color: var(--ac); border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge.ok { background: var(--ok-bg); color: var(--ok); }
+
+/* ── key/value rows ───────────────────────────────────────────────────── */
+.rows { display: flex; flex-direction: column; gap: 9px; }
+.row { display: flex; flex-direction: column; gap: 3px; }
+.row.split { display: grid; gap: 9px 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); }
+/* split cells must stack label above value (were inline → LANGUAGEET-EE) */
+.row.split > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+.k {
+  display: block; font-size: 10px; line-height: 1.3; color: var(--mu);
+  font-weight: 680; text-transform: uppercase; letter-spacing: .6px;
+}
+.v {
+  display: block; font-size: 13px; line-height: 1.4; color: var(--tx);
+  word-break: break-word; overflow-wrap: anywhere;
+}
+.mono, .v.mono { font-family: var(--mono); font-size: 12px; line-height: 1.45; }
+.v.active { color: var(--ok); }
+.v.inactive { color: var(--mu); }
+
+.stats { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 5rem), 1fr)); }
+.stat {
+  text-align: center; padding: 11px 6px; border-radius: var(--r-s);
+  background: var(--card-2); border: 1px solid var(--line); box-shadow: var(--edge);
+}
+.stat-v { display: block; font-size: clamp(19px, 1.7vw, 26px); font-weight: 700; color: var(--ac); letter-spacing: -.6px; }
+.stat-l { display: block; font-size: 10px; color: var(--mu); margin-top: 5px; }
+
+/* ── chips / protection items ─────────────────────────────────────────── */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; }
+.chip, .prot-chip, .protection-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 620; padding: 6px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card-2); color: var(--mu);
+}
+.prot-chip.on, .chip.on, .protection-item.active {
+  color: var(--ok); background: var(--ok-bg); border-color: transparent;
+}
+.protection-item.inactive { opacity: .5; }
+.protection-icon { font-size: 13px; }
+
+/* ── controls ─────────────────────────────────────────────────────────── */
+/* The base .btn carries a real appearance: whoami.html uses a bare `class="btn"` for the
+   parity check, and with only .ghost styled that button rendered as unstyled browser
+   chrome next to a designed one. */
+.btn {
+  border: 0; border-radius: var(--r-s); font: inherit; font-weight: 620;
+  cursor: pointer; padding: 9px 18px; font-size: 12.5px;
+  color: #fff; background: linear-gradient(180deg, var(--ac), var(--ac-2));
+  box-shadow: 0 5px 15px var(--ac-gl), inset 0 1px 0 rgba(255, 255, 255, .18);
+  transition: filter .15s, box-shadow .15s, background .15s, border-color .15s, color .15s, transform .1s;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:active { transform: translateY(1px); }
+.btn.ghost {
+  background: var(--card-2); color: var(--tx-2);
+  border: 1px solid var(--line); box-shadow: var(--edge);
+  padding: 8px 14px; filter: none;
+}
+.btn.ghost:hover { color: var(--tx); border-color: var(--line-str); background: var(--raise); }
+.btn:disabled { opacity: .45; cursor: default; box-shadow: none; filter: none; transform: none; }
+
+.sel {
+  background: var(--card-2); color: var(--tx); border: 1px solid var(--line);
+  border-radius: var(--r-s); padding: 9px 11px; font: inherit; font-size: 12.5px;
+  min-width: 240px; max-width: 100%; cursor: pointer;
+}
+.sel:hover { border-color: var(--line-str); }
+
+/* ── parity panel ─────────────────────────────────────────────────────── */
+.parity-card .sub { margin: 0 0 11px; color: var(--mu); font-size: 12.5px; line-height: 1.5; max-width: 68ch; }
+.parity-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+/* The point of the table is scanning DOWN one column for a row that disagrees — hence the
+   monospace values and the tinted split rows. */
+.parity-table {
+  width: 100%; border-collapse: collapse; margin-top: 15px;
+  font-size: 12px; font-family: var(--mono);
+  display: block; overflow-x: auto;
+}
+.parity-table th, .parity-table td {
+  border-bottom: 1px solid var(--line); padding: 7px 10px;
+  text-align: left; vertical-align: top; white-space: nowrap;
+}
+.parity-table th {
+  color: var(--mu); font-weight: 680; font-family: var(--font); font-size: 10px;
+  text-transform: uppercase; letter-spacing: .6px;
+}
+.parity-table td.sig { font-family: var(--font); color: var(--tx); white-space: normal; }
+.parity-table tr.split td { background: var(--er-bg); }
+.parity-table td.mark { width: 1%; font-weight: 700; }
+.parity-ok { color: var(--ok); }
+.parity-bad { color: var(--er); }
+.parity-na { color: var(--mu); }
+.parity-verdict { margin-top: 14px; font-size: 13px; font-weight: 640; }
+.parity-note { margin-top: 6px; color: var(--mu); font-size: 12px; }
+
+/* ── footer / toast ───────────────────────────────────────────────────── */
+.footer {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);
+  text-align: center; color: var(--mu); font-size: 12px;
+  display: flex; justify-content: center; gap: 8px; align-items: center;
+}
+.footer a { color: var(--ac); text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+
+.toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: var(--card); border: 1px solid var(--line-str); color: var(--tx);
+  padding: 11px 18px; border-radius: var(--r-s); font-size: 13px; z-index: 50;
+  box-shadow: var(--shadow);
+}
+.toast[hidden] { display: none !important; }

@@ -1,0 +1,243 @@
+#include <emscripten.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#include <string.h>
+
+/*
+ * protect_c.source — WASM noise aligned with main-world.js
+ *
+ * Canvas: same as JS _hashPixelPosition + RGB deltas (hh&3)-1 etc.
+ * Audio:  same LCG as JS offline buffer path
+ * Seed:   g_seed[0] = domain noiseSeed from JS (seed_random)
+ *
+ * Exports used by background.js loadWasmToMain wrapper:
+ *   seed_random, add_canvas_noise, should_skip_canvas_noise (DEAD stub→0),
+ *   substitute_text_width, substitute_text_metrics, add_audio_noise,
+ *   normalize_timing, set_locale, get_fake_shader_precision
+ *
+ * Build (example):
+ *   emcc protect_c.source -O3 \
+ *     -s STANDALONE_WASM=1 \
+ *     -s EXPORTED_FUNCTIONS='["_seed_random","_add_canvas_noise","_should_skip_canvas_noise","_substitute_text_width","_substitute_text_metrics","_add_audio_noise","_normalize_timing","_set_locale","_get_fake_shader_precision","_malloc","_free","_memory"]' \
+ *     -s ALLOW_MEMORY_GROWTH=1 \
+ *     -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
+ *     -o protect.wasm
+ *
+ * If your pipeline uses classic emscripten JS glue, drop STANDALONE_WASM
+ * and keep the same EXPORTED_FUNCTIONS (without leading underscore as needed).
+ */
+
+#define SEED_WORDS 8
+
+static uint32_t g_seed[SEED_WORDS] = {0};
+static atomic_int g_seeded = 0;
+static atomic_int g_canvas_ready = 0;
+
+static char g_timezone[64] = "Europe/Tallinn";
+static char g_language[64] = "et-EE,et;q=0.9,ru;q=0.8,en;q=0.7";
+
+/* ---------- utils ---------- */
+
+static uint32_t hash_str(uint32_t base, const char *str) {
+    uint32_t h = base;
+    if (str) {
+        for (const unsigned char *p = (const unsigned char *)str; *p; p++) {
+            h ^= (uint32_t)(*p);
+            h *= 0x01000193u;
+        }
+    }
+    h ^= h >> 16;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13;
+    return h;
+}
+
+static inline uint32_t imul32(uint32_t a, uint32_t b) {
+    return (uint32_t)((uint64_t)a * (uint64_t)b);
+}
+
+static inline int clamp_u8(int v) {
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return v;
+}
+
+/* ---------- seed ---------- */
+
+EMSCRIPTEN_KEEPALIVE
+void seed_random(const uint32_t *data, int len) {
+    atomic_store_explicit(&g_canvas_ready, 0, memory_order_release);
+
+    if (data && len > 0) {
+        int n = len < SEED_WORDS ? len : SEED_WORDS;
+        for (int i = 0; i < n; i++) g_seed[i] = data[i];
+        for (int i = n; i < SEED_WORDS; i++)
+            g_seed[i] = data[i % n] ^ (uint32_t)(i * 0xDEADBEEFu) ^ 0x12345678u;
+    } else {
+        for (int i = 0; i < SEED_WORDS; i++)
+            g_seed[i] = 0x6B206574u ^ (uint32_t)(i * 0xDEADBEEFu) ^ 0x12345678u;
+    }
+
+    atomic_store_explicit(&g_seeded, 1, memory_order_release);
+    atomic_store_explicit(&g_canvas_ready, 1, memory_order_release);
+}
+
+/* Domain noiseSeed is g_seed[0] — same value JS uses in _getSessionSeed(). */
+static inline uint32_t session_seed(void) {
+    return g_seed[0];
+}
+
+/* ---------- canvas: match JS _hashPixelPosition ---------- */
+
+/*
+ * JS:
+ *   h = (seed ^ ((absX+1)*0x27D4EB2F) ^ ((absY+1)*0x85EBCA6B)) >>> 0
+ *   h = Math.imul(h ^ (h>>>15), 0x2545F491) >>> 0
+ *   h = (h ^ (h>>>13)) >>> 0
+ *   R += (h & 3) - 1
+ *   G += ((h>>>4) & 3) - 1
+ *   B += ((h>>>8) & 3) - 1
+ */
+static inline uint32_t hash_pixel_position(int abs_x, int abs_y, uint32_t seed) {
+    uint32_t h = seed
+        ^ (uint32_t)((abs_x + 1) * 0x27D4EB2F)
+        ^ (uint32_t)((abs_y + 1) * 0x85EBCA6B);
+    h = imul32(h ^ (h >> 15), 0x2545F491u);
+    h = h ^ (h >> 13);
+    return h;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void add_canvas_noise(uint8_t *pixels, int w, int h, int stride, size_t buffer_size,
+                      int offset_x, int offset_y) {
+    if (!pixels || w <= 0 || h <= 0 || stride < w * 4) return;
+    if (!atomic_load_explicit(&g_seeded, memory_order_acquire)) return;
+    if (!atomic_load_explicit(&g_canvas_ready, memory_order_acquire)) return;
+    if ((uint64_t)w * (uint64_t)h > 67108864ULL) return;
+
+    uint64_t needed64 = (uint64_t)stride * (uint64_t)h;
+    if (needed64 > buffer_size) return;
+    size_t needed = (size_t)needed64;
+
+    uint32_t seed = session_seed();
+
+    for (int y = 0; y < h; y++) {
+        int abs_y = offset_y + y;
+        for (int x = 0; x < w; x++) {
+            int abs_x = offset_x + x;
+            uint64_t off64 = (uint64_t)y * (uint64_t)stride + (uint64_t)x * 4u;
+            if (off64 + 3 >= (uint64_t)needed) continue;
+            size_t off = (size_t)off64;
+
+            uint32_t hh = hash_pixel_position(abs_x, abs_y, seed);
+            int dr = (int)(hh & 3u) - 1;
+            int dg = (int)((hh >> 4) & 3u) - 1;
+            int db = (int)((hh >> 8) & 3u) - 1;
+
+            pixels[off]     = (uint8_t)clamp_u8((int)pixels[off]     + dr);
+            pixels[off + 1] = (uint8_t)clamp_u8((int)pixels[off + 1] + dg);
+            pixels[off + 2] = (uint8_t)clamp_u8((int)pixels[off + 2] + db);
+            /* alpha untouched */
+        }
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+int should_skip_canvas_noise(int w, int h) {
+    /* [DEAD] Formerly skipped first visit to sizes 33-99.
+     * That made first getImageData clean and second noised → CheckIntegrity fail.
+     * Kept as export stub (always 0) so old/new glue that still links the symbol is safe.
+     * JS no longer calls this. Safe to drop from EXPORTED_FUNCTIONS on next wasm rebuild. */
+    (void)w; (void)h;
+    return 0;
+}
+
+/* ---------- text metrics (small amplitude; not for DOMRect) ---------- */
+
+EMSCRIPTEN_KEEPALIVE
+double substitute_text_width(double real, const char *font, const char *text) {
+    if (!atomic_load_explicit(&g_seeded, memory_order_acquire)) return real;
+    uint32_t h = session_seed();
+    h = hash_str(h, font ? font : "");
+    h = hash_str(h, text ? text : "");
+    /* ±0.01 px range */
+    double d = ((double)(h & 0xFFu) / 255.0 - 0.5) * 0.02;
+    return real + d;
+}
+
+EMSCRIPTEN_KEEPALIVE
+double substitute_text_metrics(const char *prop, double real) {
+    if (!atomic_load_explicit(&g_seeded, memory_order_acquire)) return real;
+    uint32_t h = session_seed();
+    h = hash_str(h, prop ? prop : "m");
+    /* Keep tiny — was too large when misused for BCR (~0.25) */
+    double d = ((double)(h & 0xFFu) / 255.0 - 0.5) * 0.002;
+    return real + d;
+}
+
+/* ---------- audio: match JS LCG path ---------- */
+
+/*
+ * JS offline:
+ *   seed = (seed * 1664525 + 1013904223) >>> 0
+ *   sample += ((seed & 0xFFFF) / 0xFFFF - 0.5) * scale
+ * scale default in JS fallback: 0.0003; wrapper often passes 0.003
+ */
+EMSCRIPTEN_KEEPALIVE
+void add_audio_noise(float *samples, int n, float level) {
+    if (!samples || n <= 0) return;
+    if (!atomic_load_explicit(&g_seeded, memory_order_acquire)) return;
+
+    float scale = level;
+    if (scale <= 0.0f) scale = 0.0003f;
+    if (scale > 0.01f) scale = 0.01f;
+
+    uint32_t seed = session_seed() ^ 0x4155444Fu; /* 'AUDO' domain split */
+
+    for (int i = 0; i < n; i++) {
+        seed = seed * 1664525u + 1013904223u;
+        float delta = ((float)(seed & 0xFFFFu) / 65535.0f - 0.5f) * scale;
+        float v = samples[i] + delta;
+        if (v > 1.0f) v = 1.0f;
+        if (v < -1.0f) v = -1.0f;
+        samples[i] = v;
+    }
+}
+
+/* ---------- timing ---------- */
+
+EMSCRIPTEN_KEEPALIVE
+double normalize_timing(double ms) {
+    if (!atomic_load_explicit(&g_seeded, memory_order_acquire)) return ms;
+    if (ms < 0.0) ms = 0.0;
+    if (ms > 4294967.0) ms = 4294967.0;
+
+    uint32_t h = session_seed() ^ (uint32_t)(ms * 1000.0) ^ 0xDEADF00Du;
+    h ^= h >> 17;
+    h *= 0xED5AD4BBu;
+    h ^= h >> 11;
+    double u = (double)(h & 0xFFFFu) / 65536.0 - 0.5;
+    return ms + u * 0.05;
+}
+
+/* ---------- locale / shader stubs (API kept for JS) ---------- */
+
+EMSCRIPTEN_KEEPALIVE
+void set_locale(const char *tz, const char *lang) {
+    if (tz && tz[0]) {
+        strncpy(g_timezone, tz, sizeof(g_timezone) - 1);
+        g_timezone[sizeof(g_timezone) - 1] = 0;
+    }
+    if (lang && lang[0]) {
+        strncpy(g_language, lang, sizeof(g_language) - 1);
+        g_language[sizeof(g_language) - 1] = 0;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void get_fake_shader_precision(int *rangeMin, int *rangeMax, int *precision) {
+    /* Neutral defaults — real WebGL params come from JS profile */
+    if (rangeMin) *rangeMin = -127;
+    if (rangeMax) *rangeMax = 127;
+    if (precision) *precision = 23;
+}

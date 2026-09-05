@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>HARDCORE anti-detect self-test</title>
+  <style>
+    body { font: 12px/1.4 ui-monospace, Consolas, monospace; margin: 14px; max-width: 1200px; }
+    h3 { margin: 0 0 4px; }
+    h4 { margin: 14px 0 4px; font-size: 12px; opacity: .8; border-bottom: 1px solid #8883; padding-bottom: 2px; }
+    .info { opacity: .65; margin-bottom: 10px; }
+    .ok { color: #137333; font-weight: 700; }
+    .bad { color: #c5221f; font-weight: 700; }
+    .warn { color: #b06000; font-weight: 700; }
+    table { border-collapse: collapse; width: 100%; margin: 4px 0 8px; }
+    th, td { padding: 2px 8px; text-align: left; border-bottom: 1px solid #8883; vertical-align: top; }
+    #sum { margin: 10px 0; padding: 10px 12px; border-radius: 6px; font-weight: 700; }
+    .green { background: #e6f4ea; color: #137333; }
+    .red { background: #fce8e6; color: #c5221f; }
+    .mono { word-break: break-all; }
+    pre { white-space: pre-wrap; font-size: 11px; opacity: .75; max-height: 320px; overflow: auto; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #ddd; }
+      .green { background: #0d2a17; color: #7ee2a8; }
+      .red { background: #2d1210; color: #ffa9a3; }
+    }
+  </style>
+</head>
+<body>
+<h3>HARDCORE anti-detect self-test</h3>
+<p class="info">
+  Агрессивные проверки в стиле серьёзных anti-bot: native toString, property descriptors,
+  iframe pristine realm, prototype leaks, GPU↔params coherence, canvas path parity,
+  worker deep parity, chrome.* leaks, constructor integrity.
+</p>
+<div id="sum">running…</div>
+<table id="t"><thead><tr><th>check</th><th>verdict</th><th>detail</th></tr></thead><tbody></tbody></table>
+<pre id="log"></pre>
+
+<script>
+const F = {
+  canvas:true, audio:true, webgl:true, webrtc:true, navigator:true,
+  screen:true, timezone:true, geolocation:true, battery:true, fonts:true,
+  clientRects:false, plugins:true, network:true, hideAdBlocker:true
+};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode: 'normal',
+  platform: 'Win32', hwConcurrency: 8, deviceMemory: 8,
+  language: 'et-EE', locale: 'et-EE', countryCode: 'EE',
+  languages: ['et-EE','et','en','en-US'],
+  timezone: 'Europe/Tallinn',
+  noiseSeed: 0x12345678,
+  webglVendor: 'Google Inc. (Intel)',
+  webglRenderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+  features: F
+}));
+sessionStorage.setItem('v.ui.m', 'normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER = [
+  'profile-injector.js', 'mw/mw-bag.js', 'mw/mw-core.js',
+  'mw/mw-timezone-screen.js', 'mw/mw-navigator.js', 'mw/mw-canvas-audio.js',
+  'mw/mw-misc.js', 'mw/mw-workers.js', 'mw/mw-geo.js',
+  'mw/mw-adblock.js', 'mw/mw-cleanup.js'
+];
+function load(src) {
+  return new Promise(r => {
+    const s = document.createElement('script');
+    s.src = src + '?t=' + Date.now();
+    s.onload = () => r(true); s.onerror = () => r(false);
+    document.head.appendChild(s);
+  });
+}
+
+const results = [];
+const logs = [];
+function add(name, pass, detail, soft) {
+  results.push({ name, pass: !!pass, detail: detail || '', soft: !!soft });
+  const tag = soft && !pass ? 'WARN  ' : (pass ? 'PASS  ' : 'FAIL  ');
+  logs.push(tag + name + (detail ? '  —  ' + detail : ''));
+}
+
+function isNative(fn) {
+  if (typeof fn !== 'function') return false;
+  try {
+    const s = Function.prototype.toString.call(fn);
+    return /\[native code\]/.test(s) && s.length < 100;
+  } catch (e) { return false; }
+}
+
+function descSource(obj, prop) {
+  try {
+    let q = obj, d = null;
+    while (q && !d) {
+      d = Object.getOwnPropertyDescriptor(q, prop);
+      if (!d) q = Object.getPrototypeOf(q);
+    }
+    if (!d) return { found: false };
+    return {
+      found: true,
+      hasGet: typeof d.get === 'function',
+      hasValue: 'value' in d,
+      nativeGet: d.get ? isNative(d.get) : null,
+      nativeValue: typeof d.value === 'function' ? isNative(d.value) : null,
+      configurable: d.configurable,
+      enumerable: d.enumerable,
+      getStr: d.get ? Function.prototype.toString.call(d.get).slice(0, 80) : null
+    };
+  } catch (e) {
+    return { found: false, error: String(e) };
+  }
+}
+
+(async () => {
+  for (const f of ORDER) await load(f);
+  await new Promise(r => setTimeout(r, 200));
+
+  // ═══════════════════════════════════════════════════════════
+  // A. NATIVE toString / descriptors
+  // ═══════════════════════════════════════════════════════════
+  const protoChecks = [
+    [CanvasRenderingContext2D.prototype, 'getImageData', 'getImageData'],
+    [CanvasRenderingContext2D.prototype, 'fillText', 'fillText'],
+    [HTMLCanvasElement.prototype, 'toDataURL', 'toDataURL'],
+    [HTMLCanvasElement.prototype, 'toBlob', 'toBlob'],
+    [WebGLRenderingContext.prototype, 'getParameter', 'getParameter'],
+    [WebGLRenderingContext.prototype, 'readPixels', 'readPixels'],
+    [OfflineAudioContext && OfflineAudioContext.prototype, 'startRendering', 'startRendering'],
+    [Navigator.prototype, 'webdriver', 'webdriver getter'],
+  ];
+
+  for (const [proto, prop, label] of protoChecks) {
+    if (!proto) {
+      add('native-ish: ' + label, true, 'API missing', true);
+      continue;
+    }
+    const d = descSource(proto, prop);
+    if (!d.found) {
+      // may live only on instance
+      add('descriptor exists: ' + label, true, 'not on prototype (ok if instance-only)', true);
+      continue;
+    }
+    // Hard detectors flag non-native toString. Soft: we WARN not FAIL if patched
+    // but still look like native (Shield aims for native toString via _mn).
+    const looksNative = d.hasGet ? d.nativeGet : d.nativeValue;
+    add(
+      'toString native: ' + label,
+      looksNative !== false,
+      looksNative ? 'native' : ('LEAK: ' + (d.getStr || 'non-native')),
+      true // soft — many good stealth still fail pure native checks under debugger
+    );
+  }
+
+  // webdriver value
+  add('webdriver === false', navigator.webdriver === false, String(navigator.webdriver));
+
+  // ═══════════════════════════════════════════════════════════
+  // B. iframe pristine realm vs main (canvas / nav)
+  // ═══════════════════════════════════════════════════════════
+  const ifr = document.createElement('iframe');
+  ifr.style.display = 'none';
+  document.body.appendChild(ifr);
+  const iwin = ifr.contentWindow;
+  const idoc = ifr.contentDocument;
+
+  // Same-origin iframe often inherits extension content scripts too in MV3 —
+  // but some detectors still compare. We check whether iframe nav matches main.
+  try {
+    const samePlat = iwin.navigator.platform === navigator.platform;
+    const sameWd = iwin.navigator.webdriver === navigator.webdriver;
+    const sameCores = iwin.navigator.hardwareConcurrency === navigator.hardwareConcurrency;
+    add('iframe.platform == main', samePlat, `${iwin.navigator.platform} / ${navigator.platform}`);
+    add('iframe.webdriver == main', sameWd, `${iwin.navigator.webdriver} / ${navigator.webdriver}`);
+    add('iframe.cores == main', sameCores, `${iwin.navigator.hardwareConcurrency} / ${navigator.hardwareConcurrency}`);
+  } catch (e) {
+    add('iframe navigator parity', false, e.message);
+  }
+
+  // Canvas: draw in main, read via toDataURL, decode in iframe (pristine getImageData if unpatched)
+  try {
+    const c = document.createElement('canvas');
+    c.width = 120; c.height = 40;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#069';
+    ctx.fillRect(0, 0, 120, 40);
+    ctx.fillStyle = '#f60';
+    ctx.font = '16px Arial';
+    ctx.fillText('HC', 8, 24);
+    const mainPix = ctx.getImageData(0, 0, 120, 40).data;
+    const url = c.toDataURL();
+
+    const decoded = await new Promise((resolve, reject) => {
+      const img = new iwin.Image();
+      img.onload = () => {
+        const c2 = idoc.createElement('canvas');
+        c2.width = 120; c2.height = 40;
+        const x = c2.getContext('2d');
+        x.drawImage(img, 0, 0);
+        resolve(x.getImageData(0, 0, 120, 40).data);
+      };
+      img.onerror = () => reject(new Error('decode fail'));
+      img.src = url;
+    });
+
+    let diff = 0;
+    for (let i = 0; i < mainPix.length; i++) if (mainPix[i] !== decoded[i]) diff++;
+    add(
+      'canvas getImageData ↔ toDataURL (iframe decode)',
+      diff === 0,
+      diff === 0 ? 'identical' : diff + ' differing bytes'
+    );
+  } catch (e) {
+    add('canvas getImageData ↔ toDataURL (iframe decode)', false, e.message);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // C. Constructor / prototype integrity
+  // ═══════════════════════════════════════════════════════════
+  try {
+    add(
+      'HTMLCanvasElement.prototype.toDataURL length',
+      HTMLCanvasElement.prototype.toDataURL.length === 0 || HTMLCanvasElement.prototype.toDataURL.length === 2,
+      'length=' + HTMLCanvasElement.prototype.toDataURL.length
+    );
+  } catch (e) {
+    add('HTMLCanvasElement.prototype.toDataURL length', false, e.message);
+  }
+
+  try {
+    const c = document.createElement('canvas');
+    const ctx = c.getContext('2d');
+    add(
+      'getContext returns non-null 2d',
+      !!ctx && typeof ctx.getImageData === 'function',
+      ctx ? 'ok' : 'null'
+    );
+  } catch (e) {
+    add('getContext returns non-null 2d', false, e.message);
+  }
+
+  // chrome.runtime presence (extension page vs normal page)
+  // On a normal http page chrome.runtime may be undefined; on extension pages it exists.
+  const hasChromeRuntime = !!(window.chrome && chrome.runtime && chrome.runtime.id);
+  add(
+    'chrome.runtime.id not exposed (page context)',
+    !hasChromeRuntime,
+    hasChromeRuntime ? 'LEAK id=' + chrome.runtime.id : 'ok',
+    true
+  );
+
+  // ═══════════════════════════════════════════════════════════
+  // D. WebGL GPU coherence (Iris Xe profile claims)
+  // ═══════════════════════════════════════════════════════════
+  {
+    const c = document.createElement('canvas');
+    const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+    if (!gl) {
+      add('webgl available', false, 'no gl');
+    } else {
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
+      const vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : '';
+      const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+      const maxVary = gl.getParameter(gl.MAX_VARYING_VECTORS);
+
+      add('webgl has ANGLE in renderer', /ANGLE/i.test(renderer), (renderer || '').slice(0, 70));
+      add('webgl vendor matches Intel claim', /Intel/i.test(vendor + renderer), vendor);
+
+      // Iris-ish limits from GPU_DATA: max texture 16384, not 32768 (NVIDIA)
+      const irisLike = maxTex === 16384 || maxTex === 8192;
+      add(
+        'webgl MAX_TEXTURE_SIZE coherent with Intel (not 32k NVIDIA)',
+        irisLike || maxTex <= 16384,
+        String(maxTex),
+        true
+      );
+
+      // D3D11 in string for Windows profile
+      const d3d = /Direct3D|D3D11/i.test(renderer);
+      add('webgl renderer has D3D11 (Win profile)', d3d || !/ANGLE/i.test(renderer), d3d ? 'D3D11' : 'no D3D token', true);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // E. Audio determinism hard (5 runs)
+  // ═══════════════════════════════════════════════════════════
+  {
+    const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    async function probe() {
+      const ctx = new AC(1, 5000, 44100);
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = 10000;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -50;
+      comp.knee.value = 40;
+      comp.ratio.value = 12;
+      comp.attack.value = 0;
+      comp.release.value = 0.25;
+      osc.connect(comp);
+      comp.connect(ctx.destination);
+      osc.start(0);
+      const buf = await ctx.startRendering();
+      const d = buf.getChannelData(0);
+      let s = 0;
+      for (let i = 4500; i < 5000; i++) s += Math.abs(d[i]);
+      return s;
+    }
+    try {
+      const runs = [];
+      for (let i = 0; i < 5; i++) runs.push(await probe());
+      const allSame = runs.every(r => r === runs[0]);
+      add('audio 5× identical sum', allSame, allSame ? String(runs[0]) : runs.join(' | '));
+    } catch (e) {
+      add('audio 5× identical sum', false, e.message);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // F. Worker deep parity
+  // ═══════════════════════════════════════════════════════════
+  {
+    const code = `
+      self.onmessage = function() {
+        var o = {};
+        try {
+          o.webdriver = navigator.webdriver;
+          o.platform = navigator.platform;
+          o.hc = navigator.hardwareConcurrency;
+          o.dm = navigator.deviceMemory;
+          o.lang = navigator.language;
+          o.ua = navigator.userAgent;
+          o.tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch(e) { o.err = String(e); }
+        try {
+          var off = new OffscreenCanvas(8,8);
+          var gl = off.getContext('webgl');
+          if (gl) {
+            var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+            o.glr = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null;
+            o.glv = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null;
+            o.mts = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+            // is getParameter native?
+            try {
+              o.gpNative = /\\[native code\\]/.test(Function.prototype.toString.call(
+                WebGLRenderingContext.prototype.getParameter
+              ));
+            } catch(e) { o.gpNative = null; }
+          }
+        } catch(e) {}
+        // navigator.webdriver descriptor
+        try {
+          var d = Object.getOwnPropertyDescriptor(navigator, 'webdriver')
+            || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(navigator), 'webdriver');
+          o.wdDesc = d ? { get: !!d.get, value: d.value, cfg: d.configurable } : null;
+        } catch(e) {}
+        self.postMessage(o);
+      };
+    `;
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([code], { type: 'application/javascript' })));
+      const wrk = await new Promise(resolve => {
+        const t = setTimeout(() => resolve({ err: 'timeout' }), 3000);
+        w.onmessage = e => { clearTimeout(t); w.terminate(); resolve(e.data); };
+        w.onerror = e => { clearTimeout(t); w.terminate(); resolve({ err: e.message }); };
+        w.postMessage({});
+      });
+
+      add('worker.webdriver === false', wrk.webdriver === false, String(wrk.webdriver));
+      add('worker.platform == main', wrk.platform === navigator.platform, wrk.platform);
+      add('worker.hc == main', wrk.hc === navigator.hardwareConcurrency, String(wrk.hc));
+      add('worker.tz == main', wrk.tz === Intl.DateTimeFormat().resolvedOptions().timeZone, wrk.tz);
+
+      const c = document.createElement('canvas');
+      const gl = c.getContext('webgl');
+      let mainR = null, mainT = null;
+      if (gl) {
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        mainR = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null;
+        mainT = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+      }
+      add('worker.gl renderer == main', !wrk.glr || wrk.glr === mainR, wrk.glr === mainR ? 'match' : String(wrk.glr).slice(0, 40));
+      add('worker.gl maxTex == main', wrk.mts == null || wrk.mts === mainT, String(wrk.mts));
+    } catch (e) {
+      add('worker deep parity', false, e.message);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // G. UA-CH vs UA string coherence
+  // ═══════════════════════════════════════════════════════════
+  if (navigator.userAgentData) {
+    try {
+      const high = await navigator.userAgentData.getHighEntropyValues([
+        'platform', 'platformVersion', 'architecture', 'bitness'
+      ]);
+      const ua = navigator.userAgent;
+      const chPlat = high.platform || navigator.userAgentData.platform;
+      const okWin = /Windows/i.test(chPlat) && /Windows/i.test(ua);
+      add('UA-CH platform ↔ UA string', okWin || chPlat === navigator.platform, `${chPlat} / UA has Windows=${/Windows/i.test(ua)}`);
+      add('UA-CH mobile === false (desktop)', navigator.userAgentData.mobile === false, String(navigator.userAgentData.mobile));
+      add('UA-CH bitness present', !!high.bitness, String(high.bitness));
+    } catch (e) {
+      add('UA-CH high entropy', false, e.message);
+    }
+  } else {
+    add('UA-CH available', false, 'no userAgentData', true);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // H. Plugins / mimeTypes not empty on desktop Chrome
+  // ═══════════════════════════════════════════════════════════
+  add(
+    'plugins.length > 0',
+    navigator.plugins && navigator.plugins.length > 0,
+    navigator.plugins ? String(navigator.plugins.length) : 'null'
+  );
+  add(
+    'mimeTypes.length > 0',
+    navigator.mimeTypes && navigator.mimeTypes.length > 0,
+    navigator.mimeTypes ? String(navigator.mimeTypes.length) : 'null'
+  );
+
+  // ═══════════════════════════════════════════════════════════
+  // I. Screen / window geometry sane
+  // ═══════════════════════════════════════════════════════════
+  add(
+    'outerWidth >= innerWidth',
+    window.outerWidth >= window.innerWidth - 1,
+    `outer=${window.outerWidth} inner=${window.innerWidth}`
+  );
+  add(
+    'screen.width >= availWidth',
+    screen.width >= screen.availWidth,
+    `${screen.width} >= ${screen.availWidth}`
+  );
+  add(
+    'devicePixelRatio finite > 0',
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0,
+    String(devicePixelRatio)
+  );
+
+  // ═══════════════════════════════════════════════════════════
+  // J. No obvious automation markers
+  // ═══════════════════════════════════════════════════════════
+  add('no window.document.__selenium_unwrapped', !document.__selenium_unwrapped, 'ok');
+  add('no window.callPhantom', typeof window.callPhantom === 'undefined', 'ok');
+  add('no window._phantom', typeof window._phantom === 'undefined', 'ok');
+  add('no navigator.webdriver true', navigator.webdriver !== true, String(navigator.webdriver));
+  add('no HeadlessChrome in UA', !/HeadlessChrome/i.test(navigator.userAgent), 'ok');
+
+  // ═══════════════════════════════════════════════════════════
+  // K. Function.prototype.toString of our critical fns still callable
+  // ═══════════════════════════════════════════════════════════
+  try {
+    const s = Function.prototype.toString.call(HTMLCanvasElement.prototype.toDataURL);
+    add(
+      'toDataURL toString callable',
+      typeof s === 'string' && s.length > 0,
+      s.slice(0, 60)
+    );
+  } catch (e) {
+    add('toDataURL toString callable', false, e.message);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Summary: hard fails vs soft warns
+  // ═══════════════════════════════════════════════════════════
+  const hard = results.filter(r => !r.soft);
+  const soft = results.filter(r => r.soft);
+  const hardFail = hard.filter(r => !r.pass).length;
+  const softFail = soft.filter(r => !r.pass).length;
+  const hardPass = hard.length - hardFail;
+
+  const sumEl = document.getElementById('sum');
+  if (hardFail === 0) {
+    sumEl.textContent = `HARD: ${hardPass}/${hard.length} PASS` +
+      (softFail ? `  ·  soft warns: ${softFail}` : '  ·  no soft warns');
+    sumEl.className = 'green';
+  } else {
+    sumEl.textContent = `HARD: ${hardPass}/${hard.length} PASS — ${hardFail} FAILED  ·  soft warns: ${softFail}`;
+    sumEl.className = 'red';
+  }
+
+  const tbody = document.querySelector('#t tbody');
+  for (const r of results) {
+    const tr = document.createElement('tr');
+    let cls = r.pass ? 'ok' : (r.soft ? 'warn' : 'bad');
+    let lab = r.pass ? 'PASS' : (r.soft ? 'WARN' : 'FAIL');
+    tr.innerHTML = `<td>${r.name}</td><td class="${cls}">${lab}</td><td class="mono">${r.detail}</td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById('log').textContent = logs.join('\n');
+})();
+</script>
+</body>
+</html>

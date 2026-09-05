@@ -1,0 +1,308 @@
+<!doctype html><html><head><meta charset="utf-8"><title>full sweep</title></head>
+<body style="font:13px/1.45 monospace;white-space:pre-wrap">
+<h3 style="font:bold 15px monospace">Fingerprint Shield — full consistency sweep</h3>
+<pre id="out">running...</pre>
+<script>
+/*__HEADERS__*/
+// [FIX local-subresources-can-be-blocked] Nothing here may fetch: with AdGuard on, a page
+// served from 127.0.0.1 cannot make ANY subresource request — measured, the navigation
+// arrives and fetch/XHR/<img> never leave the browser. The worker and frame sources are
+// inlined for that reason, and the request headers arrive in the document above.
+var WORKER_SRC = 'self.onmessage = function () {' +
+  'var n = self.navigator || {};' +
+  'postMessage({ ua: n.userAgent, platform: n.platform, hw: n.hardwareConcurrency, mem: n.deviceMemory,' +
+  ' lang: n.language, langs: (n.languages || []).join(","),' +
+  ' tz: (function () { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return "ERR"; } })(),' +
+  ' loc: (function () { try { return Intl.DateTimeFormat().resolvedOptions().locale; } catch (e) { return "ERR"; } })(),' +
+  ' off: new Date(2021, 0, 15).getTimezoneOffset(),' +
+  ' uad: (function () { try { return n.userAgentData ? n.userAgentData.platform + "|" + n.userAgentData.mobile : "none"; } catch (e) { return "ERR"; } })()' +
+  '});' +
+  '};';
+var FRAME_SRC = '<scr' + 'ipt>parent.postMessage({__frame:1,v:{' +
+  'ua:navigator.userAgent,platform:navigator.platform,hw:navigator.hardwareConcurrency,mem:navigator.deviceMemory,' +
+  'lang:navigator.language,langs:(navigator.languages||[]).join(","),' +
+  'tz:(function(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone}catch(e){return "ERR"}})(),' +
+  'loc:(function(){try{return Intl.DateTimeFormat().resolvedOptions().locale}catch(e){return "ERR"}})(),' +
+  'off:new Date(2021,0,15).getTimezoneOffset(),' +
+  'uad:(function(){try{return navigator.userAgentData?navigator.userAgentData.platform+"|"+navigator.userAgentData.mobile:"none"}catch(e){return "ERR"}})(),' +
+  'p0:!!window.__p0}},"*")</scr' + 'ipt>';
+function workerUrl() { return URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' })); }
+var NL = String.fromCharCode(10);
+var R = [];
+function chk(name, cond, detail) { R.push((cond ? 'PASS ' : 'FAIL ') + name + ' :: ' + (detail === undefined ? '' : String(detail))); }
+function val(name, v) { R.push('     ' + name + ' :: ' + String(v)); }
+function tzOf(o) { try { return Intl.DateTimeFormat(undefined, o).resolvedOptions().timeZone; } catch (e) { return 'ERR'; } }
+
+function realmVector() {
+  return {
+    ua: navigator.userAgent, platform: navigator.platform, hw: navigator.hardwareConcurrency,
+    mem: navigator.deviceMemory, lang: navigator.language, langs: (navigator.languages || []).join(','),
+    tz: tzOf(), loc: (function () { try { return Intl.DateTimeFormat().resolvedOptions().locale; } catch (e) { return 'ERR'; } })(),
+    off: new Date(2021, 0, 15).getTimezoneOffset(),
+    uad: (function () { try { return navigator.userAgentData ? navigator.userAgentData.platform + '|' + navigator.userAgentData.mobile : 'none'; } catch (e) { return 'ERR'; } })(),
+    wd: String(navigator.webdriver)
+  };
+}
+
+function cmpRealm(label, a, b, keys) {
+  var bad = [];
+  keys.forEach(function (k) { if (String(a[k]) !== String(b[k])) bad.push(k + ' ' + JSON.stringify(a[k]) + ' vs ' + JSON.stringify(b[k])); });
+  chk(label, bad.length === 0, bad.join(' | '));
+}
+
+function frameVector(make) {
+  return new Promise(function (res) {
+    var done = false;
+    var f = document.createElement('iframe');
+    f.style.cssText = 'width:60px;height:40px;opacity:0.01;position:absolute;left:-999px';
+    function onMsg(e) {
+      if (!e.data || !e.data.__frame || done) return;
+      done = true;
+      window.removeEventListener('message', onMsg);
+      res(e.data.v);
+    }
+    window.addEventListener('message', onMsg);
+    make(f);
+    document.body.appendChild(f);
+    setTimeout(function () { if (!done) { done = true; window.removeEventListener('message', onMsg); res(null); } }, 3000);
+  });
+}
+
+function askWorker(w) {
+  return new Promise(function (res) {
+    var done = false;
+    w.onmessage = function (e) { if (!done) { done = true; res(e.data); } };
+    w.onerror = function (e) { if (!done) { done = true; res({ err: String((e && e.message) || e) }); } };
+    try { w.postMessage(1); } catch (e) { res({ err: String(e) }); }
+    setTimeout(function () { if (!done) { done = true; res(null); } }, 3000);
+  });
+}
+
+(async function () {
+  var W = realmVector();
+  var KEYS = ['ua', 'platform', 'hw', 'mem', 'lang', 'langs', 'tz', 'loc', 'off', 'uad'];  // wd: WorkerNavigator has no webdriver, measured clean
+  val('window UA', W.ua);
+  val('tz / locale / offset', W.tz + ' / ' + W.loc + ' / ' + W.off);
+  val('screen / dpr', screen.width + 'x' + screen.height + ' avail ' + screen.availWidth + 'x' + screen.availHeight + ' dpr ' + devicePixelRatio + ' depth ' + screen.colorDepth);
+  val('cores / memory / langs', W.hw + ' / ' + W.mem + ' / ' + W.langs);
+
+  try { cmpRealm('dedicated worker matches window', W, (await askWorker(new Worker(workerUrl()))) || {}, KEYS); }
+  catch (e) { chk('dedicated worker matches window', false, 'threw ' + e.message); }
+  try {
+    var mw = await askWorker(new Worker(workerUrl(), { type: 'module' }));
+    chk('module worker answered at all', !!(mw && mw.ua), mw === null ? 'NO REPLY within 3s' : (mw && mw.err) ? ('error ' + mw.err) : '');
+    if (mw && mw.ua) cmpRealm('module worker matches window', W, mw, KEYS);
+    // Second chance: does it answer when the message is sent LATER, after the worker has
+    // had time to evaluate? If yes, the reply was lost to startup ordering, not to a
+    // broken worker — a page that posts immediately after `new Worker` loses that message.
+    var mw2 = await new Promise(function (res) {
+      var w = new Worker(workerUrl(), { type: 'module' }), d = false;
+      w.onmessage = function (e) { if (!d) { d = true; res(e.data); } };
+      w.onerror = function (e) { if (!d) { d = true; res({ err: String((e && e.message) || e) }); } };
+      setTimeout(function () { try { w.postMessage(1); } catch (er) {} }, 700);
+      setTimeout(function () { if (!d) { d = true; res(null); } }, 4000);
+    });
+    chk('module worker answers a LATE message', !!(mw2 && mw2.ua), mw2 === null ? 'NO REPLY' : (mw2 && mw2.err) ? ('error ' + mw2.err) : 'replied');
+  }
+  catch (e) { chk('module worker answered at all', false, 'threw ' + e.message); }
+  try { cmpRealm('blob worker matches window', W, (await askWorker(new Worker(workerUrl()))) || {}, KEYS); }
+  catch (e) { chk('blob worker matches window', false, 'threw ' + e.message); }
+
+  var frameHtml = FRAME_SRC;
+  var fSrcdoc = await frameVector(function (f) { f.srcdoc = frameHtml; });
+  chk('srcdoc iframe replied', !!fSrcdoc, '');
+  if (fSrcdoc) { cmpRealm('srcdoc iframe matches window', W, fSrcdoc, KEYS); chk('srcdoc frame got the patches', fSrcdoc.p0 === true, 'p0=' + fSrcdoc.p0); }
+
+  var fBlob = await frameVector(function (f) { f.src = URL.createObjectURL(new Blob([frameHtml], { type: 'text/html' })); });
+  chk('blob: iframe replied', !!fBlob, '');
+  if (fBlob) { cmpRealm('blob: iframe matches window', W, fBlob, KEYS); chk('blob: frame got the patches', fBlob.p0 === true, 'p0=' + fBlob.p0); }
+
+  var offJan = new Date(2021, 0, 15).getTimezoneOffset(), offJul = new Date(2021, 6, 15).getTimezoneOffset();
+  var parsed = new Date('2021-07-15T12:00:00Z').getTimezoneOffset();
+  chk('getTimezoneOffset stable across ctors', parsed === offJul, 'parsed ' + parsed + ' vs local ' + offJul);
+  chk('Date string names a zone', String(new Date()).indexOf('GMT') !== -1, String(new Date()).slice(0, 55));
+  val('offsets jan/jul', offJan + '/' + offJul);
+  chk('Intl locale single-valued and = navigator.language', W.loc.indexOf(',') === -1 && W.loc === navigator.language, W.loc + ' vs ' + navigator.language);
+  ['NumberFormat', 'Collator', 'PluralRules', 'RelativeTimeFormat', 'ListFormat'].forEach(function (c) {
+    try { var l = new Intl[c]().resolvedOptions().locale; chk('Intl.' + c + ' locale matches', l === W.loc, l); }
+    catch (e) { chk('Intl.' + c + ' locale matches', false, 'threw ' + e.message); }
+  });
+  try { chk('Temporal zone matches Intl', !window.Temporal || Temporal.Now.timeZoneId() === W.tz, window.Temporal ? Temporal.Now.timeZoneId() : 'no Temporal'); }
+  catch (e) { chk('Temporal zone matches Intl', false, e.message); }
+  try { chk('Segmenter locale matches', !(window.Intl && Intl.Segmenter) || new Intl.Segmenter().resolvedOptions().locale === W.loc, (window.Intl && Intl.Segmenter) ? new Intl.Segmenter().resolvedOptions().locale : 'n/a'); }
+  catch (e) { chk('Segmenter locale matches', false, e.message); }
+
+  try {
+    var uad = navigator.userAgentData;
+    chk('userAgentData exists', !!uad, '');
+    if (uad) {
+      var own = Object.getOwnPropertyNames(uad);
+      chk('UAD carries no own data props', own.length === 0, own.join(',') || '(none)');
+      var he = await uad.getHighEntropyValues(['platform', 'platformVersion', 'architecture', 'bitness', 'model', 'uaFullVersion', 'fullVersionList', 'wow64']);
+      var keys = Object.keys(he);
+      chk('high-entropy keys sorted', keys.join(',') === keys.slice().sort().join(','), keys.join(','));
+      chk('UAD platform agrees with UA string', (W.ua.indexOf('Windows') !== -1) === (he.platform === 'Windows'), he.platform + ' ' + he.platformVersion);
+      var uaMajor = (/Chrome\/(\d+)/.exec(W.ua) || [])[1];
+      var brandMajor = ((uad.brands || []).filter(function (b) { return /Chrom/i.test(b.brand); })[0] || {}).version;
+      chk('brand major matches UA major', !uaMajor || !brandMajor || uaMajor === brandMajor, 'UA ' + uaMajor + ' brand ' + brandMajor);
+      var fvl = he.fullVersionList || [];
+      chk('fullVersionList majors match UA', !uaMajor || fvl.every(function (b) { return !/Chrom/i.test(b.brand) || b.version.split('.')[0] === uaMajor; }), fvl.map(function (b) { return b.brand + ':' + b.version; }).join(' '));
+      val('brands', (uad.brands || []).map(function (b) { return b.brand + ':' + b.version; }).join(' '));
+    }
+  } catch (e) { chk('userAgentData block', false, e.message); }
+  chk('appVersion agrees with UA', W.ua.indexOf(navigator.appVersion) !== -1, navigator.appVersion.slice(0, 40));
+  chk('navigator.webdriver is false', navigator.webdriver === false, W.wd);
+  chk('plugins/mimeTypes both present or both empty', (navigator.plugins.length > 0) === (navigator.mimeTypes.length > 0), 'plugins ' + navigator.plugins.length + ' mime ' + navigator.mimeTypes.length);
+
+  var mqBad = [];
+  ['(prefers-color-scheme: dark)', '(prefers-reduced-motion: reduce)', '(forced-colors: active)',
+   '(dynamic-range: high)', '(pointer: fine)', '(hover: hover)', '(display-mode: browser)',
+   '(prefers-contrast: more)', '(color-gamut: srgb)'].forEach(function (q) {
+    var js = matchMedia(q).matches;
+    var el = document.createElement('div');
+    var st = document.createElement('style');
+    el.id = 'mq' + Math.random().toString(36).slice(2);
+    st.textContent = '#' + el.id + '{--x:0}@media ' + q + '{#' + el.id + '{--x:1}}';
+    document.head.appendChild(st); document.body.appendChild(el);
+    var css = getComputedStyle(el).getPropertyValue('--x').trim() === '1';
+    st.remove(); el.remove();
+    if (css !== js) mqBad.push(q + ' css=' + css + ' js=' + js);
+  });
+  chk('every @media agrees with matchMedia', mqBad.length === 0, mqBad.join(' | '));
+  chk('inner <= screen', innerWidth <= screen.width && innerHeight <= screen.height, 'inner ' + innerWidth + 'x' + innerHeight + ' screen ' + screen.width + 'x' + screen.height);
+  chk('avail <= screen', screen.availWidth <= screen.width && screen.availHeight <= screen.height, screen.availWidth + 'x' + screen.availHeight);
+  chk('colorDepth is 24', screen.colorDepth === 24 && screen.pixelDepth === 24, screen.colorDepth + '/' + screen.pixelDepth);
+
+  var enumLeak = Object.keys(window).filter(function (k) { return /^__/.test(k) || /_$/.test(k) || /afp|shield|spoof/i.test(k); });
+  chk('no extension globals enumerable', enumLeak.length === 0, enumLeak.join(',') || '(none)');
+  var storKeys = [];
+  try { for (var i = 0; i < sessionStorage.length; i++) storKeys.push(sessionStorage.key(i)); } catch (e) {}
+  chk('sessionStorage holds nothing but v.ui.*', storKeys.every(function (k) { return /^v\.ui\./.test(k); }), storKeys.join(',') || '(empty)');
+  chk('chrome.runtime absent, as in clean Chrome', !(window.chrome && window.chrome.runtime), window.chrome ? Object.keys(window.chrome).join(',') : 'no chrome object');
+  var nativeBad = [];
+  [[CanvasRenderingContext2D.prototype, 'getImageData'], [HTMLCanvasElement.prototype, 'toDataURL'],
+   [Navigator.prototype, 'hardwareConcurrency'], [Navigator.prototype, 'languages'], [Screen.prototype, 'width'],
+   [Date.prototype, 'getTimezoneOffset'], [RTCPeerConnection.prototype, 'localDescription'],
+   [RTCPeerConnection.prototype, 'getStats'], [Element.prototype, 'getBoundingClientRect'],
+   [WebGLRenderingContext.prototype, 'getParameter']].forEach(function (pair) {
+    var dsc = Object.getOwnPropertyDescriptor(pair[0], pair[1]);
+    if (!dsc) { nativeBad.push(pair[1] + ' MISSING'); return; }
+    var fn = dsc.value || dsc.get;
+    if (typeof fn !== 'function') { nativeBad.push(pair[1] + ' not callable'); return; }
+    if (String(fn).indexOf('[native code]') === -1) nativeBad.push(pair[1] + ' -> ' + String(fn).slice(0, 40));
+  });
+  chk('patched members still read as native', nativeBad.length === 0, nativeBad.join(' | '));
+  var stack = '';
+  try { null.x; } catch (e) { stack = e.stack || ''; }
+  chk('error stacks name no extension file', stack.indexOf('chrome-extension://') === -1, (stack.split(NL)[1] || '').trim().slice(0, 70));
+
+  function canvasHash() {
+    var c = document.createElement('canvas'); c.width = 220; c.height = 40;
+    var x = c.getContext('2d');
+    x.textBaseline = 'top'; x.font = '14px Arial'; x.fillStyle = '#f60'; x.fillRect(0, 0, 100, 20);
+    x.fillStyle = '#069'; x.fillText('Shield sweep 42', 2, 15);
+    var s = c.toDataURL(); var h = 0;
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h;
+  }
+  var h1 = canvasHash(), h2 = canvasHash();
+  chk('canvas hash stable within page', h1 === h2, h1 + ' / ' + h2);
+  val('canvas hash', h1);
+  try {
+    var gl = document.createElement('canvas').getContext('webgl');
+    var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    var vend = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : '?';
+    var rend = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '?';
+    val('WebGL vendor/renderer', vend + ' | ' + rend);
+    chk('WebGL renderer is ANGLE-shaped', /ANGLE|SwiftShader/.test(rend), rend);
+    chk('WebGL vendor agrees with renderer', !/Intel/i.test(vend) || /Intel/i.test(rend), '');
+    var gl2 = document.createElement('canvas').getContext('webgl2');
+    var d2 = gl2 && gl2.getExtension('WEBGL_debug_renderer_info');
+    chk('webgl2 renderer matches webgl1', !d2 || gl2.getParameter(d2.UNMASKED_RENDERER_WEBGL) === rend, d2 ? gl2.getParameter(d2.UNMASKED_RENDERER_WEBGL) : 'no webgl2');
+  } catch (e) { chk('WebGL readable', false, e.message); }
+  try {
+    var ac = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 4410, 44100);
+    var osc = ac.createOscillator(); osc.type = 'triangle'; osc.frequency.value = 10000;
+    var comp = ac.createDynamicsCompressor(); osc.connect(comp); comp.connect(ac.destination); osc.start(0);
+    var buf = await ac.startRendering();
+    var sum = 0, data = buf.getChannelData(0);
+    for (var j = 0; j < data.length; j++) sum += Math.abs(data[j]);
+    val('audio sum', sum.toFixed(6));
+  } catch (e) { chk('audio renderable', false, e.message); }
+
+  try { var b = navigator.getBattery ? await navigator.getBattery() : null; val('battery', b ? ('level ' + b.level + ' charging ' + b.charging) : 'no getBattery'); }
+  catch (e) { val('battery', 'ERR ' + e.message); }
+  try { var devs = await navigator.mediaDevices.enumerateDevices(); val('mediaDevices', devs.map(function (x) { return x.kind; }).join(',')); }
+  catch (e) { val('mediaDevices', 'ERR'); }
+  val('connection', navigator.connection ? (navigator.connection.effectiveType + ' rtt ' + navigator.connection.rtt) : 'none');
+  val('markers', '__p0=' + !!window.__p0 + ' __t0=' + !!window.__t0 + ' __r0=' + !!window.__r0 + ' webrtc=' + (window.__t0 ? window.__t0.webrtc : 'n/a'));
+  try { val('mode / flags', sessionStorage.getItem('v.ui.m') + ' / ' + sessionStorage.getItem('v.ui.f')); } catch (e) {}
+
+  // ── headers vs JS ────────────────────────────────────────────────────────
+  // The half of the fingerprint the page cannot see. A stale DNR rule once had the
+  // sec-ch-ua-platform-version header claiming Windows 10 while JS said 11 — one field out
+  // of step with its neighbours, which is worse than either value on its own.
+  try {
+    var H = (typeof AFP_REQ_HEADERS !== 'undefined') ? AFP_REQ_HEADERS : { headers: {} };
+    var h = H.headers || {};
+    var hint = function (k) { return h[k] === undefined ? null : String(h[k]).replace(/^"|"$/g, ''); };
+    val('header UA', h['user-agent'] || '(none)');
+    val('header accept-language', h['accept-language'] || '(none)');
+    val('client hints sent', Object.keys(h).filter(function (k) { return k.indexOf('sec-ch-') === 0; }).join(', ') || '(none yet — reload once)');
+    chk('header UA equals navigator.userAgent', (h['user-agent'] || '') === navigator.userAgent, h['user-agent'] || '(none)');
+    var al = (h['accept-language'] || '').split(',').map(function (x) { return x.split(';')[0].trim(); }).filter(Boolean);
+    chk('accept-language matches navigator.languages', al.join(',') === (navigator.languages || []).join(','),
+      al.join(',') + ' vs ' + (navigator.languages || []).join(','));
+    var chPlat = hint('sec-ch-ua-platform');
+    if (chPlat === null) {
+      val('hint check', 'hints not sent on this load — reload to compare them');
+    } else {
+      var he2 = await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion', 'architecture', 'bitness', 'model', 'wow64', 'fullVersionList']);
+      chk('sec-ch-ua-platform matches JS', chPlat === he2.platform, chPlat + ' vs ' + he2.platform);
+      var chPv = hint('sec-ch-ua-platform-version');
+      chk('platform-version header matches JS', chPv === null || chPv === he2.platformVersion, chPv + ' vs ' + he2.platformVersion);
+      var chArch = hint('sec-ch-ua-arch');
+      chk('arch header matches JS', chArch === null || chArch === he2.architecture, chArch + ' vs ' + he2.architecture);
+      var chBits = hint('sec-ch-ua-bitness');
+      chk('bitness header matches JS', chBits === null || chBits === he2.bitness, chBits + ' vs ' + he2.bitness);
+      var chMob = h['sec-ch-ua-mobile'];
+      chk('mobile header matches JS', chMob === undefined || (chMob === '?1') === navigator.userAgentData.mobile, chMob + ' vs ' + navigator.userAgentData.mobile);
+      var chUa = h['sec-ch-ua'] || '';
+      var uaMaj2 = (/Chrome\/(\d+)/.exec(navigator.userAgent) || [])[1];
+      chk('sec-ch-ua brands carry the UA major', !uaMaj2 || chUa.indexOf('"' + uaMaj2 + '"') !== -1, chUa);
+      var fvlH = h['sec-ch-ua-full-version-list'] || '';
+      chk('full-version-list header agrees with JS', !fvlH || !he2.fullVersionList ||
+        he2.fullVersionList.every(function (b) { return fvlH.indexOf(b.version) !== -1 || !/Chrom|Chrome/i.test(b.brand); }),
+        fvlH + ' vs ' + (he2.fullVersionList || []).map(function (b) { return b.brand + ':' + b.version; }).join(' '));
+    }
+  } catch (e) { chk('headers readable', false, e.message); }
+
+  // ── seed behaviour across loads and hosts ────────────────────────────────
+  // Per-domain by design: the same site must hash the same on every visit, and two hosts
+  // must differ. One load can only print the number; the comparison needs the journal.
+  try {
+    var key = 'sweepCanvas:' + location.hostname;
+    var prev = localStorage.getItem(key);
+    var other = null, otherHost = null;
+    for (var si = 0; si < localStorage.length; si++) {
+      var k = localStorage.key(si);
+      if (k.indexOf('sweepCanvas:') === 0 && k !== key) { other = localStorage.getItem(k); otherHost = k.slice(12); }
+    }
+    if (prev === null) val('canvas hash vs previous load', 'first load on ' + location.hostname + ' — reload to compare');
+    else chk('canvas hash stable across loads', String(h1) === prev, h1 + ' vs ' + prev + ' (same host)');
+    if (other !== null) chk('canvas hash differs from another host', String(h1) !== other, location.hostname + '=' + h1 + ' ' + otherHost + '=' + other);
+    else val('cross-host canvas check', 'open the same page on localhost to compare');
+    localStorage.setItem(key, String(h1));
+  } catch (e) { chk('canvas journal', false, e.message); }
+
+  var fails = R.filter(function (r) { return r.indexOf('FAIL') === 0; });
+  var passes = R.filter(function (r) { return r.indexOf('PASS') === 0; });
+  var head = (fails.length ? '*** ' + fails.length + ' FAIL / ' + passes.length + ' pass ***' : 'ALL PASS (' + passes.length + ' checks)');
+  document.getElementById('out').textContent = head + NL + NL + R.join(NL);
+  var hist = [];
+  try { hist = JSON.parse(localStorage.getItem('sweepHist') || '[]'); } catch (e) {}
+  hist.push(new Date().toTimeString().slice(0, 8) + '  ' + head + (fails.length ? NL + fails.join(NL) : ''));
+  while (hist.length > 12) hist.shift();
+  try { localStorage.setItem('sweepHist', JSON.stringify(hist)); } catch (e) {}
+})();
+</script></body></html>

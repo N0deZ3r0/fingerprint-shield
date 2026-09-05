@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>TextMetrics field by field vs clean</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// The detector's Canvas section (data / rendering / textMetrics) went red. Only
+// the text-metric path changed recently, so compare EVERY TextMetrics field
+// against a pristine realm — with the real WASM loaded, the way the shipped
+// extension runs. Some of these fields are exact constants in every real browser
+// (alphabeticBaseline is exactly 0); perturbing such a field is a lie that costs
+// nothing to detect.
+const SEED = 0x12345678;
+const F = {canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:SEED, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:F
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER=['profile-injector.js','mw/mw-bag.js','mw/mw-core.js','mw/mw-timezone-screen.js',
+ 'mw/mw-navigator.js','mw/mw-canvas-audio.js','mw/mw-misc.js','mw/mw-workers.js','mw/mw-geo.js',
+ 'mw/mw-adblock.js','mw/mw-cleanup.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// the emoji set the detector renders, plus ordinary text and a blocked font
+const CASES = [
+  ['14px Arial',            'Handgloves'],
+  ['14px Arial',            '\u{1F600}☺\u{1F935}‍♂️✴\u{1F170}\u{1F17F}'],
+  ['16px monospace',        'mwmwmwmwlli'],
+  ['16px "MS Gothic"',      'mwmwmwmwlli'],   // blocked family
+  ['16px "Segoe UI"',       'mwmwmwmwlli'],   // allowed family
+  ['14px Arial',            ''],              // empty string: native width is exactly 0
+];
+
+(async () => {
+  const L = [];
+  // load the REAL wasm wrapper first, exactly as the shipped extension does
+  try {
+    const src = await (await fetch('background.js?x='+Date.now())).text();
+    const marker = 'func: async function(wasmUrl, noiseSeedArg) {';
+    const at = src.indexOf(marker);
+    const open = src.indexOf('{', at + marker.length - 1);
+    let depth = 0, end = -1;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+    }
+    const body = src.slice(src.indexOf('async function', at), end);
+    const loader = new Function('return (' + body + ')')();
+    const r = await loader('protect.wasm?x='+Date.now(), SEED);
+    L.push('WASM loader: ' + JSON.stringify(r) + '   __w0 present: ' + !!window.__w0);
+  } catch (e) { L.push('WASM loader FAILED: ' + e.message + '  (falling back to the JS path)'); }
+
+  const ifr = document.createElement('iframe'); ifr.style.display='none';
+  document.body.appendChild(ifr);
+  const cleanCtx = ifr.contentDocument.createElement('canvas').getContext('2d');
+
+  const FIELDS = Object.getOwnPropertyNames(ifr.contentWindow.TextMetrics.prototype)
+    .filter(n => n !== 'constructor').sort();
+
+  function read(ctx, font, text) {
+    ctx.font = font;
+    const m = ctx.measureText(text);
+    const o = {};
+    for (const f of FIELDS) { try { o[f] = m[f]; } catch (e) { o[f] = 'THROW'; } }
+    return o;
+  }
+
+  const before = CASES.map(([f, t]) => read(cleanCtx, f, t));
+  for (const f of ORDER) await load(f);
+  const ctx = document.createElement('canvas').getContext('2d');
+  const after = CASES.map(([f, t]) => read(ctx, f, t));
+
+  // A field that is the SAME exact constant across every case in a clean browser
+  // is a constant of the engine, not a measurement. Changing it is pure signal.
+  const constFields = FIELDS.filter(f => new Set(before.map(b => String(b[f]))).size === 1);
+
+  L.push('');
+  L.push('fields that are one fixed constant across all ' + CASES.length + ' cases in the CLEAN realm:');
+  constFields.forEach(f => {
+    const cleanVal = before[0][f];
+    const ourVals = [...new Set(after.map(a => String(a[f])))];
+    const kept = ourVals.length === 1 && ourVals[0] === String(cleanVal);
+    L.push('  ' + (kept ? 'PASS  ' : 'FAIL  ') + f.padEnd(22)
+      + 'clean ' + String(cleanVal).padEnd(22) + 'ours ' + ourVals.join(' / '));
+  });
+
+  L.push('');
+  L.push('per-case deltas (ours − clean), all fields:');
+  CASES.forEach(([f, t], i) => {
+    L.push('  ' + f + '   ' + JSON.stringify(t).slice(0, 30));
+    FIELDS.forEach(k => {
+      const a = before[i][k], b = after[i][k];
+      if (typeof a !== 'number' || typeof b !== 'number') return;
+      if (a === b) return;
+      L.push('      ' + k.padEnd(24) + a + '  →  ' + b + '   Δ ' + (b - a).toExponential(3));
+    });
+  });
+
+  const bad = constFields.filter(f => {
+    const ourVals = [...new Set(after.map(a => String(a[f])))];
+    return !(ourVals.length === 1 && ourVals[0] === String(before[0][f]));
+  });
+  L.push('');
+  L.push(bad.length
+    ? 'VERDICT  we perturb ' + bad.length + ' engine CONSTANT(s): ' + bad.join(', ')
+      + '\n         No real browser varies these — this is a free lie signal.'
+    : 'VERDICT  every engine constant is passed through untouched.');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

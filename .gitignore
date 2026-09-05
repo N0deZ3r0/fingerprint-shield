@@ -1,0 +1,66 @@
+# Dependencies — restored with `npm install`, 30 MB, never edited by hand.
+node_modules/
+
+# Written by Chrome itself when the extension is loaded unpacked (indexed copies of the
+# declarativeNetRequest rulesets). Regenerated on every load; not source.
+_metadata/
+
+# Scratch runners. Keep them out of the extension directory anyway — Chrome validates
+# every file it finds there, and a stray name can make the whole load fail.
+ccprobe*.mjs
+chprobe*.mjs
+stackprobe*.mjs
+leakhunt*.mjs
+glprobe*.mjs
+*.bak
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# NOTE — mw-bundle.js and dyn/ ARE committed on purpose, even though tools/gen-bundle.mjs
+# and tools/gen-dyn.mjs generate them. This repository IS the extension: it is loaded
+# unpacked straight from the working tree, so a clone with those files missing does not
+# load at all. test/parity-static.mjs re-runs both generators in memory and fails if what
+# is on disk differs, so a stale artefact turns the suite red rather than shipping.
+
+# Per-machine Claude Code settings (the shared ones live in .claude/settings.json).
+.claude/settings.local.json
+
+# Instruments belonging to a separate, unpublished project. They sit in this directory but
+# they are not this extension's: each drives a BROWSER binary through FPS_CHROME and
+# measures that build itself rather than this extension.
+#
+# Listed one by one rather than as tools/probe-*.mjs on purpose: this extension has a probe
+# of its own — tools/probe-surface.mjs, which diffs the installed browser's API surface
+# against the rig's — and a pattern with an exception would swallow the next one silently.
+# A new file here shows up as untracked instead, which is a decision rather than a default.
+test/fps-core.mjs
+tools/check-all.mjs
+tools/probe-baseline.mjs
+tools/probe-battery.mjs
+tools/probe-chooser.mjs
+tools/probe-codecs.mjs
+tools/probe-console.mjs
+tools/probe-devices.mjs
+tools/probe-domrect.mjs
+tools/probe-doors.mjs
+tools/probe-fullscreen.mjs
+tools/probe-geo.mjs
+tools/probe-parity.mjs
+tools/probe-plain.mjs
+tools/probe-restart.mjs
+tools/probe-screen.mjs
+tools/probe-webrtc.mjs
+
+# A dump written by tools/probe-baseline.mjs above — the successor build's own metrics,
+# not a source file of this extension.
+notes-baseline-ours.json
+
+# Built by tools/pack.mjs — the extension with the workshop left behind. Generated on
+# demand and uploaded by CI as the build artifact; nothing reads it from the repository.
+dist/

@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest an idea or an improvement
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Пишите по-русски или по-английски — как удобнее.**
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can a site read that it should not?
+      description: |
+        This project moves on measurements. If you have one — a page, a suite, a diff — say so.
+        Опишите, что именно сайт может прочитать, и как это измерено.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should happen instead?
+      description: Как это должно работать.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: This is not one of the sixteen Limits in the README / Это не один из «Пределов»
+          required: true

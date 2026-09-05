@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fingerprint Shield</title>
+  <!-- ui.css carries the shared tokens and must come first; the page sheet only
+       adds rules. See the header of ui.css for why the three surfaces share one file. -->
+  <link rel="stylesheet" href="ui.css" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- ── hero: identity, live state, current site ─────────────────────── -->
+    <div class="hero" id="hero">
+      <div class="hero-row">
+        <span class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2.6 4.4 5.8v5.6c0 4.7 3.2 8.4 7.6 10 4.4-1.6 7.6-5.3 7.6-10V5.8Z"/>
+            <path d="m8.9 11.9 2.2 2.2 4-4.4"/>
+          </svg>
+        </span>
+        <span class="hero-txt">
+          <b class="hero-ttl" id="heroTitle">Защита активна</b>
+          <span class="hero-sub" id="heroSub">проверяем модули…</span>
+        </span>
+        <span class="badge pill" id="tabBadge">Обычный</span>
+      </div>
+      <div class="hero-site">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/>
+        </svg>
+        <span id="tabHost">…</span>
+      </div>
+      <!-- The six per-module chips (Canvas / WebGL / TZ / RTC / Bat / WASM) stood here.
+           They answered the same question the hero line above already answers — "N из 6
+           модулей активно" — only broken into six pieces, and the page that does explain
+           each module one by one is Who Am I. popup.js keeps probing all six; only the
+           count reaches the UI now. See the note at renderShield for why deleting this
+           block alone would have frozen the hero on "Защита не активна". -->
+    </div>
+
+    <p class="note" id="emptyState" hidden>Откройте http/https-вкладку</p>
+
+    <!-- ── country ──────────────────────────────────────────────────────── -->
+    <section class="card">
+      <div class="country-select" id="countrySelect">
+        <button type="button" class="country-btn" id="countryBtn" aria-haspopup="listbox" aria-expanded="false">
+          <span class="country-code" id="countryCode">US</span>
+          <span class="country-meta">
+            <span class="country-name" id="countryName">United States</span>
+            <span class="country-tz" id="countryTz">America/New_York</span>
+          </span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="dropdown" id="dropdown">
+          <div class="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
+            <input class="menu-search" id="searchInput" type="search" placeholder="Поиск страны" autocomplete="off" />
+          </div>
+          <div class="option-list" id="optionList" role="listbox"></div>
+        </div>
+      </div>
+    </section>
+    <span id="tzValue" hidden></span>
+
+    <!-- ── per-site switches ────────────────────────────────────────────
+         One card, one host line. Both switches decide something about THIS site, and
+         printing the hostname twice was what pushed the popup past Chrome's 600px and
+         gave it a scrollbar. Polarity differs by design: WebRTC ON = protection we add,
+         Service Worker ON = a capability the site keeps (blocking it takes the site's
+         offline mode with it — see SW_BLOCKED_KEY in background.js). -->
+    <section class="card site" id="siteCard">
+      <div class="hint" id="siteHost">—</div>
+
+      <div class="row-line">
+        <div class="row-t" id="webrtcLabel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="M12 3v18M5 8v8M19 8v8M2 11v2M22 11v2"/>
+          </svg>
+          WebRTC
+        </div>
+        <button type="button" class="switch" id="webrtcToggle" role="switch" aria-label="WebRTC защита">
+          <i class="knob"></i>
+        </button>
+      </div>
+
+      <div class="row-line">
+        <div class="row-t" id="swLabel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h10"/>
+          </svg>
+          Service Worker
+        </div>
+        <button type="button" class="switch" id="swToggle" role="switch" aria-label="Service Worker для сайта">
+          <i class="knob"></i>
+        </button>
+      </div>
+
+      <!-- [FIX csp-rewrite-for-workers] Third switch, OFF by default. On a site whose CSP
+           refuses blob: workers (youtube.com) the extension stands down whole rather than
+           contradict the site's own workers; this rewrites that site's CSP header so the
+           workers can be patched, at the price of the site's nonce-based policy. Amber
+           when on, dimmed when the site does not need it. -->
+      <div class="row-line">
+        <div class="row-t" id="cspLabel">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 6h16M4 12h10M4 18h7"/><path d="m16 15 2 2 4-4"/>
+          </svg>
+          CSP → воркеры
+        </div>
+        <button type="button" class="switch" id="cspToggle" role="switch" aria-label="Переписать CSP сайта, чтобы подмена работала в его воркерах">
+          <i class="knob"></i>
+        </button>
+      </div>
+    </section>
+
+    <!-- ── mode ─────────────────────────────────────────────────────────── -->
+    <section class="card compact">
+      <div class="seg" id="modeGrid" role="tablist">
+        <button type="button" class="mode active" data-mode="normal" role="tab">Обычный</button>
+        <button type="button" class="mode" data-mode="hidden" role="tab">Скрытый</button>
+      </div>
+      <p class="hint" id="modeHint">Полная подмена профиля устройства</p>
+    </section>
+
+    <!-- ── device profile ───────────────────────────────────────────────── -->
+    <!-- A picker, shaped like the country one above, and not a grid of tiles. The tiles
+         sat two per row, so the FIFTH profile opened a third row and took the popup from
+         590px to 654 against Chrome's 600px cap (measured — see the open-work list item 1). A picker
+         costs one row whatever the list holds, which is what let the two scaled-1080p
+         laptops (1536×864 @ 1.25, 1280×720 @ 1.5 — 12.7% of desktop web between them)
+         and the "this machine" entry in at all. No section heading, same reason as before:
+         the button names its machine itself. -->
+    <section class="card">
+      <div class="country-select" id="profileSelect">
+        <button type="button" class="country-btn" id="profileBtn" aria-haspopup="listbox" aria-expanded="false">
+          <span class="prof-ic" id="profileIcon" aria-hidden="true"></span>
+          <span class="country-meta">
+            <span class="country-name" id="profileName">Laptop Mid</span>
+            <span class="country-tz" id="profileSpec">1920×1080 · 8c · 8GB · Intel Iris Xe</span>
+          </span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="dropdown" id="profileDropdown">
+          <div class="option-list" id="profileList" role="listbox"></div>
+        </div>
+      </div>
+      <div class="warnings" id="warnings" hidden></div>
+    </section>
+
+    <!-- ── actions ──────────────────────────────────────────────────────── -->
+    <div class="foot">
+      <button type="button" class="cta" id="applyBtn">Применить</button>
+      <div class="links">
+        <a id="optionsLink" href="options.html" target="_blank">Настройки</a>
+        <span class="sep" aria-hidden="true"></span>
+        <a id="whoamiLink" href="whoami.html" target="_blank">Who Am I</a>
+      </div>
+      <!-- Inside .foot, not after it: anchored to the links row it physically cannot reach
+           the Apply button. As a viewport-fixed element it sat 3px over the button — see
+           the note in popup.css. -->
+      <div class="status-bar" id="statusBar" hidden></div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

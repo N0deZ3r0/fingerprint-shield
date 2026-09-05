@@ -1,0 +1,81 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: the README's **Limits** section lists what this extension knowingly
+        does not close. If what you are seeing is one of those sixteen items, it is not a bug.
+        **Пишите по-русски или по-английски — как удобнее.**
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead? / Что вы ожидали и что получилось.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Шаги для воспроизведения. A URL where it happens helps most.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Extension version
+      description: chrome://extensions → version. / Версия расширения.
+      placeholder: "2.5.5"
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      description: chrome://version. / Браузер и его версия.
+      placeholder: "Chrome 141.0.7390.55"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      description: Операционная система
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: audit
+    attributes:
+      label: What the audit page says
+      description: |
+        Open the extension's audit page and paste the rows that are not green.
+        Откройте страницу аудита и вставьте строки, которые не зелёные.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I read the Limits section and this is not one of them / Я прочитал «Пределы»
+          required: true
+        - label: I am running the latest release / У меня последняя версия
+          required: true

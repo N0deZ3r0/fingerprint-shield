@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>native canvas backend matrix (no extension code)</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// We force willReadFrequently:true on every 2d context to keep window and worker
+// canvas bytes equal. That forcing is what collapses the detector's
+// paint(GPU)/paint(CPU) rows and what makes getContextAttributes() report a flag
+// the page never asked for. Before removing it, find out whether it is needed at
+// all: does a PRISTINE browser already agree between window and worker when
+// nobody forces anything? This page loads NO extension code.
+function h32(bytes){ let h=2166136261>>>0;
+  for(let i=0;i<bytes.length;i++){ h^=bytes[i]; h=Math.imul(h,16777619)>>>0; }
+  return h.toString(16).padStart(8,'0'); }
+
+const SCENE = `
+function paintInto(mk){
+  const x = mk();
+  const g = x.createLinearGradient(0,0,300,150);
+  g.addColorStop(0,'#f00'); g.addColorStop(0.5,'#0f08'); g.addColorStop(1,'#00f');
+  x.fillStyle = g; x.fillRect(0,0,300,150);
+  x.globalCompositeOperation = 'multiply';
+  x.beginPath(); x.arc(120,75,60,0,Math.PI*1.7); x.closePath();
+  x.fillStyle = 'rgba(255,255,0,0.55)'; x.fill();
+  x.lineWidth = 3.7; x.strokeStyle = 'rgba(0,128,255,0.8)';
+  x.beginPath(); x.moveTo(10,140); x.bezierCurveTo(90,10,210,140,290,20); x.stroke();
+  x.shadowBlur = 6; x.shadowColor = '#000';
+  x.font = '18px Arial'; x.fillStyle = '#fff'; x.fillText('Paint probe \\u{1F600}', 12, 30);
+  const d = x.getImageData(0,0,300,150).data;
+  let h = 2166136261>>>0;
+  for (let i=0;i<d.length;i++){ h ^= d[i]; h = Math.imul(h,16777619)>>>0; }
+  return h.toString(16).padStart(8,'0');
+}`;
+eval(SCENE);
+
+const mkHtml = (opts) => () => {
+  const c = document.createElement('canvas'); c.width=300; c.height=150;
+  return opts === undefined ? c.getContext('2d') : c.getContext('2d', opts);
+};
+const mkOff = (opts) => () => {
+  const c = new OffscreenCanvas(300,150);
+  return opts === undefined ? c.getContext('2d') : c.getContext('2d', opts);
+};
+
+function inWorker(){
+  return new Promise(r=>{
+    const src = SCENE + `
+onmessage = () => { try {
+  const mk = (opts) => () => { const c = new OffscreenCanvas(300,150);
+    return opts === undefined ? c.getContext('2d') : c.getContext('2d', opts); };
+  postMessage({ def: paintInto(mk(undefined)), wrf: paintInto(mk({willReadFrequently:true})) });
+} catch(e) { postMessage({err:String(e&&e.message||e)}); } };`;
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([src],{type:'application/javascript'})));
+      w.onmessage = e => r(e.data); w.onerror = e => r({err:'worker error'});
+      w.postMessage(1); setTimeout(()=>r({err:'timeout'}), 15000);
+    } catch(e){ r({err:String(e)}); }
+  });
+}
+
+(async () => {
+  const rows = [
+    ['window HTMLCanvas   default', paintInto(mkHtml(undefined))],
+    ['window HTMLCanvas   wrf:true', paintInto(mkHtml({willReadFrequently:true}))],
+    ['window Offscreen    default', paintInto(mkOff(undefined))],
+    ['window Offscreen    wrf:true', paintInto(mkOff({willReadFrequently:true}))],
+  ];
+  const wk = await inWorker();
+  if (!wk.err) {
+    rows.push(['worker Offscreen    default', wk.def]);
+    rows.push(['worker Offscreen    wrf:true', wk.wrf]);
+  }
+
+  const L = [];
+  L.push('PRISTINE browser — no extension code on this page.');
+  L.push('');
+  rows.forEach(([n,h]) => L.push('  ' + n.padEnd(30) + h));
+  if (wk.err) L.push('  worker: ERR ' + wk.err);
+  L.push('');
+  const get = n => (rows.find(r => r[0] === n) || [])[1];
+  const winDef = get('window HTMLCanvas   default');
+  const winWrf = get('window HTMLCanvas   wrf:true');
+  const wkDef  = get('worker Offscreen    default');
+  const wkWrf  = get('worker Offscreen    wrf:true');
+
+  L.push('the two questions that decide the policy:');
+  L.push('');
+  L.push('1. does the browser itself distinguish the backends in the window?');
+  L.push('   default vs wrf:true  →  ' + (winDef === winWrf ? 'SAME' : 'DIFFERENT')
+    + '   (' + winDef + ' / ' + winWrf + ')');
+  L.push('   if DIFFERENT, forcing the flag destroys a distinction real browsers have.');
+  L.push('');
+  L.push('2. with NOBODY forcing anything, do window and worker already agree?');
+  L.push('   window default vs worker default  →  ' + (winDef === wkDef ? 'SAME' : 'DIFFERENT')
+    + '   (' + winDef + ' / ' + wkDef + ')');
+  L.push('   window wrf    vs worker wrf       →  ' + (winWrf === wkWrf ? 'SAME' : 'DIFFERENT')
+    + '   (' + winWrf + ' / ' + wkWrf + ')');
+  L.push('');
+  if (winDef === wkDef && winWrf === wkWrf) {
+    L.push('VERDICT  the scopes agree on their OWN, for each requested setting.');
+    L.push('         Forcing buys nothing and costs two tells — drop it and simply');
+    L.push('         pass the page\'s request through unchanged.');
+  } else if (winDef !== wkDef && winWrf === wkWrf) {
+    L.push('VERDICT  the scopes agree only when the flag is set — that is why the');
+    L.push('         forcing exists. Removing it needs another way to keep parity,');
+    L.push('         or accepting a window/worker canvas split.');
+  } else {
+    L.push('VERDICT  mixed — read the rows above before changing anything.');
+  }
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

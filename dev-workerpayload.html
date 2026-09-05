@@ -1,0 +1,167 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — the generated worker payload</title>
+<style>
+  body { font: 12.5px/1.45 ui-monospace, monospace; padding: 16px; }
+  table { border-collapse: collapse; margin-top: 10px; }
+  td, th { border: 1px solid #ccc; padding: 3px 8px; text-align: left; vertical-align: top; }
+  .ok { color: #0a0; } .bad { color: #c00; font-weight: bold; }
+  pre { background: #f6f6f6; padding: 8px; overflow: auto; max-height: 160px; }
+</style>
+<h1 style="font-size:15px">Worker payload — does the emitted script even compile?</h1>
+<p>
+  <code>_buildPatchCode()</code> in <code>mw/mw-workers.js</code> assembles the script that
+  is prepended to every worker. Whatever is still assembled from string literals is
+  invisible to ESLint — no parse check, no <code>no-undef</code> — and the whole injection
+  sits inside <code>try{}catch{}</code>, so a syntax error there does not throw anywhere
+  visible: it silently leaves <em>every worker unpatched</em>, on every page, with a
+  perfectly quiet console. That is the failure this page exists to make loud.
+  <br><br>
+  It captures the real Blob the Worker constructor is handed, compiles it with
+  <code>new Function</code> (which parses without executing), and checks that the pieces
+  the worker depends on are actually present.
+</p>
+<div id="out">running…</div>
+
+<script>
+  sessionStorage.setItem('v.ui.s', JSON.stringify({
+    locale: 'et-EE', language: 'et-EE', languages: ['et-EE','et','en-US','en'],
+    timezone: 'Europe/Tallinn', mode: 'normal', noiseSeed: 20260813,
+    screenWidth: 1920, screenHeight: 1080, colorDepth: 32, devicePixelRatio: 1,
+    hwConcurrency: 8, deviceMemory: 8, platform: 'Win32',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+    webglVendor: 'Google Inc. (Intel)',
+    webglRenderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+    webglParams: { 3379: 16384 },
+    clientHints: { platform:'Windows', mobile:false, platformVersion:'10.0.0',
+      architecture:'x86', bitness:'64', wow64:false, model:'', formFactors:['Desktop'] },
+    allowedFonts: ['Arial','Segoe UI'],
+    features: { canvas:true, audio:true, webgl:true, webrtc:true, navigator:true, screen:true,
+      timezone:true, geolocation:true, battery:true, fonts:true, clientRects:false,
+      plugins:true, network:true, hideAdBlocker:true }
+  }));
+
+  // Capture what the Worker constructor is actually given, before mw-workers wraps it.
+  const CAPTURED = [];
+  const _origCOU = URL.createObjectURL;
+  URL.createObjectURL = function (blob) {
+    const url = _origCOU.call(this, blob);
+    try { CAPTURED.push({ url, blob }); } catch (e) {}
+    return url;
+  };
+</script>
+<script src="mw/mw-core.js"></script>
+<script src="mw/mw-timezone-screen.js"></script>
+<script src="mw/mw-navigator.js"></script>
+<script src="mw/mw-canvas-audio.js"></script>
+<script src="mw/mw-misc.js"></script>
+<script src="mw/mw-workers.js"></script>
+<script src="mw/mw-cleanup.js"></script>
+<script>
+(async () => {
+  const rows = [];
+  let fails = 0;
+  function check(name, ok, note) {
+    if (!ok) fails++;
+    rows.push('<tr><td>' + name + '</td><td class="' + (ok ? 'ok' : 'bad') + '">' +
+      (ok ? 'ok' : 'FAIL') + '</td><td>' + (note || '') + '</td></tr>');
+  }
+
+  // Trigger the real wrapper. dev-workerjob.js is same-origin, so mw-workers takes the
+  // XHR path and prepends the payload — exactly what happens on a normal page.
+  let w = null;
+  try { w = new Worker('dev-workerjob.js?x=' + Date.now()); } catch (e) {}
+  check('Worker construction did not throw', !!w);
+
+  // [FIX nested-workers-were-never-reached] TWO blobs now carry the marker, so "the first
+  // one" is no longer the right pick. The wrapper creates the worker's payload, and
+  // _patchBlobUrl creates a SHARED copy of the patch text that nested workers importScripts
+  // — that one has no worker source by design, and it is created first, which used to make
+  // this page report the payload as "replaced, not appended".
+  // They are told apart by the ASSIGNED patch URL, not by the bare name: _nestShim builds
+  // the same string for its children, so its own source contains "self.__AFP_PATCH_URL="
+  // in BOTH blobs. Only the real assignment is followed by a quoted blob: URL.
+  const ASSIGNED = /self\.__AFP_PATCH_URL="blob:/;
+  let payload = null, shared = null;
+  for (const c of CAPTURED) {
+    const t = await c.blob.text();
+    // _PATCH_MARK in mw/mw-workers.js — the one string the payload always emits,
+    // deliberately independent of any shim's formatting so it cannot drift again.
+    if (t.indexOf('var _p1=1;') === -1) continue;
+    if (ASSIGNED.test(t)) { if (!payload) payload = t; }
+    else if (!shared) shared = t;
+  }
+  check('the wrapper produced a patched blob', !!payload,
+    payload ? (payload.length + ' bytes') : 'no blob carried the patch marker');
+  check('a shared patch blob was created for nested workers', !!shared,
+    shared ? (shared.length + ' bytes') : 'none');
+  check('the shared blob carries no patch URL (that is what stops the recursion)',
+    !!shared && !ASSIGNED.test(shared));
+  check('the worker payload installs the nested-worker wrapper',
+    !!payload && payload.indexOf('wrapCtor(self.Worker') !== -1);
+
+  if (payload) {
+    // new Function COMPILES without running — a SyntaxError anywhere in the emitted
+    // script surfaces right here instead of being swallowed by the injection try/catch.
+    let syntaxError = null;
+    try { new Function(payload); } catch (e) { syntaxError = e.message; }
+    check('the emitted payload compiles', !syntaxError, syntaxError || 'parsed clean');
+
+    // Each shim must actually be in the script. A shim that silently stopped being
+    // emitted would leave that scope unpatched while everything still "worked".
+    const NEEDED = [
+      ['the _M mask',            'function _M(f, acc)'],
+      ['_defIf helper',          'function _defIf(o, p, v)'],
+      ['navigator values',       '_defIf(navigator,"hardwareConcurrency",8)'],
+      ['Intl shim',              'Number.prototype.toLocaleString'],
+      ['UA-CH shim',             'getHighEntropyValues'],
+      ['timezone shim',          'Date.prototype.getTimezoneOffset'],
+      ['WebGL getParameter',     'WebGLRenderingContext.prototype.getParameter'],
+      ['font shim',              'OffscreenCanvasRenderingContext2D.prototype'],
+      ['canvas noise shim',      'convertToBlob'],
+      ['permission state shim',  'PermissionStatus.prototype'],
+    ];
+    for (const [label, needle] of NEEDED) {
+      check('emits: ' + label, payload.indexOf(needle) !== -1, needle);
+    }
+    // The payload is `patch + "\n" + the worker's OWN source`, so it does not end with
+    // the IIFE — the guard only has to close before the worker's code starts, which is
+    // what keeps _M and friends out of the worker's globals.
+    const close = payload.indexOf('}catch(e){}})();');
+    check('wrapped in one IIFE so nothing leaks into worker globals',
+      payload.startsWith('(function(){try{') && close !== -1,
+      close !== -1 ? 'guard closes at byte ' + close + ', worker source follows' : 'no closing guard');
+    check('the worker\'s own source is still there, after the patch',
+      payload.indexOf('self.postMessage(', close) > close, 'appended, not replaced');
+  }
+
+  // And the end-to-end property: the worker must report the profile, not the machine.
+  let live = null;
+  if (w) {
+    live = await new Promise((res) => {
+      const to = setTimeout(() => res({ timeout: true }), 4000);
+      w.onmessage = (e) => { clearTimeout(to); res(e.data); };
+      w.onerror = (e) => { clearTimeout(to); res({ error: String(e.message || e) }); };
+    });
+  }
+  if (live && !live.timeout && !live.error) {
+    check('worker cores = profile (8)', live.cores === 8, 'got ' + live.cores);
+    check('worker language = profile', live.lang === 'et-EE', 'got ' + live.lang);
+    check('worker timezone = profile', live.tz === 'Europe/Tallinn', 'got ' + live.tz);
+    check('worker January offset = -120 (EET, not the host)', live.janOff === -120, 'got ' + live.janOff);
+    check('worker July offset = -180 (EEST)', live.julOff === -180, 'got ' + live.julOff);
+    check('worker UA = profile', /Chrome\/151\.0\.0\.0/.test(live.ua || ''), live.ua);
+  } else {
+    check('worker answered', false, live ? JSON.stringify(live) : 'no worker');
+  }
+  try { if (w) w.terminate(); } catch (e) {}
+
+  const verdict = 'FAILURES: ' + fails + (fails ? '' : ' — payload compiles, every shim emitted, worker matches the profile');
+  document.getElementById('out').innerHTML =
+    '<table><tr><th>check</th><th></th><th>note</th></tr>' + rows.join('') + '</table>' +
+    '<p class="' + (fails ? 'bad' : 'ok') + '">' + verdict + '</p>' +
+    (payload ? '<details><summary>emitted payload (first 1200 chars)</summary><pre>' +
+      payload.slice(0, 1200).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) +
+      '</pre></details>' : '');
+})();
+</script>

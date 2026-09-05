@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>bug field: window vs worker, native vs patched</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// CreepJS prints  bug: <permissions.query('notifications').state>,<Notification.permission>
+// The paste shows  window = prompt,default   worker = prompt,denied.
+// Question: does a PRISTINE Chrome already differ across scopes, or do we cause it?
+// So: measure both scopes BEFORE loading any module, then again AFTER.
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:{canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true}
+}));
+sessionStorage.setItem('v.ui.m','normal');
+
+const ORDER=['profile-injector.js','mw/mw-bag.js','mw/mw-core.js','mw/mw-timezone-screen.js',
+ 'mw/mw-navigator.js','mw/mw-canvas-audio.js','mw/mw-misc.js','mw/mw-workers.js','mw/mw-geo.js','mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+const PROBE = `
+async function probe(){
+  const o = {};
+  // 1) the permission pair CreepJS calls "bug"
+  try {
+    const st = await navigator.permissions.query({name:'notifications'});
+    o.query = st.state;
+  } catch(e){ o.query = 'THROW '+e.name; }
+  try { o.notif = (typeof Notification==='undefined') ? 'no Notification' : Notification.permission; }
+  catch(e){ o.notif = 'THROW '+e.name; }
+  // same for geolocation, which is the permission our patch actually targets
+  try { o.geoQuery = (await navigator.permissions.query({name:'geolocation'})).state; }
+  catch(e){ o.geoQuery = 'THROW '+e.name; }
+  // 2) recursion depth — CreepJS's "stack" number
+  let d=0; function rec(){ d++; rec(); }
+  try { rec(); } catch(e){}
+  o.depth = d;
+  o.scope = (typeof window!=='undefined') ? 'window' : 'worker';
+  return o;
+}`;
+eval(PROBE);
+
+function inWorker(){
+  return new Promise(r=>{
+    const src = PROBE + `\nonmessage=()=>{ probe().then(o=>postMessage(o),e=>postMessage({err:String(e)})); };`;
+    try{
+      const w = new Worker(URL.createObjectURL(new Blob([src],{type:'application/javascript'})));
+      w.onmessage=e=>r(e.data); w.onerror=e=>r({err:'worker error '+(e.message||'?')});
+      w.postMessage(1); setTimeout(()=>r({err:'timeout'}),15000);
+    }catch(e){ r({err:'spawn '+e.message}); }
+  });
+}
+
+(async()=>{
+  const nWin = await probe();
+  const nWk  = await inWorker();
+  for(const f of ORDER) await load(f);
+  const pWin = await probe();
+  const pWk  = await inWorker();
+
+  const fmt = o => o.err ? 'ERR '+o.err
+    : ('bug: '+o.query+','+o.notif+'   geo: '+o.geoQuery+'   stackDepth: '+o.depth);
+  const L=[];
+  L.push('NATIVE (no modules loaded)');
+  L.push('  window  '+fmt(nWin));
+  L.push('  worker  '+fmt(nWk));
+  L.push('');
+  L.push('PATCHED (all 14 flags on)');
+  L.push('  window  '+fmt(pWin));
+  L.push('  worker  '+fmt(pWk));
+  L.push('');
+  const nativeSplit = !nWin.err && !nWk.err && (nWin.query+','+nWin.notif) !== (nWk.query+','+nWk.notif);
+  const oursSplit   = !pWin.err && !pWk.err && (pWin.query+','+pWin.notif) !== (pWk.query+','+pWk.notif);
+  L.push('native  window≠worker on the bug pair : '+nativeSplit);
+  L.push('patched window≠worker on the bug pair : '+oursSplit);
+  L.push('');
+  L.push(nativeSplit && oursSplit
+      ? 'VERDICT  Chrome itself reports different values per scope — we did not cause it,\n'
+       +'         and matching them would be a lie a pristine browser never tells.'
+    : (!nativeSplit && oursSplit)
+      ? 'VERDICT  WE cause the split — the worker patch and the window patch disagree.'
+    : (nativeSplit && !oursSplit)
+      ? 'VERDICT  we HIDE a native split — that is itself detectable.'
+      : 'VERDICT  no split in either build.');
+  L.push('');
+  L.push('stack depth: native win '+nWin.depth+' / wk '+(nWk.depth||'?')
+        +'   patched win '+pWin.depth+' / wk '+(pWk.depth||'?')
+        +'  → depth is a property of the scope\'s stack budget, not of our patches');
+  document.getElementById('out').textContent=L.join('\n');
+})();
+</script>
+</body></html>

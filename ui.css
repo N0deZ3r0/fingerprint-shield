@@ -1,0 +1,81 @@
+/* Fingerprint Shield — THE design tokens.
+ *
+ * One palette for all three surfaces the user ever sees: the popup, the options page and
+ * Who Am I. They used to carry three separate token blocks — popup.css on one palette,
+ * whoami.css and options.css on an older shared one — so the same product rendered in two
+ * different blues and two different card colours depending on which window you opened.
+ * Worse, only the popup answered `prefers-color-scheme`, so a user on a light OS got a
+ * light popup and two dark pages behind it.
+ *
+ * Loaded FIRST, before each page's own stylesheet, so a page can still override a token
+ * for a local reason — none currently does.
+ *
+ * Naming is the popup's, because that is the surface with the most constrained space and
+ * the most callers: --tx/--tx-2/--mu for text, --ac/--ok/--wn/--er for meaning, and the
+ * numbered surfaces from darkest to lightest.
+ */
+:root {
+  /* Surfaces, darkest to lightest. Four steps rather than two: these UIs are dense, and a
+     card needs to separate from the page behind it AND from the control inside it. */
+  --bg:        #090b10;
+  --card:      #12151d;
+  --card-2:    #191d27;
+  --raise:     #232838;
+  --line:      rgba(255, 255, 255, .07);
+  --line-str:  rgba(255, 255, 255, .14);
+  /* The hairline of light along a raised edge. This is most of what separates a surface
+     that looks lit from one that looks printed. */
+  --edge:      inset 0 1px 0 rgba(255, 255, 255, .045);
+
+  --tx:        #eef1f7;
+  --tx-2:      #a8b2c6;
+  --mu:        #7a8497;
+
+  --ac:        #6183ff;
+  --ac-2:      #4668f0;
+  --ac-bg:     rgba(97, 131, 255, .15);
+  --ac-gl:     rgba(97, 131, 255, .34);
+  --ok:        #35dfa0;
+  --ok-bg:     rgba(53, 223, 160, .13);
+  --wn:        #f6c669;
+  --wn-bg:     rgba(246, 198, 105, .13);
+  --er:        #ff6f80;
+  --er-bg:     rgba(255, 111, 128, .13);
+
+  --r:    14px;
+  --r-s:  10px;
+  --r-xs: 8px;
+  --shadow: 0 16px 40px rgba(0, 0, 0, .6);
+  --font: 13px/1.45 -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:       #f2f5f9;
+    --card:     #ffffff;
+    --card-2:   #f6f8fc;
+    --raise:    #eaeef6;
+    --line:     rgba(16, 24, 40, .09);
+    --line-str: rgba(16, 24, 40, .17);
+    --edge:     inset 0 1px 0 rgba(255, 255, 255, .9);
+    --tx:       #0f131c;
+    --tx-2:     #454e61;
+    --mu:       #697285;
+    --ac:       #3163f5;
+    --ac-2:     #1f4bd8;
+    --ac-bg:    rgba(49, 99, 245, .10);
+    --ac-gl:    rgba(49, 99, 245, .26);
+    --ok:       #0d9c63;
+    --ok-bg:    rgba(13, 156, 99, .11);
+    --wn:       #a06a06;
+    --wn-bg:    rgba(160, 106, 6, .12);
+    --er:       #d42d3c;
+    --er-bg:    rgba(212, 45, 60, .10);
+    --shadow:   0 16px 38px rgba(16, 24, 40, .16);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

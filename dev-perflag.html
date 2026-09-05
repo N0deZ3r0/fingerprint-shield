@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>per-flag control matrix</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// Turns each of the 13 flags off ONE at a time (all others on) in its own realm
+// and reports which patches that flag actually controls. A flag that drops
+// nothing is a checkbox that does nothing.
+// The list must be the key set of AFP_DEFAULT_FEATURES in defaults.js. It carried a
+// 14th name, 'audio', long after that flag went away with the AudioContext noise — so
+// one realm per run was spent turning off a flag nothing reads, and the page reported
+// it forever as "a checkbox with no effect", which is a NOTE rather than a failure and
+// therefore never got looked at.
+const KEYS = ['canvas','webgl','webrtc','navigator','screen','timezone',
+  'geolocation','battery','fonts','clientRects','plugins','network','hideAdBlocker'];
+
+function run(off){
+  return new Promise(res=>{
+    const f=document.createElement('iframe');
+    f.style.cssText='position:absolute;left:-9999px;width:800px;height:600px';
+    const done=e=>{ if(e.source!==f.contentWindow) return;
+      window.removeEventListener('message',done); f.remove(); res(e.data); };
+    window.addEventListener('message',done);
+    f.src='dev-flagcase.html?off='+encodeURIComponent(off)+'&x='+Date.now();
+    document.body.appendChild(f);
+    setTimeout(()=>{ window.removeEventListener('message',done);
+      try{f.remove();}catch(_){} res({off:off,patched:null}); }, 25000);
+  });
+}
+
+(async()=>{
+  const L=[];
+  const base = await run('');           // all 14 on
+  if (!base.patched){ document.getElementById('out').textContent='FAIL baseline timed out'; return; }
+  const all  = await run(KEYS.join(',')); // all 14 off
+  L.push('all flags ON  → '+base.patched.length+'/'+base.total+' references patched');
+  L.push('all flags OFF → '+(all.patched?all.patched.length:'timeout')+' references patched'
+         +(all.patched&&all.patched.length? '   FAIL: '+all.patched.join(', ') : '   PASS'));
+  L.push('');
+  L.push('flag             drops (patch disappears when only this flag is off)');
+  L.push('---------------  ------------------------------------------------------');
+  const dead=[];
+  for (const k of KEYS){
+    const r = await run(k);
+    if (!r.patched){ L.push(k.padEnd(16)+'TIMEOUT'); continue; }
+    const dropped = base.patched.filter(x=>!r.patched.includes(x));
+    const added   = r.patched.filter(x=>!base.patched.includes(x));
+    if (!dropped.length) dead.push(k);
+    L.push(k.padEnd(16)+(dropped.length? dropped.join(', ') : '— nothing —')
+      + (added.length? '\n'+' '.repeat(16)+'!! ADDED: '+added.join(', ') : ''));
+  }
+  // Element.getBoundingClientRect is written by THREE independent sections, so no
+  // single flag can drop it: the clientRects noise, the ad-blocker bait fix, and the
+  // DOM font-enumeration filter (fonts) — the last one added when canvas measureText
+  // and DOM layout were found to give different answers about the same family.
+  // Verify the trio does.
+  const pair = await run('clientRects,hideAdBlocker,fonts');
+  L.push('');
+  L.push('shared reference — getBoundingClientRect is patched by clientRects AND hideAdBlocker AND fonts:');
+  L.push('  clientRects+hideAdBlocker+fonts off → '+
+    (pair.patched && !pair.patched.includes('Element.getBoundingClientRect')
+      ? 'PASS  native again' : 'FAIL  still patched'));
+  L.push('');
+  L.push(dead.length===0
+    ? 'PASS  every one of the 13 checkboxes controls at least one patch'
+    : 'NOTE  checkboxes with no effect on the sampled references: '+dead.join(', '));
+  L.push('(a flag can also be shared: a patch only disappears once every flag guarding it is off)');
+  // No verdict test/run.mjs could match lived here — the page's PASS lines sit mid-line
+  // ("… → 0 references patched   PASS"), never at the start of one — so the runner polled
+  // until its timeout and reported FAIL on every run. It was assumed to be slow; it is
+  // not (each realm answers in ~50ms, measured headless), it was only ever unreadable.
+  // What counts as a failure here: a reference still patched with ALL flags off, a realm
+  // that never reported, or the shared getBoundingClientRect surviving both its flags.
+  // A flag that drops nothing is a NOTE, not a failure — the page explains why on the
+  // line above.
+  const timeouts = L.filter(x=>/TIMEOUT$/.test(x)).length;
+  const stillOn = (all.patched ? all.patched.length : 1);
+  const sharedBad = (pair.patched && !pair.patched.includes('Element.getBoundingClientRect')) ? 0 : 1;
+  L.push('');
+  L.push('FAILURES: ' + (timeouts + stillOn + sharedBad) +
+    ((timeouts + stillOn + sharedBad) ? '' :
+      ' — all flags off leaves nothing patched, shared reference released, ' +
+      (dead.length ? dead.length + ' flag(s) with no sampled effect' : 'every flag has an effect')));
+  document.getElementById('out').textContent=L.join('\n');
+})();
+</script>
+</body></html>

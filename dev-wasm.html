@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>wasm check</title></head>
+<body><pre id="out">running…</pre>
+<script>
+const L=[]; const t=(n,p,d)=>L.push((p?'PASS  ':'FAIL  ')+n+(d?'  ::  '+d:''));
+const SEED = 0x12345678;
+
+// [FIX profile-readable-by-any-page] The loader used to read the profile out of
+// sessionStorage['v.ui.s'] for its seed and its setLocale call, so this page seeded one
+// there. There is no profile in the page any more — background.js resolves seed,
+// timezone and language from getCachedProfile() and passes all three as arguments, so
+// that is what this page passes too.
+const TZ = 'Europe/Tallinn', LANG = 'et-EE';
+
+// JS fallback formula from mw-canvas-audio.js — WASM must match it bit for bit
+function jsHash(absX, absY, seed) {
+  var h = (seed ^ ((absX + 1) * 0x27D4EB2F) ^ ((absY + 1) * 0x85EBCA6B)) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x2545F491) >>> 0;
+  return (h ^ (h >>> 13)) >>> 0;
+}
+function jsNoise(data, w, h, ox, oy, seed) {
+  for (let ly=0; ly<h; ly++) for (let lx=0; lx<w; lx++) {
+    const i=(ly*w+lx)*4, hh=jsHash(ox+lx, oy+ly, seed);
+    data[i]  =Math.max(0,Math.min(255,data[i]  +((hh&3)-1)));
+    data[i+1]=Math.max(0,Math.min(255,data[i+1]+((hh>>>4&3)-1)));
+    data[i+2]=Math.max(0,Math.min(255,data[i+2]+((hh>>>8&3)-1)));
+  }
+}
+
+(async () => {
+  // ── extract the REAL loader out of background.js (not a copy) ──
+  let loader = null;
+  try {
+    const src = await (await fetch('background.js?x='+Date.now())).text();
+    // [FIX wasm-fetch-was-visible-to-the-page] The loader takes BYTES now, not a URL:
+    // fetching from inside the MAIN world let any page that had replaced window.fetch see
+    // a chrome-extension:// request for protect.wasm. This page therefore reads the file
+    // itself and hands the bytes in, which is what background.js does from the worker.
+    const marker = 'func: async function(wasmBytes, noiseSeedArg, tzArg, langArg) {';
+    const at = src.indexOf(marker);
+    if (at === -1) throw new Error('loader marker not found — background.js changed shape');
+    const open = src.indexOf('{', at + marker.length - 1);
+    let depth=0, end=-1;
+    for (let i=open; i<src.length; i++) {
+      if (src[i]==='{') depth++;
+      else if (src[i]==='}') { depth--; if (depth===0) { end=i+1; break; } }
+    }
+    const body = src.slice(src.indexOf('async function', at), end);
+    loader = new Function('return (' + body + ')')();
+    t('extracted real loader from background.js', typeof loader === 'function', body.length + ' chars');
+  } catch (e) { t('extract loader', false, e.message); }
+
+  const WASM_BYTES = Array.from(new Uint8Array(await (await fetch('protect.wasm?x='+Date.now())).arrayBuffer()));
+  if (!loader) { document.getElementById('out').textContent = L.join('\n'); return; }
+
+  // ── run it exactly as background.js does ──
+  let evt = false;
+  window.addEventListener('ui:w', () => { evt = true; });
+  let res;
+  try { res = await loader(WASM_BYTES, SEED, TZ, LANG); }
+  catch (e) { res = { error: 'threw: ' + e.message }; }
+
+  t('loader returned success', !!(res && res.success), JSON.stringify(res));
+  t('window.__w0 wrapper present', !!window.__w0);
+  t('window.__w1 ready flag set', window.__w1 === true);
+  t('window.__w2 error flag NOT set', !window.__w2);
+  t('ui:w event dispatched', evt);
+  if (!window.__w0) { document.getElementById('out').textContent = L.join('\n'); return; }
+  const W = window.__w0;
+  t('wrapper exposes the 4 live methods',
+    ['addCanvasNoise','substituteTextWidth',
+     'substituteTextMetrics','setLocale'].every(k => typeof W[k]==='function'),
+    Object.keys(W).join(','));
+  t('normalizeTiming removed (performance.now no longer patched)', typeof W.normalizeTiming === 'undefined');
+  t('buggy getFakeShaderPrecision removed from wrapper', typeof W.getFakeShaderPrecision === 'undefined');
+  // The AudioContext noise this fed was dropped earlier — it was measurably louder than the
+  // fingerprint it hid — and nothing in the extension has called the wrapper since. Asserted
+  // as removed, the same way normalizeTiming and getFakeShaderPrecision are above, so the
+  // page keeps guarding the decision instead of testing a function only it used.
+  t('addAudioNoise removed (the AudioContext noise it fed was dropped)', typeof W.addAudioNoise === 'undefined');
+
+  // ── 1. CANVAS NOISE ──
+  const mk = (w,h,fill) => { const d = new ImageData(w,h); for (let i=0;i<d.data.length;i+=4){
+      d.data[i]=fill[0]; d.data[i+1]=fill[1]; d.data[i+2]=fill[2]; d.data[i+3]=255; } return d; };
+
+  const a = mk(8,8,[100,150,200]); const before = a.data.slice();
+  W.addCanvasNoise(a, 0, 0);
+  t('canvas noise actually modifies pixels', !before.every((v,i)=>v===a.data[i]));
+
+  // alpha must be untouched
+  let alphaOk = true;
+  for (let i=3;i<a.data.length;i+=4) if (a.data[i]!==255) alphaOk=false;
+  t('alpha channel untouched', alphaOk);
+
+  // deterministic: same input twice → same output
+  const b1 = mk(8,8,[100,150,200]); W.addCanvasNoise(b1,0,0);
+  const b2 = mk(8,8,[100,150,200]); W.addCanvasNoise(b2,0,0);
+  t('deterministic across calls', b1.data.every((v,i)=>v===b2.data[i]));
+
+  // WASM must equal the JS fallback formula (otherwise wasm/js mode flips the fingerprint)
+  const wj = mk(8,8,[100,150,200]); W.addCanvasNoise(wj,0,0);
+  const jj = mk(8,8,[100,150,200]); jsNoise(jj.data,8,8,0,0,SEED);
+  let firstDiff = -1;
+  for (let i=0;i<wj.data.length;i++) if (wj.data[i]!==jj.data[i]) { firstDiff=i; break; }
+  t('WASM noise == JS fallback noise (byte for byte)', firstDiff===-1,
+    firstDiff===-1?'identical':'first diff at byte '+firstDiff+': wasm='+wj.data[firstDiff]+' js='+jj.data[firstDiff]);
+
+  // position-based: same pixel, read as 1x1 at (x,y) vs inside a block at offset 0,0
+  const block = mk(16,16,[100,150,200]); W.addCanvasNoise(block,0,0);
+  let posMismatch = [];
+  for (const [px,py] of [[0,0],[3,5],[7,7],[15,15],[9,2]]) {
+    const one = mk(1,1,[100,150,200]); W.addCanvasNoise(one, px, py);
+    const bi = (py*16+px)*4;
+    for (let c=0;c<3;c++) if (one.data[c]!==block.data[bi+c])
+      posMismatch.push(px+','+py+' ch'+c+': 1x1='+one.data[c]+' block='+block.data[bi+c]);
+  }
+  t('noise is a pure function of ABSOLUTE position (CheckIntegrity invariant)',
+    posMismatch.length===0, posMismatch.slice(0,3).join(' | '));
+
+  // clamping at the extremes
+  const lo = mk(4,4,[0,0,0]); W.addCanvasNoise(lo,0,0);
+  const hi = mk(4,4,[255,255,255]); W.addCanvasNoise(hi,0,0);
+  let clampOk = true;
+  for (let i=0;i<lo.data.length;i++) if (lo.data[i]<0||lo.data[i]>255) clampOk=false;
+  for (let i=0;i<hi.data.length;i++) if (hi.data[i]<0||hi.data[i]>255) clampOk=false;
+  t('clamps to 0..255 at extremes', clampOk);
+
+  // larger buffer → exercises malloc / heap growth path
+  let bigOk = true, bigErr = '';
+  try { const big = mk(512,512,[120,120,120]); W.addCanvasNoise(big,0,0);
+        bigOk = big.data[0]!==120 || big.data[1]!==120 || big.data[2]!==120; }
+  catch (e) { bigOk=false; bigErr=e.message; }
+  t('512x512 buffer works (malloc + heap growth)', bigOk, bigErr);
+
+  // ── 2. AUDIO NOISE — gone ──
+  // Five assertions used to exercise W.addAudioNoise here. They were the ONLY caller left:
+  // the extension stopped noising AudioContext long ago, so the wrapper survived purely
+  // because this page kept calling it. Measured either way — the value FingerprintJS reads
+  // is byte-identical to a clean browser, and identical across two different machines, so
+  // there is no noise to test. The export stays in protect.wasm (no rebuild needed); the
+  // check that the wrapper does NOT expose it is above.
+
+  // ── 3. SHADER PRECISION: must now be native + plausible for every combination ──
+  {
+    const gl = document.createElement('canvas').getContext('webgl');
+    const TY = { VERTEX: 0x8B31, FRAGMENT: 0x8B30 };
+    const PR = { HIGH_FLOAT:0x8DF2, MEDIUM_FLOAT:0x8DF1, LOW_FLOAT:0x8DF0,
+                 HIGH_INT:0x8DF5, MEDIUM_INT:0x8DF4, LOW_INT:0x8DF3 };
+    const bad = [], got = [];
+    for (const [tn,tv] of Object.entries(TY)) for (const [pn,pv] of Object.entries(PR)) {
+      const f = gl.getShaderPrecisionFormat(tv, pv);
+      if (!f) { bad.push(tn+'/'+pn+' null'); continue; }
+      const trip = [f.rangeMin, f.rangeMax, f.precision];
+      got.push(tn+'/'+pn+'='+trip.join(','));
+      // [FIX test] Shader precision spoof was intentionally removed (native values).
+      // Only require: non-null format, finite ints, and correct instanceof.
+      if (!trip.every(n => typeof n === 'number' && isFinite(n))) bad.push(tn+'/'+pn+' non-finite '+trip.join(','));
+      if (!(f instanceof WebGLShaderPrecisionFormat)) bad.push(tn+'/'+pn+' not a WebGLShaderPrecisionFormat');
+    }
+    t('all 12 shader-precision combinations are native + instanceof holds',
+      bad.length===0, bad.length ? bad.slice(0,4).join(' | ') : got[0]+' , '+got[3]);
+  }
+
+  // ── 4. TEXT WIDTH / METRICS ──
+  const w1 = W.substituteTextWidth(123.456, '16px Arial', 'Hello');
+  const w2 = W.substituteTextWidth(123.456, '16px Arial', 'Hello');
+  t('substituteTextWidth returns a finite number', typeof w1==='number'&&isFinite(w1), String(w1));
+  t('substituteTextWidth stays close to real (<1px drift)', Math.abs(w1-123.456)<1, 'delta='+(w1-123.456));
+  t('substituteTextWidth deterministic', w1===w2);
+  const w3 = W.substituteTextWidth(123.456, '16px Arial', 'World');
+  t('different text → different width', w1!==w3, w1+' vs '+w3);
+
+  // the lengthBytesUTF8 fix: multi-byte + surrogate pairs must not corrupt allocStr
+  let uniOk = true, uniErr = '';
+  try {
+    const cases = ['Ünïcödé','日本語テキスト','😀 emoji 😀','𝕏 math','Ω≈ç√∫','tab\there'];
+    for (const c of cases) {
+      const r = W.substituteTextWidth(100, '16px Segoe UI', c);
+      if (!isFinite(r) || Math.abs(r-100)>1) { uniOk=false; uniErr='bad result for '+JSON.stringify(c)+': '+r; break; }
+      const r2 = W.substituteTextWidth(100, '16px Segoe UI', c);
+      if (r!==r2) { uniOk=false; uniErr='non-deterministic for '+JSON.stringify(c); break; }
+    }
+  } catch (e) { uniOk=false; uniErr='threw: '+e.message; }
+  t('unicode/emoji strings handled (lengthBytesUTF8 fix)', uniOk, uniErr);
+
+  const m1 = W.substituteTextMetrics('actualBoundingBoxAscent', 12.5);
+  t('substituteTextMetrics returns finite number', typeof m1==='number'&&isFinite(m1), String(m1));
+  // note: the live path (_metric in mw-canvas-audio.js) filters undefined/null
+  // before ever reaching the wrapper, so the wrapper is only asked for numbers.
+  t('substituteTextMetrics passes through empty prop', W.substituteTextMetrics('', 7.5)===7.5);
+
+
+  // ── 6. LOCALE (incl. unicode) ──
+  let locOk = true, locErr='';
+  try { W.setLocale('Europe/Tallinn','et-EE'); W.setLocale('Asia/Tokyo','ja-JP'); W.setLocale('',''); }
+  catch (e) { locOk=false; locErr=e.message; }
+  t('setLocale does not throw', locOk, locErr);
+  t('canvas noise still identical after setLocale calls', (()=>{
+      const z = mk(8,8,[100,150,200]); W.addCanvasNoise(z,0,0);
+      return z.data.every((v,i)=>v===b1.data[i]);
+    })(), 'locale must not perturb the canvas seed');
+
+  // ── 7. reseeding ──
+  // [FIX seed-computed-twice] / [FIX wasm-read-the-page-for-what-background-already-knew]
+  // The contract moved once more, and the assertion here is INVERTED from what it used
+  // to be — deliberately, so read this before "fixing" it back.
+  //
+  // It used to be: the seed comes from the profile in the page first, and the argument
+  // is only a fallback. This page asserted that a different argument alone changed
+  // nothing, because the profile was authoritative and that was what held Window↔Worker
+  // parity together.
+  //
+  // Now the profile is not in the page at all (it lives in the mw-core closure), and the
+  // argument IS the seed. Parity is not protected by a read-back any more, it is
+  // protected by construction: background.js derives this argument from the same
+  // getCachedProfile() and the same deriveDomainSeed() call that produce the
+  // profile.noiseSeed the worker's JS port reads. There is one computation, so there is
+  // nothing left to diverge — which is also why the 50 ms busy-spin that used to wait
+  // for the profile to show up is gone.
+  //
+  // What this page can still prove is the half that stayed observable: the argument
+  // reaches the noise, and the noise still equals the JS fallback bit for bit at that
+  // seed. That equality is the real Window↔Worker invariant — the worker never ran the
+  // WASM, it runs the JS formula.
+  const before2 = mk(8,8,[100,150,200]); W.addCanvasNoise(before2,0,0);
+
+  const SEED2 = 0xDEADBEEF >>> 0;
+  window.__w0 = null; window.__w1 = false;
+  const res2 = await loader(WASM_BYTES, SEED2, TZ, LANG);
+  const W2 = window.__w0;
+  t('reload with a different seed argument succeeds', !!(res2&&res2.success)&&!!W2, JSON.stringify(res2));
+  if (W2) {
+    const after2 = mk(8,8,[100,150,200]); W2.addCanvasNoise(after2,0,0);
+    t('different seed argument → different noise', !after2.data.every((v,i)=>v===before2.data[i]));
+    const jsD = mk(8,8,[100,150,200]); jsNoise(jsD.data,8,8,0,0,SEED2);
+    t('WASM == JS fallback at the new seed (Window↔Worker invariant)',
+      after2.data.every((v,i)=>v===jsD.data[i]));
+  }
+
+  // And the page cannot talk its way back in: writing the old key must not reseed
+  // anything, because nothing reads it any more.
+  try { sessionStorage.setItem('v.ui.s', JSON.stringify({ noiseSeed: 0x11111111 })); } catch (eLeg) {}
+  window.__w0 = null; window.__w1 = false;
+  const res3 = await loader(WASM_BYTES, SEED2, TZ, LANG);
+  const W3 = window.__w0;
+  t('reload ignoring a page-written v.ui.s succeeds', !!(res3&&res3.success)&&!!W3, JSON.stringify(res3));
+  if (W3) {
+    const after3 = mk(8,8,[100,150,200]); W3.addCanvasNoise(after3,0,0);
+    const jsD3 = mk(8,8,[100,150,200]); jsNoise(jsD3.data,8,8,0,0,SEED2);
+    t('a page-written v.ui.s does NOT reseed the WASM', after3.data.every((v,i)=>v===jsD3.data[i]));
+  }
+  try { sessionStorage.removeItem('v.ui.s'); } catch (eLeg2) {}
+
+  document.getElementById('out').textContent = L.join('\n') +
+    '\n\nFAILURES: ' + L.filter(x=>x.startsWith('FAIL')).length;
+})();
+</script>
+</body></html>

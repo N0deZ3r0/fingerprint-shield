@@ -1,0 +1,48 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "sec-ch-ua-platform-version",
+          "operation": "remove"
+        },
+        {
+          "header": "sec-ch-device-memory",
+          "operation": "remove"
+        },
+        {
+          "header": "device-memory",
+          "operation": "remove"
+        },
+        {
+          "header": "sec-ch-dpr",
+          "operation": "remove"
+        },
+        {
+          "header": "dpr",
+          "operation": "remove"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "*://*/*",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame",
+        "stylesheet",
+        "script",
+        "image",
+        "font",
+        "object",
+        "xmlhttprequest",
+        "ping",
+        "csp_report",
+        "media",
+        "other"
+      ]
+    }
+  }
+]

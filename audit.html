@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fingerprint Shield — audit</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 22px 26px 40px; background: #14161a; color: #dfe3ea;
+         font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 17px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: #8b93a3; margin: 0 0 18px; max-width: 78ch; }
+  .bar { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+  select, button { font: inherit; background: #1e222a; color: #dfe3ea; border: 1px solid #333a47;
+                   border-radius: 6px; padding: 7px 11px; }
+  button { cursor: pointer; background: #2b6cb0; border-color: #2b6cb0; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  select { min-width: 380px; max-width: 60vw; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #8b93a3;
+       margin: 26px 0 8px; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; max-width: 1100px; }
+  td, th { text-align: left; padding: 5px 10px 5px 0; vertical-align: top;
+           border-bottom: 1px solid #23272f; }
+  th { color: #8b93a3; font-weight: 500; font-size: 12px; }
+  td.v { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; word-break: break-all; }
+  .ok   { color: #57b96a; }
+  .bad  { color: #e06c6c; font-weight: 600; }
+  .skip { color: #7d838f; }
+  .note { color: #8b93a3; font-size: 12px; max-width: 82ch; margin: 6px 0 0; }
+  #verdict { margin: 18px 0 0; font-size: 14px; font-weight: 600; }
+  code { color: #c8a96a; }
+</style>
+</head>
+<body>
+  <h1>Audit</h1>
+  <p class="sub">
+    Runs in the extension's own page, which its content scripts do <b>not</b> patch — so this
+    tab reads the <b>host</b> while the tab it inspects reads the <b>profile</b>, and the
+    service worker supplies what was <b>claimed</b>. Three sources, in the browser you
+    actually run. No rig can do this: branded Chrome refuses <code>--load-extension</code>,
+    so every suite in <code>test/</code> drives a browser this extension is never installed in.
+  </p>
+  <div class="bar">
+    <select id="tab"></select>
+    <button id="run">Run audit</button>
+    <button id="copy" disabled title="Everything this page saw, as text — paste it into a bug report">Copy state</button>
+    <span id="status" class="skip"></span>
+  </div>
+  <div id="out"></div>
+  <p id="verdict"></p>
+  <!-- The same findings as text, for a bug report: the table, the page's flags, the
+       document's header verdict, the host lists and the switches for this host. -->
+  <textarea id="dump" readonly hidden spellcheck="false"
+    style="width:100%;min-height:14em;font:12px/1.4 ui-monospace,Consolas,monospace;box-sizing:border-box"></textarea>
+
+  <!-- What the checks above CANNOT tell you. It belongs on this page and not only in
+       README "Limits", because a green verdict is read here, and a green verdict is only as
+       broad as the list of questions asked. Every line is a thing a site can read that
+       this extension knowingly does not close; the argument for each is in README "Limits",
+       and test/parity-static.mjs holds the two lists to the same length. -->
+  <h2>Known limits — not checked above, and not closed</h2>
+  <p class="note">
+    A green verdict means the tab reported the claim rather than the host on everything
+    this page asks. These are the things it does not ask, because the answer is already
+    known to be "visible". The reasoning for each is in <code>README "Limits"</code>.
+  </p>
+  <ul id="limits" class="note">
+    <li><b>The machine is 2.6 bits.</b> Six table profiles, so a site reading only the
+      hardware sees one of six — or, with "Эта машина", exactly this machine, whose crowd is
+      everyone with the same hardware. Country adds more, but the exit IP names it anyway.</li>
+    <li><b>Audio and text metrics are the host's.</b> Text metrics are noised, audio is
+      not — a two-machine diff measured audio as carrying nothing, and spoofing it would
+      be one more invented value.</li>
+    <li><b>WebGL readback is noised, not controlled.</b> We spoil our own rasterisation
+      rather than claim someone else's.</li>
+    <li><b>The GPU is spoofed at the string level only.</b> What actually runs on the card
+      is still this card.</li>
+    <li><b>A site's own service worker reads the real machine.</b> MV3 offers no way in;
+      the only lever is the per-site allow/deny switch, which defaults to allow.</li>
+    <li><b>On a trusted-types or blob-refusing origin the machine is the host's</b> —
+      coherently. The worker cannot be patched there, so the window stops spoofing what a
+      worker can see. The popup's "CSP → воркеры" switch rewrites that site's CSP instead,
+      at the price of its nonce policy — per site, off by default.</li>
+    <li><b>The screen becomes the host's when the window is wider than the claim.</b> At
+      150% zoom with a maximized window the resolution spoof does not apply.</li>
+    <li><b>A few media features disagree between <code>@media</code> and
+      <code>matchMedia</code></b> — the row above counts them separately. Structural:
+      matchMedia answers from the profile, the CSS engine from the real window.</li>
+    <li><b>The install window sends the host's <code>user-agent</code>.</b> Free on Chrome,
+      where the real and spoofed strings are identical; on Edge it carries
+      <code>Edg/</code>.</li>
+    <li><b>A canvas read during document parse gets the default feature flags</b>, not
+      yours, on the first load of an origin.</li>
+    <li><b>Window geometry reads 0 before the browser knows it</b>, exactly as in a clean
+      browser — and no rig here can measure that axis.</li>
+    <li><b>The first visit to a site that refuses blob: workers costs it one worker.</b>
+      Every worker this extension patches is built from a blob, and a host is only known
+      to refuse them once its headers have been seen — which is during that first load.
+      Every visit after it, in any tab, is fine.</li>
+    <li><b>The decoder and the WebRTC codec list are the card's.</b> HEVC support and
+      <code>video/H265</code> follow the host's hardware; only AV1's
+      <code>powerEfficient</code> is downgraded for a claimed card without the decoder.
+      "This machine" has no such gap.</li>
+    <li><b>The TLS and HTTP/2 handshake is not ours to touch.</b> JA3/JA4 and the h2
+      SETTINGS fingerprint are decided at the socket, before any script runs, and no
+      extension API reaches them — so that layer confirms or contradicts the claimed
+      browser on its own.</li>
+    <li><b>The exit country is invisible to every check on this page.</b> A perfectly
+      coherent profile behind an IP in another country is a contradiction nothing here
+      can see.</li>
+    <li><b>A WebGL warning about someone else&rsquo;s enum names this extension.</b> The page
+      asks getParameter for a pname the context does not have, the driver refuses, and
+      Chrome charges the console line to the innermost script frame &mdash; our wrapper.
+      Same values and the same getError() as a clean browser; silencing it would cost the
+      error flag, which a script CAN read.</li>
+  </ul>
+  <!-- defaults.js for afpCspScope / afpCspScopeMatches: the lists are per route now. -->
+  <script src="defaults.js"></script>
+  <script src="audit.js"></script>
+</body>
+</html>

@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Сбор метрик — Fingerprint Shield</title>
+<style>
+  body { font: 14px/1.6 -apple-system, Segoe UI, Arial, sans-serif; max-width: 900px;
+         margin: 32px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #666; margin-top: 0; }
+  .note { background: #f4f7fb; border-left: 3px solid #4a7fd0; padding: 10px 14px; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid #e5e5e5; }
+  th { background: #fafafa; font-weight: 600; }
+  td.num { font-family: Consolas, monospace; }
+  textarea { width: 100%; height: 220px; font-family: Consolas, monospace; font-size: 12px;
+             margin-top: 8px; }
+  button { font: inherit; padding: 8px 18px; cursor: pointer; margin-right: 8px; }
+  #status { color: #666; }
+  .ok { color: #197a2b; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>Сбор метрик браузера</h1>
+<p class="sub">Для проекта Fingerprint Shield. Ничего никуда не отправляется — файл работает
+полностью локально, результат нужно скопировать вручную.</p>
+
+<div class="note">
+  <b>Что нужно сделать:</b> открыть этот файл в Chrome на Windows, дождаться надписи
+  «готово», нажать «Скопировать» и прислать текст.
+  <br><br>
+  Если стоит Fingerprint Shield — сделайте <b>два</b> прогона: один с включённым
+  расширением, один с выключенным. В JSON есть поле <code>extensionActive</code>, так что
+  перепутать невозможно.
+</div>
+
+<p id="status">измеряю…</p>
+
+<div id="summary"></div>
+
+<button id="copy">Скопировать</button>
+<button id="dl">Сохранить в файл</button>
+<textarea id="out" readonly></textarea>
+
+<script>
+(async function () {
+  // v7 adds `webgpu` (adapter info, every limit read off the prototype, features, and the
+  // device's limits beside the adapter's).
+  // v4 adds the `raster` block and `audioLatency`; v5 adds `allowlistFonts`. A v3 dump has
+  // none of them, so it cannot answer whether GPU rasterisation or the font shortfall
+  // differ between machines — it never looked. v6 measures fontPreferences with
+  // font-family:initial on the host, so `default`/`apple` stop inheriting THIS page's own
+  // body stack (Segoe UI) and measure the browser's standard font instead — which is what
+  // Fingerprint Pro sees in its style-free srcdoc iframe. default@* from a v5 dump is the
+  // page's CSS, not the machine, and cannot be compared with a v6 value.
+  var R = { collectedAt: new Date().toISOString(), probeVersion: 7 };
+
+  function safe(name, fn) {
+    try { R[name] = fn(); } catch (e) { R[name] = 'ERR: ' + (e && e.name); }
+  }
+  function fnv(s) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return (h >>> 0).toString(16);
+  }
+
+  // ── context ──────────────────────────────────────────────────────────
+  safe('extensionActive', function () { return !!window.__p0; });
+  safe('userAgent', function () { return navigator.userAgent; });
+  safe('platform', function () { return navigator.platform; });
+  safe('language', function () { return navigator.language; });
+  safe('languages', function () { return (navigator.languages || []).join(','); });
+  safe('timezone', function () { return Intl.DateTimeFormat().resolvedOptions().timeZone; });
+  safe('hardwareConcurrency', function () { return navigator.hardwareConcurrency; });
+  safe('deviceMemory', function () { return navigator.deviceMemory; });
+  safe('screen', function () { return screen.width + 'x' + screen.height; });
+  safe('colorDepth', function () { return screen.colorDepth; });
+  safe('devicePixelRatio', function () { return devicePixelRatio; });
+
+  // ── 1. font_preferences: generic families measured through DOM layout ──
+  // This is the block Fingerprint reports as font_preferences. Measured with
+  // getBoundingClientRect so the value keeps its fraction, at two sizes: a shift that
+  // shows up at one size and not the other tells us it is scaling, not fonts.
+  safe('fontPreferences', function () {
+    var presets = {
+      'default': {}, 'apple': { font: '-apple-system-body' },
+      'serif': { fontFamily: 'serif' }, 'sans': { fontFamily: 'sans-serif' },
+      'mono': { fontFamily: 'monospace' }, 'system': { fontFamily: 'system-ui' },
+      'cursive': { fontFamily: 'cursive' }, 'fantasy': { fontFamily: 'fantasy' }
+    };
+    var host = document.createElement('div');
+    // font-family:initial — the presets that name no family (`default`, and `apple` after
+    // its Safari-only shorthand is rejected) must resolve to the BROWSER's standard font,
+    // not to whatever this page's stylesheet put on <body>.
+    host.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;font-family:initial';
+    document.body.appendChild(host);
+    var out = {};
+    [48, 16].forEach(function (size) {
+      Object.keys(presets).forEach(function (name) {
+        var s = document.createElement('span');
+        s.textContent = 'mmMwWLliI0fiflO&1';
+        s.style.cssText = 'font-size:' + size + 'px;font-style:normal;font-weight:normal;' +
+                          'letter-spacing:normal;white-space:nowrap;line-height:normal';
+        var p = presets[name];
+        Object.keys(p).forEach(function (k) { s.style[k] = p[k]; });
+        host.appendChild(s);
+        out[name + '@' + size] = s.getBoundingClientRect().width;
+        if (size === 48) {
+          try { out[name + '.resolved'] = getComputedStyle(s).fontFamily; } catch (e) {}
+        }
+      });
+    });
+    host.remove();
+    return out;
+  });
+
+  // ── 2. emoji metrics ─────────────────────────────────────────────────
+  safe('emoji', function () {
+    var s = document.createElement('span');
+    s.textContent = '😀👩‍💻🇷🇺';
+    s.style.cssText = 'position:absolute;left:-9999px;font-size:48px;white-space:nowrap';
+    document.body.appendChild(s);
+    var r = s.getBoundingClientRect();
+    var fam = '';
+    try { fam = getComputedStyle(s).fontFamily; } catch (e) {}
+    s.remove();
+    return { width: r.width, height: r.height, resolved: fam };
+  });
+
+  // ── 3. per-font canvas widths — the raw material a metrics table needs ──
+  safe('fontWidths', function () {
+    var FONTS = ['Arial','Arial Black','Calibri','Cambria','Candara','Comic Sans MS','Consolas',
+      'Constantia','Corbel','Courier New','Ebrima','Franklin Gothic Medium','Gabriola','Gadugi',
+      'Georgia','Haettenschweiler','Impact','Ink Free','Lucida Bright','Lucida Console',
+      'Lucida Sans','Lucida Sans Unicode','Marlett','Microsoft Sans Serif','Monotype Corsiva',
+      'MS Gothic','MS UI Gothic','MV Boli','Palatino Linotype','Pristina','Segoe Print',
+      'Segoe Script','Segoe UI','Segoe UI Light','Sylfaen','Tahoma','Times New Roman',
+      'Trebuchet MS','Verdana','Webdings','Wingdings'];
+    var cx = document.createElement('canvas').getContext('2d');
+    var out = {};
+    FONTS.forEach(function (f) {
+      cx.font = '72px "' + f + '"';
+      out[f] = cx.measureText('mmmmmmmmmmlli').width;
+    });
+    // Same strings through the generic fallbacks, so a blocked family is recognisable.
+    ['serif', 'sans-serif', 'monospace'].forEach(function (g) {
+      cx.font = '72px ' + g;
+      out['[' + g + ']'] = cx.measureText('mmmmmmmmmmlli').width;
+    });
+    return out;
+  });
+
+  // ── 4. WebGL surface ─────────────────────────────────────────────────
+  safe('webgl', function () {
+    var gl = document.createElement('canvas').getContext('webgl');
+    if (!gl) return 'no context';
+    var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    var prec = [];
+    [gl.VERTEX_SHADER, gl.FRAGMENT_SHADER].forEach(function (sh) {
+      [gl.LOW_FLOAT, gl.MEDIUM_FLOAT, gl.HIGH_FLOAT, gl.LOW_INT, gl.MEDIUM_INT, gl.HIGH_INT]
+        .forEach(function (p) {
+          var f = gl.getShaderPrecisionFormat(sh, p);
+          prec.push(f.rangeMin + ':' + f.rangeMax + ':' + f.precision);
+        });
+    });
+    var limits = {};
+    ['MAX_TEXTURE_SIZE','MAX_RENDERBUFFER_SIZE','MAX_VERTEX_ATTRIBS','MAX_VARYING_VECTORS',
+     'MAX_VERTEX_UNIFORM_VECTORS','MAX_FRAGMENT_UNIFORM_VECTORS','MAX_TEXTURE_IMAGE_UNITS',
+     'MAX_COMBINED_TEXTURE_IMAGE_UNITS','MAX_CUBE_MAP_TEXTURE_SIZE','ALIASED_LINE_WIDTH_RANGE',
+     'ALIASED_POINT_SIZE_RANGE','MAX_VIEWPORT_DIMS'].forEach(function (n) {
+      try { limits[n] = String(gl.getParameter(gl[n])); } catch (e) { limits[n] = 'ERR'; }
+    });
+    var aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+    var exts = (gl.getSupportedExtensions() || []).slice().sort();
+    return {
+      unmaskedVendor: dbg ? String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)) : '?',
+      unmaskedRenderer: dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '?',
+      version: String(gl.getParameter(gl.VERSION)),
+      shadingLanguage: String(gl.getParameter(gl.SHADING_LANGUAGE_VERSION)),
+      extensionCount: exts.length,
+      extensionsHash: fnv(exts.join(',')),
+      extensions: exts.join(','),
+      shaderPrecisions: prec.join('|'),
+      maxAnisotropy: aniso ? String(gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) : 'none',
+      limits: limits
+    };
+  });
+
+  // ── 5. math ──────────────────────────────────────────────────────────
+  safe('math', function () {
+    var v = [Math.acos(0.123), Math.acosh(1e300), Math.asin(0.123), Math.asinh(1),
+      Math.atan(2), Math.atanh(0.5), Math.cbrt(100), Math.cos(1e2), Math.cosh(1),
+      Math.exp(1), Math.expm1(1), Math.log(1e2), Math.log1p(10), Math.sin(1e2),
+      Math.sinh(1), Math.sqrt(2), Math.tan(-1e300), Math.tanh(1), Math.pow(Math.PI, -100)];
+    return { values: v.join(','), hash: fnv(v.join(',')) };
+  });
+
+  // ── 6. audio ─────────────────────────────────────────────────────────
+  // The classic OfflineAudioContext fingerprint: triangle oscillator through a dynamics
+  // compressor, summed from the tail of the buffer.
+  R.audio = await new Promise(function (resolve) {
+    try {
+      var C = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      if (!C) return resolve('unsupported');
+      var ctx = new C(1, 5000, 44100);
+      var osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = 10000;
+      var comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -50; comp.knee.value = 40; comp.ratio.value = 12;
+      comp.attack.value = 0; comp.release.value = 0.25;
+      osc.connect(comp); comp.connect(ctx.destination);
+      osc.start(0);
+      var done = false;
+      var t = setTimeout(function () { if (!done) { done = true; resolve('timeout'); } }, 4000);
+      ctx.startRendering().then(function (buf) {
+        if (done) return;
+        done = true; clearTimeout(t);
+        var d = buf.getChannelData(0), sum = 0;
+        for (var i = 4500; i < 5000; i++) sum += Math.abs(d[i]);
+        resolve(sum);
+      }).catch(function (e) { if (!done) { done = true; resolve('ERR: ' + e.name); } });
+    } catch (e) { resolve('ERR: ' + e.name); }
+  });
+
+  // ── 7b. THE ALLOWLIST ∩ THIS HOST ───────────────────────────────────
+  // The extension's font allowlist (background.js) is a hardcoded 84-name list — the
+  // standard Windows font set, identical for every user of the build, NOT a scan of this
+  // disk. So it cannot leak "which fonts this user installed".
+  //
+  // What it CAN leak is the other direction: the extension can only SUBTRACT fonts (block
+  // a family the host has), never conjure one it lacks. So what a page actually observes
+  // is `host ∩ allowlist`, and if this machine is missing entries the allowlist claims,
+  // the shortfall is this machine's own and survives every profile.
+  //
+  // Measured on an Intel Arc box: 79 of 84 present, 5 missing (Leelawadee UI Semilight,
+  // Nirmala UI Semilight, Segoe MDL2 Assets, Segoe UI Variable, Sitka). Whether that set
+  // of 5 is the same on every Windows machine is exactly what a second machine answers —
+  // several entries here ship only with Windows 11 or with a language pack.
+  //
+  // Two detectors, because neither is sound alone: document.fonts.check() is the proper
+  // API but answers about the family name, and measureText catches a family that resolves
+  // but renders as fallback. An icon font (Segoe MDL2 Assets) has no glyphs for Latin text
+  // and so measures as fallback while genuinely being installed — the two columns
+  // disagreeing IS the signal that a name needs judging by hand, not a bug.
+  safe('allowlistFonts', function () {
+    var LIST = ['Arial','Arial Black','Arial Narrow','Bahnschrift','Calibri','Calibri Light',
+      'Cambria','Cambria Math','Candara','Candara Light','Comic Sans MS','Consolas','Constantia',
+      'Corbel','Corbel Light','Courier New','Dubai','Dubai Light','Dubai Medium','Ebrima',
+      'Franklin Gothic Medium','Gabriola','Gadugi','Georgia','Haettenschweiler','Impact',
+      'Ink Free','Javanese Text','Leelawadee UI','Leelawadee UI Semilight','Lucida Bright',
+      'Lucida Console','Lucida Sans','Lucida Sans Unicode','Malgun Gothic','Marlett',
+      'Microsoft Himalaya','Microsoft JhengHei','Microsoft JhengHei UI','Microsoft New Tai Lue',
+      'Microsoft PhagsPa','Microsoft Sans Serif','Microsoft Tai Le','Microsoft YaHei',
+      'Microsoft YaHei UI','Microsoft Yi Baiti','MingLiU-ExtB','Mongolian Baiti',
+      'Monotype Corsiva','MS Gothic','MS UI Gothic','MV Boli','Myanmar Text','Nirmala UI',
+      'Nirmala UI Semilight','Palatino Linotype','Pristina','Segoe MDL2 Assets','Segoe Print',
+      'Segoe Script','Segoe UI','Segoe UI Emoji','Segoe UI Historic','Segoe UI Light',
+      'Segoe UI Symbol','Segoe UI Variable','SimSun','SimSun-ExtB','Sitka','Sitka Banner',
+      'Sitka Display','Sitka Heading','Sitka Small','Sitka Subheading','Sitka Text','Sylfaen',
+      'Tahoma','Times New Roman','Trebuchet MS','Verdana','Webdings','Wingdings','Yu Gothic',
+      'Yu Gothic UI'];
+    var x = document.createElement('canvas').getContext('2d');
+    var S = 'mmmmmmmmmmlliWQ@';
+    function w(f) { x.font = '72px ' + f; return x.measureText(S).width; }
+    var base = { monospace: w('monospace'), 'sans-serif': w('sans-serif'), serif: w('serif') };
+    var byMetric = [], byApi = [], widths = {};
+    LIST.forEach(function (f) {
+      var hit = false;
+      for (var g in base) { if (w("'" + f + "'," + g) !== base[g]) { hit = true; break; } }
+      if (hit) { byMetric.push(f); widths[f] = w("'" + f + "',monospace"); }
+      var api = false;
+      try { api = document.fonts && document.fonts.check('72px "' + f + '"'); } catch (e) {}
+      if (api) byApi.push(f);
+    });
+    return {
+      total: LIST.length,
+      presentByMetric: byMetric.length,
+      presentByApi: byApi.length,
+      missingByMetric: LIST.filter(function (f) { return byMetric.indexOf(f) === -1; }).join(', '),
+      missingByApi: LIST.filter(function (f) { return byApi.indexOf(f) === -1; }).join(', '),
+      widthsHash: fnv(Object.keys(widths).sort().map(function (k) { return k + '=' + widths[k]; }).join('|')),
+      widths: widths
+    };
+  });
+
+  // ── 7. RASTERISATION — the GPU's output, not its description ─────────
+  // probeVersion 3 measured the whole WebGL DESCRIPTION surface (extensions, precisions,
+  // limits, vendor strings) and no rendered pixel at all. That is why two machines could
+  // agree on every WebGL field and still leave the question open: ANGLE over D3D11
+  // normalises what the driver SAYS, and says nothing about what it DRAWS.
+  //
+  // These four are the output. If they match across two machines, GPU rasterisation
+  // carries no entropy and there is nothing to close; if they differ, `readPixels` is a
+  // real carrier and worth the cost of noising it (which is not free — apps read 1x1
+  // pixels to identify a clicked object, and noise breaks that).
+  //
+  // Each is hashed AND kept as a short raw sample, because "the hashes differ" does not
+  // say by how much — one channel off by one is a very different finding from a different
+  // image, and the sample makes that visible without another collection round.
+  safe('raster', function () {
+    var out = {};
+    function px(arr, n) {
+      return Array.prototype.slice.call(arr, 0, n).join(',');
+    }
+
+    // 2D: text + a curve. Anti-aliasing of both is where 2D rasterisers differ.
+    var c = document.createElement('canvas');
+    c.width = 240; c.height = 60;
+    var x = c.getContext('2d');
+    x.textBaseline = 'top'; x.font = '14px Arial'; x.fillStyle = '#f60';
+    x.fillRect(1, 1, 90, 24);
+    x.fillStyle = '#069'; x.fillText('Cwm fjord bank glyphs', 2, 15);
+    x.strokeStyle = '#3a5'; x.lineWidth = 2;
+    x.beginPath(); x.arc(150, 30, 20, 0, Math.PI * 1.5); x.stroke();
+    out.canvas2d = fnv(c.toDataURL());
+    // Sampled where the glyphs are anti-aliased OVER the orange fill — a flat area would
+    // be the same on any GPU and prove nothing, and a transparent one reads as all zeros.
+    try { out.canvas2dPixels = px(x.getImageData(30, 18, 4, 1).data, 16); } catch (e) {}
+
+    // WebGL, flat fill: the cheapest possible readback. Any difference here is the
+    // pipeline itself, not shading.
+    var g1 = document.createElement('canvas').getContext('webgl');
+    if (g1) {
+      g1.clearColor(0.2, 0.4, 0.6, 1); g1.clear(g1.COLOR_BUFFER_BIT);
+      var flat = new Uint8Array(4 * 16);
+      g1.readPixels(0, 0, 4, 4, g1.RGBA, g1.UNSIGNED_BYTE, flat);
+      out.webglFlat = fnv(px(flat, flat.length));
+      out.webglFlatPixels = px(flat, 8);
+    }
+
+    // WebGL, shaded gradient over a full quad. This is the one that exercises the
+    // fragment shader and the interpolators — where float precision actually shows.
+    var cc = document.createElement('canvas'); cc.width = 64; cc.height = 64;
+    var g = cc.getContext('webgl');
+    if (g) {
+      var vs = g.createShader(g.VERTEX_SHADER);
+      g.shaderSource(vs, 'attribute vec2 p;varying vec2 v;void main(){v=p;gl_Position=vec4(p,0.0,1.0);}');
+      g.compileShader(vs);
+      var fs = g.createShader(g.FRAGMENT_SHADER);
+      g.shaderSource(fs,
+        'precision highp float;varying vec2 v;void main(){' +
+        'float d=length(v);float a=sin(d*12.0)*0.5+0.5;' +
+        'gl_FragColor=vec4(a,v.x*0.5+0.5,v.y*0.5+0.5,1.0);}');
+      g.compileShader(fs);
+      var pr = g.createProgram();
+      g.attachShader(pr, vs); g.attachShader(pr, fs);
+      g.linkProgram(pr); g.useProgram(pr);
+      var b = g.createBuffer(); g.bindBuffer(g.ARRAY_BUFFER, b);
+      g.bufferData(g.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), g.STATIC_DRAW);
+      var loc = g.getAttribLocation(pr, 'p');
+      g.enableVertexAttribArray(loc);
+      g.vertexAttribPointer(loc, 2, g.FLOAT, false, 0, 0);
+      g.drawArrays(g.TRIANGLE_STRIP, 0, 4);
+      var buf = new Uint8Array(64 * 64 * 4);
+      g.readPixels(0, 0, 64, 64, g.RGBA, g.UNSIGNED_BYTE, buf);
+      out.webglShader = fnv(px(buf, buf.length));
+      // A diagonal sample: 8 pixels spread across the gradient, so a small numeric
+      // difference is readable directly instead of only through the hash.
+      var diag = [];
+      for (var i = 0; i < 8; i++) {
+        var o = ((i * 8) * 64 + (i * 8)) * 4;
+        diag.push(buf[o] + '/' + buf[o + 1] + '/' + buf[o + 2]);
+      }
+      out.webglShaderDiag = diag.join(' ');
+      out.webglAntialias = String(g.getContextAttributes().antialias);
+    }
+    return out;
+  });
+
+  // AudioContext.baseLatency — the audio device's buffer over its sample rate. A hardware
+  // trait, unlike the oscillator sum, and the value the extension now pins.
+  safe('audioLatency', function () {
+    var C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return 'unsupported';
+    var a = new C();
+    var v = a.baseLatency + '/' + a.sampleRate + '/' + (a.outputLatency || 0);
+    try { a.close(); } catch (e) {}
+    return v;
+  });
+
+  // WebGPU — the one surface the two-machine pair of 2026-08-17 could not answer, because
+  // probeVersion 5 did not collect it. It matters because it is the only place left where a
+  // claimed GPU could be contradicted: the WebGL diff of those two machines came back with
+  // 150 fields identical, the whole extension list and every shader precision among them, so
+  // WebGL does not tell a discrete NVIDIA from an integrated Intel at all.
+  //
+  // Limits are ENUMERATED off the prototype rather than listed by hand: a hand-written set
+  // goes stale the moment the platform adds one, and the version that is missing a limit
+  // looks exactly like the version that is complete. Same reasoning as
+  // [FIX temporal-and-newer-intl-ctors].
+  //
+  // The device's limits are collected beside the adapter's on purpose. A device created with
+  // no requiredLimits gets the SPEC DEFAULTS, not the hardware maxima, so the two differ
+  // naturally (16384 vs 8192 measured here) — and any spoof that flattens that difference
+  // would be inventing a browser rather than imitating one.
+  R.webgpu = await (async function () {
+    if (!navigator.gpu) return 'unsupported';
+    try {
+      var ad = await navigator.gpu.requestAdapter();
+      if (!ad) return 'no adapter';
+      var info = ad.info || {};
+      var names = [];
+      try {
+        var proto = Object.getPrototypeOf(ad.limits);
+        names = Object.getOwnPropertyNames(proto).filter(function (n) { return n !== 'constructor'; }).sort();
+      } catch (e) {}
+      function readLimits(src) {
+        var o = {};
+        names.forEach(function (n) {
+          try { var v = src[n]; if (typeof v === 'number') o[n] = v; } catch (e) {}
+        });
+        return o;
+      }
+      var out = {
+        vendor: String(info.vendor || ''),
+        architecture: String(info.architecture || ''),
+        device: String(info.device || ''),
+        description: String(info.description || ''),
+        isFallbackAdapter: String(info.isFallbackAdapter),
+        featureCount: 0,
+        features: '',
+        adapterLimits: readLimits(ad.limits),
+        deviceLimits: {}
+      };
+      try {
+        var f = [];
+        ad.features.forEach(function (x) { f.push(x); });
+        f.sort();
+        out.featureCount = f.length;
+        out.features = f.join(',');
+      } catch (e) {}
+      try {
+        var dv = await ad.requestDevice();
+        out.deviceLimits = readLimits(dv.limits);
+        try { dv.destroy(); } catch (e) {}
+      } catch (e) { out.deviceLimits = 'ERR ' + (e && e.name); }
+      return out;
+    } catch (e) { return 'ERR ' + (e && e.name); }
+  })();
+
+  // ── render ───────────────────────────────────────────────────────────
+  var json = JSON.stringify(R, null, 1);
+  document.getElementById('out').value = json;
+  document.getElementById('status').innerHTML =
+    '<span class="ok">готово</span> — расширение ' +
+    (R.extensionActive ? '<b>включено</b>' : '<b>выключено</b>') +
+    '. Нажмите «Скопировать» и пришлите текст.';
+
+  var rows = [
+    ['audio', R.audio],
+    ['math', R.math && R.math.hash],
+    ['fontPreferences default@48', R.fontPreferences && R.fontPreferences['default@48']],
+    ['fontPreferences sans@48', R.fontPreferences && R.fontPreferences['sans@48']],
+    ['fontPreferences mono@48', R.fontPreferences && R.fontPreferences['mono@48']],
+    ['emoji width', R.emoji && R.emoji.width],
+    ['WebGL renderer', R.webgl && R.webgl.unmaskedRenderer],
+    ['WebGL расширений', R.webgl && R.webgl.extensionCount],
+    ['WebGL extensionsHash', R.webgl && R.webgl.extensionsHash],
+    ['shaderPrecisions', R.webgl && R.webgl.shaderPrecisions],
+    ['WebGPU vendor/arch', R.webgpu && R.webgpu.vendor ? R.webgpu.vendor + ' / ' + R.webgpu.architecture : String(R.webgpu)],
+    ['WebGPU maxStorageBufferBindingSize', R.webgpu && R.webgpu.adapterLimits && R.webgpu.adapterLimits.maxStorageBufferBindingSize],
+    ['WebGPU features', R.webgpu && R.webgpu.featureCount]
+  ];
+  var html = '<table><tr><th>сигнал</th><th>значение</th></tr>';
+  rows.forEach(function (r) {
+    html += '<tr><td>' + r[0] + '</td><td class="num">' +
+            String(r[1]).slice(0, 90) + '</td></tr>';
+  });
+  document.getElementById('summary').innerHTML = html + '</table>';
+
+  document.getElementById('copy').onclick = function () {
+    var ta = document.getElementById('out');
+    ta.select();
+    try { document.execCommand('copy'); this.textContent = 'скопировано'; }
+    catch (e) { this.textContent = 'выделите текст вручную'; }
+  };
+  document.getElementById('dl').onclick = function () {
+    var name = 'metrics-' + (R.extensionActive ? 'ext-on' : 'ext-off') + '.json';
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    a.download = name;
+    a.click();
+  };
+})();
+</script>
+</body>
+</html>

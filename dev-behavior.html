@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>behaviour: clean realm vs patched window</title></head>
+<body><pre id="out">running…</pre>
+<script>
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0, pdfViewerEnabled:true,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  speechVoices:[{name:'Microsoft Kaia - Estonian',lang:'et-EE',localService:true,default:true}],
+  features:{canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true}
+}));
+sessionStorage.setItem('v.ui.m','normal');
+
+const ORDER=['profile-injector.js','mw/mw-bag.js','mw/mw-core.js','mw/mw-timezone-screen.js',
+ 'mw/mw-navigator.js','mw/mw-canvas-audio.js','mw/mw-misc.js','mw/mw-workers.js','mw/mw-geo.js','mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// clean realm captured BEFORE our modules run
+const ifr=document.createElement('iframe'); ifr.style.display='none';
+document.body.appendChild(ifr);
+const CLEAN=ifr.contentWindow, CLEANDOC=ifr.contentDocument;
+
+// Each probe runs in a given realm and returns "value" or "THREW <Type>".
+// Anything that throws in the clean realm but not in ours (or vice versa) is a lie
+// of the loudest kind: we make something work that the browser cannot, or break
+// something it can.
+function probes(W, D){
+  const P={};
+  const T=(k,fn)=>{ try{ const v=fn(); P[k]='OK '+String(v).slice(0,70); }
+                    catch(e){ P[k]='THREW '+(e&&e.constructor?e.constructor.name:'?')+': '+String(e&&e.message).slice(0,60); } };
+
+  // ── document.fonts (candidate for CreepJS "font B") ──
+  T('fonts exists', ()=>typeof D.fonts);
+  T('fonts.size', ()=>D.fonts.size);
+  T('fonts.status', ()=>D.fonts.status);
+  T('fonts.check valid', ()=>D.fonts.check('12px Arial'));
+  T('fonts.check generic', ()=>D.fonts.check('12px sans-serif'));
+  T('fonts.check unknown family', ()=>D.fonts.check('12px "NoSuchFontXYZ"'));
+  T('fonts.check no-size', ()=>D.fonts.check('Arial'));
+  T('fonts.check empty', ()=>D.fonts.check(''));
+  T('fonts.check garbage', ()=>D.fonts.check('!!!'));
+  T('fonts.check bold-only', ()=>D.fonts.check('bold'));
+  T('fonts.check number', ()=>D.fonts.check(42));
+  T('fonts.check undefined', ()=>D.fonts.check(undefined));
+  T('fonts.check with text', ()=>D.fonts.check('12px Arial','abc'));
+  // The probe only wants to know that a thenable comes back, but load() on unparseable
+  // input REJECTS, and nothing here consumed it — an unhandled rejection that Playwright
+  // records as a page error ("Could not resolve '!!!' as a font"), failing the whole file
+  // no matter what the checks said. Native rejects the same way, so the rejection is the
+  // expected behaviour; it just has to be consumed. .catch() is attached AFTER the value
+  // under test is read, so what is asserted does not change.
+  T('fonts.load valid', ()=>{ const p=D.fonts.load('12px Arial'); const r=p&&typeof p.then; if(p&&p.catch)p.catch(()=>{}); return r; });
+  T('fonts.load garbage', ()=>{ const p=D.fonts.load('!!!'); const r=p&&typeof p.then; if(p&&p.catch)p.catch(()=>{}); return r; });
+  T('fonts spread', ()=>[...D.fonts].length);
+  T('fonts.forEach', ()=>{ let n=0; D.fonts.forEach(()=>n++); return n; });
+  T('fonts.values', ()=>{ const it=D.fonts.values(); return it&&typeof it.next; });
+  T('fonts.entries next', ()=>{ const it=D.fonts.entries(); return JSON.stringify(it.next()); });
+  T('fonts.keys next', ()=>{ const it=D.fonts.keys(); return JSON.stringify(it.next()); });
+  T('fonts.ready', ()=>typeof D.fonts.ready);
+  T('new FontFace', ()=>{ const f=new W.FontFace('X','url(data:,)'); return f.family; });
+  T('queryLocalFonts', ()=>typeof W.queryLocalFonts);
+
+  // ── Error / stack (candidate for "code") ──
+  T('new Error().stack type', ()=>typeof new W.Error('x').stack);
+  T('Error.prototype.stack on plain obj', ()=>{
+      const d=Object.getOwnPropertyDescriptor(W.Error.prototype,'stack');
+      return d&&d.get ? String(d.get.call({})).slice(0,30) : 'no getter'; });
+  T('Error.prototype.stack descriptor', ()=>{
+      const d=Object.getOwnPropertyDescriptor(W.Error.prototype,'stack');
+      return d?Object.keys(d).sort().join(','):'none'; });
+  T('stack of thrown TypeError', ()=>{ try{ null.x; }catch(e){ return String(e.stack).split('\n').length; } });
+  T('captureStackTrace', ()=>typeof W.Error.captureStackTrace);
+  T('stackTraceLimit', ()=>W.Error.stackTraceLimit);
+
+  // ── Function code inspection (candidate for "code") ──
+  T('FT on Math.max', ()=>W.Function.prototype.toString.call(W.Math.max).slice(0,40));
+  T('FT on plain object', ()=>W.Function.prototype.toString.call({}));
+  T('FT on arrow', ()=>W.Function.prototype.toString.call(()=>1));
+  T('FT.caller', ()=>W.Function.prototype.toString.caller);
+  T('FT.arguments', ()=>W.Function.prototype.toString.arguments);
+  T('fn.caller on strict fn', ()=>{ 'use strict'; const f=function(){}; return f.caller; });
+  T('new Function()', ()=>typeof new W.Function('return 1'));
+  T('eval in realm', ()=>W.eval('1+1'));
+
+  // ── connection (network field) ──
+  T('connection exists', ()=>typeof W.navigator.connection);
+  T('connection.type', ()=>String(W.navigator.connection && W.navigator.connection.type));
+  T('connection.effectiveType', ()=>W.navigator.connection && W.navigator.connection.effectiveType);
+  T('connection.downlink', ()=>W.navigator.connection && W.navigator.connection.downlink);
+  T('connection.rtt', ()=>W.navigator.connection && W.navigator.connection.rtt);
+  T('connection.downlinkMax in proto', ()=>{
+      const NI=W.NetworkInformation; return NI ? ('downlinkMax' in NI.prototype) : 'no NI'; });
+  T('connection own keys', ()=>{
+      const NI=W.NetworkInformation; return NI ? Object.getOwnPropertyNames(NI.prototype).sort().join(',') : 'no NI'; });
+
+  // ── Notification ──
+  T('Notification.permission', ()=>W.Notification && W.Notification.permission);
+
+  // ── misc things our window patches ──
+  T('matchMedia bogus', ()=>{ const m=W.matchMedia('(bogus-feature: 1)'); return m.matches+'/'+m.media; });
+  T('matchMedia empty', ()=>{ const m=W.matchMedia(''); return m.matches+'/'+String(m.media); });
+  T('navigator.plugins length', ()=>W.navigator.plugins.length);
+  T('navigator.plugins instanceof', ()=>W.navigator.plugins instanceof W.PluginArray);
+  T('mimeTypes[0].enabledPlugin', ()=>{ const m=W.navigator.mimeTypes[0]; return m?typeof m.enabledPlugin:'none'; });
+  T('speechSynthesis.getVoices len', ()=>W.speechSynthesis.getVoices().length);
+  T('getBattery type', ()=>typeof W.navigator.getBattery);
+  T('permissions.query', ()=>typeof W.navigator.permissions.query);
+  T('keyboard.getLayoutMap', ()=>W.navigator.keyboard ? typeof W.navigator.keyboard.getLayoutMap : 'no keyboard');
+  T('DOMRect from gbcr', ()=>{ const e=D.createElement('div'); D.body&&D.body.appendChild(e);
+      const r=e.getBoundingClientRect(); const s=(r instanceof W.DOMRect); e.remove(); return s; });
+  return P;
+}
+
+(async()=>{
+  const clean = probes(CLEAN, CLEANDOC);
+  for(const f of ORDER) await load(f);
+  const ours = probes(window, document);
+  const L=[];
+  const keys=Object.keys(clean);
+  const diffs=keys.filter(k=>clean[k]!==ours[k]);
+  const cleanThrewOursDidnt = diffs.filter(k=>clean[k].startsWith('THREW') && !ours[k].startsWith('THREW'));
+  const oursThrewCleanDidnt = diffs.filter(k=>!clean[k].startsWith('THREW') && ours[k].startsWith('THREW'));
+  const valueOnly = diffs.filter(k=>!cleanThrewOursDidnt.includes(k) && !oursThrewCleanDidnt.includes(k));
+
+  L.push('probes: '+keys.length+'   differing: '+diffs.length);
+  L.push('');
+  L.push('### WE MAKE IT WORK WHERE THE BROWSER CANNOT ('+cleanThrewOursDidnt.length+') — loudest class');
+  cleanThrewOursDidnt.forEach(k=>L.push('   '+k+'\n      clean = '+clean[k]+'\n      ours  = '+ours[k]));
+  L.push('');
+  L.push('### WE BREAK WHAT THE BROWSER CAN DO ('+oursThrewCleanDidnt.length+')');
+  oursThrewCleanDidnt.forEach(k=>L.push('   '+k+'\n      clean = '+clean[k]+'\n      ours  = '+ours[k]));
+  L.push('');
+  L.push('### value differences ('+valueOnly.length+') — expected for spoofed fields, suspicious otherwise');
+  valueOnly.forEach(k=>L.push('   '+k+'\n      clean = '+clean[k]+'\n      ours  = '+ours[k]));
+  // Same omission as dev-lies/dev-async: rich output, but no verdict test/run.mjs could
+  // match, so the runner sat out its 45s timeout and reported FAIL whatever the counts
+  // were. Only the two THREW-mismatch buckets count — value differences are the point of
+  // the extension, not a defect.
+  L.push('');
+  L.push('FAILURES: ' + (cleanThrewOursDidnt.length + oursThrewCleanDidnt.length) +
+    ((cleanThrewOursDidnt.length + oursThrewCleanDidnt.length) ? '' :
+      ' — no throw-behaviour mismatches ('+valueOnly.length+' value diffs)'));
+  document.getElementById('out').textContent=L.join('\n');
+})();
+</script>
+</body></html>
