@@ -356,6 +356,39 @@ learnedClearBtn.addEventListener('click', function () {
   });
 });
 
+// ── interface language ───────────────────────────────────────────────────────
+// chrome.i18n answers in the BROWSER's language and offers no way to ask for another, so
+// the override lives in i18n.js as a second catalogue read from the extension's own
+// _locales. This is only the control for it: pick, store, reload. The reload is not
+// cosmetic — every string on every open page was written at DOMContentLoaded from the old
+// catalogue, and re-applying them here would leave the popup and Who Am I in the old
+// language until they were next opened.
+var langSelect = document.getElementById('langSelect');
+var langState = document.getElementById('langState');
+
+function renderLangState() {
+  if (!langState) return;
+  var chosen = '';
+  try { chosen = localStorage.getItem('afp.lang') || ''; } catch (e) { chosen = ''; }
+  var browser = '';
+  try { browser = chrome.i18n.getUILanguage(); } catch (e) { browser = '?'; }
+  langState.textContent = chosen
+    ? T('optLangChosen', 'Выбран: ' + chosen + '. Браузер: ' + browser + '.', chosen, browser)
+    : T('optLangFollowing', 'Следует за браузером: ' + browser + '.', browser);
+}
+
+if (langSelect) {
+  try { langSelect.value = localStorage.getItem('afp.lang') || ''; } catch (e) { /* blocked */ }
+  renderLangState();
+  langSelect.addEventListener('change', function () {
+    var ok = window.afpSetLang ? window.afpSetLang(langSelect.value) : false;
+    if (!ok) { showStatus(T('optLangFailed', 'Не удалось сохранить язык'), true); return; }
+    renderLangState();
+    showStatus(T('optLangSaved', 'Язык сохранён — страница перезагрузится'));
+    setTimeout(function () { location.reload(); }, 600);
+  });
+}
+
 load();
 loadRtcExceptions();
 loadSwBlocked();

@@ -24,9 +24,40 @@
 (function () {
     'use strict';
 
+    /**
+     * THE CHOSEN LANGUAGE, and why chrome.i18n alone was not enough.
+     *
+     * getMessage() answers in the BROWSER's language and there is no API to ask it for
+     * another one — the locale is fixed for the life of the extension process. So a user
+     * whose Chrome is Russian could read this extension in Russian and in nothing else,
+     * which is a strange thing to say about a tool whose whole subject is presenting a
+     * different identity than the one you have.
+     *
+     * The override is therefore a second catalogue, fetched from the extension's own
+     * _locales and consulted before chrome.i18n. It is read SYNCHRONOUSLY on purpose, with
+     * XMLHttpRequest: the alternative is a fetch, and a fetch means the first paint happens
+     * in the browser's language and the page then flips — which is worse than not offering
+     * the choice. The file is 20 KB from the extension's own package, not the network.
+     *
+     * Nothing is chosen by default: with no override stored this is chrome.i18n exactly as
+     * before, and the browser's language still wins.
+     */
+    const LANGS = ['en', 'ru'];
+    let override = null;
+    try {
+        const want = localStorage.getItem('afp.lang');
+        if (want && LANGS.indexOf(want) !== -1 && !chrome.i18n.getUILanguage().startsWith(want)) {
+            const x = new XMLHttpRequest();
+            x.open('GET', chrome.runtime.getURL('_locales/' + want + '/messages.json'), false);
+            x.send(null);
+            override = JSON.parse(x.responseText);
+        }
+    } catch (e) { override = null; }
+
     /** The message, or null when the catalogue does not have it. */
     function msg(key) {
         try {
+            if (override && override[key] && override[key].message) return override[key].message;
             const s = chrome.i18n.getMessage(key);
             return (typeof s === 'string' && s !== '') ? s : null;
         } catch (e) { return null; }
@@ -77,7 +108,7 @@
         // has been applied that is no longer true, and the attribute is not decoration: it
         // picks the hyphenation rules and tells a screen reader which voice to use.
         try {
-            const ui = chrome.i18n.getUILanguage();
+            const ui = window.afpLang();
             if (ui) document.documentElement.setAttribute('lang', ui);
         } catch (e) { /* not an extension page */ }
         if (missing.length) {
@@ -91,9 +122,37 @@
     // the strings. Named on window because these pages are plain scripts, not modules.
     window.afpMsg = function (key, subs) {
         try {
+            if (override && override[key] && override[key].message) {
+                // chrome.i18n does the $1..$9 substitution itself; with an override the
+                // catalogue is a plain object and this has to do it by hand, or every
+                // string that carries a value silently loses it.
+                let out = override[key].message;
+                (subs || []).forEach(function (v, i) {
+                    out = out.split('$' + (i + 1)).join(String(v));
+                });
+                return out;
+            }
             const s = chrome.i18n.getMessage(key, subs);
             return (typeof s === 'string' && s !== '') ? s : null;
         } catch (e) { return null; }
+    };
+
+    /** Which language the interface is actually in — the override, or the browser's. */
+    window.afpLang = function () {
+        try {
+            const want = localStorage.getItem('afp.lang');
+            if (want && LANGS.indexOf(want) !== -1) return want;
+            return chrome.i18n.getUILanguage();
+        } catch (e) { return 'en'; }
+    };
+
+    /** Choose one, or pass '' to follow the browser again. The caller reloads. */
+    window.afpSetLang = function (lang) {
+        try {
+            if (lang) localStorage.setItem('afp.lang', lang);
+            else localStorage.removeItem('afp.lang');
+            return true;
+        } catch (e) { return false; }
     };
     window.afpApplyI18n = apply;
 

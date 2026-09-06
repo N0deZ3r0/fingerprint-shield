@@ -229,6 +229,20 @@ try {
     // build where the stand-down was working perfectly.
     assert(/^all \d+ checks passed$/.test(v2),
       `the audit agrees with the stand-down instead of counting it — "${v2}"`);
+    // [FIX the-two-halves-were-only-checkable-in-CI] The row that carries the half no page
+    // can see. A document cannot read the headers its own request went out with, so until
+    // this row existed the two halves of the stand-down could only be compared from a suite
+    // — on a runner whose failure set on unchanged code ranges 0..12, where one observation
+    // of them diverging could neither be confirmed nor reproduced. Asserted rather than
+    // merely rendered, because a row nobody reads is a row that rots: the first version of
+    // it looked only at whole-host exclusions and called every per-ROUTE stand-down a
+    // disagreement, which this fixture caught immediately.
+    const halves = rows.split(/\r?\n/).find((l) => /^stand-down, both halves\t/.test(l)) || '';
+    assert(!!halves, `the audit reports both halves of the stand-down — ${halves || '(no row)'}`);
+    assert(/the halves agree/.test(halves),
+      `and on a blob-refusing origin they agree — ${halves.slice(0, 150)}`);
+    assert(/by (host|route)/.test(halves),
+      `and it says which exclusion covers it, host-wide or per route — ${halves.slice(0, 150)}`);
     const fline = rows.split(/\r?\n/).find((l) => /^same-origin iframe/.test(l)) || '';
     assert(!/no reading|TIMEOUT/i.test(fline),
       `the iframe scope survives a framing refusal — ${fline.slice(0, 110) || '(no row)'}`);

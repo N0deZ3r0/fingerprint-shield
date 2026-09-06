@@ -98,6 +98,14 @@
   "optLearnedClearTitle": { "message": "Forget everything learned about site CSP" },
   "optLearnedHint":     { "message": "Filled in without you: when you open a site the extension remembers what its Content-Security-Policy forbids, so that on the next page it can answer correctly from the first script rather than the second. None of this is visible to the page and none of it leaves the browser, but it is a list of the sites you have visited, and changing profile does not erase it. Clearing is safe: every site will be learned again, at the cost of one page load." },
 
+  "optLangH2":          { "message": "Interface language" },
+  "optLangAuto":        { "message": "Follow the browser" },
+  "optLangHint":        { "message": "By default the interface is in the browser's language. The choice here applies to the popup, this page and Who Am I; the audit page and the code comments are English only. The extension's name and description in Chrome's own list come from the browser and do not follow this setting." },
+  "optLangFollowing":   { "message": "Following the browser: $1." },
+  "optLangChosen":      { "message": "Chosen: $1. Browser: $2." },
+  "optLangSaved":       { "message": "Language saved — the page will reload" },
+  "optLangFailed":      { "message": "Could not save the language" },
+
   "optGeoH2":           { "message": "Exit country check" },
   "optGeoOn":           { "message": "Enabled" },
   "optGeoHint1":        { "message": "The extension keeps the browser consistent with itself, but it cannot see which address your requests leave from. A profile can claim Estonia over a German VPN node — and that is visible to any site without a single line of JS. Every 30 minutes <code>cloudflare.com/cdn-cgi/trace</code> is requested, and only the two-letter country code is taken from it; on a mismatch the popup shows a warning under the country name. The country is not switched for you: changing profile mints a new seed and a new visitor id, so that decision is yours." },

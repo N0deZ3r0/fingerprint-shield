@@ -293,6 +293,83 @@ console.log(`   en ${gotEn.warns.length} warning(s), ru ${gotRu.warns.length}`);
 ok(gotEn.warns.length === 0, `no key was missing on any English page (${gotEn.warns.join(' | ') || 'none'})`);
 ok(gotRu.warns.length === 0, `nor on any Russian page (${gotRu.warns.join(' | ') || 'none'})`);
 
+// ── 7) the override: a language the browser is NOT in ────────────────────────
+// The point of the switch is the case chrome.i18n cannot serve — getMessage answers in the
+// browser's language and there is no API to ask it for another. So this runs an English
+// browser and asks for Russian, which is the only arrangement that can tell a working
+// override from a page that was going to render Russian anyway.
+console.log('\n== 7) choosing a language the browser is not in');
+{
+  const dir = mkdtempSync(join(tmpdir(), 'afp-i18n-sw-'));
+  const ctx = await chromium.launchPersistentContext(dir, {
+    ...BROWSER, headless: !headed,
+    args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`, '--lang=en-US']
+  });
+  try {
+    const sw = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
+      await ctx.waitForEvent('serviceworker', { timeout: 20000 });
+    await bootSettled(ctx);
+    const id = new URL(sw.url()).host;
+    const o = await ctx.newPage();
+    await o.goto(`chrome-extension://${id}/options.html`, { waitUntil: 'load' });
+    await new Promise((r) => setTimeout(r, 600));
+
+    const before = await o.evaluate(() => ({
+      ui: chrome.i18n.getUILanguage(),
+      h1: document.querySelector('h1').textContent.trim(),
+      picker: !!document.getElementById('langSelect')
+    }));
+    console.log(`   browser ${before.ui}, page says "${before.h1}", picker ${before.picker}`);
+    ok(before.picker, 'the options page has a language picker');
+    ok(before.h1 === en.optH1.message, `and renders English to start with (${before.h1})`);
+
+    // Through the page's own control, not by writing storage behind its back: the handler
+    // is what a user touches and is the thing that has to work.
+    await o.selectOption('#langSelect', 'ru');
+    await o.waitForFunction(() => document.querySelector('h1').textContent.trim() ===
+      'Расширенные настройки', null, { timeout: 15000 }).catch(() => {});
+    const after = await o.evaluate(() => ({
+      ui: chrome.i18n.getUILanguage(),
+      h1: document.querySelector('h1').textContent.trim(),
+      lang: document.documentElement.getAttribute('lang'),
+      state: (document.getElementById('langState') || {}).textContent || ''
+    }));
+    console.log(`   after choosing ru: "${after.h1}" (browser still ${after.ui}, lang=${after.lang})`);
+    ok(after.h1 === ru.optH1.message,
+      `the page is Russian on an English browser (${after.h1})`);
+    ok(after.ui === 'en-US',
+      `and the browser itself did not change (${after.ui}) — this is the override, not the locale`);
+    ok(after.lang === 'ru', `<html lang> follows the choice (${after.lang})`);
+    ok(after.state.includes('ru') && after.state.includes('en-US'),
+      `the page says which is chosen and what the browser is (${after.state})`);
+
+    // The popup is a different document and must honour the same choice: the override is
+    // per-extension, not per-page.
+    const p = await ctx.newPage();
+    await p.goto(`chrome-extension://${id}/popup.html`, { waitUntil: 'load' });
+    await p.waitForFunction(() => {
+      const el = document.getElementById('applyBtn');
+      return !!(el && el.textContent.trim());
+    }, null, { timeout: 15000 });
+    const popupApply = await p.evaluate(() => document.getElementById('applyBtn').textContent.trim());
+    console.log(`   popup Apply button: "${popupApply}"`);
+    ok(popupApply === ru.popupApply.message,
+      `the popup follows the same choice (${popupApply})`);
+
+    // And back: an empty choice means the browser again, which is what makes this a
+    // preference rather than a one-way door.
+    await o.bringToFront();
+    await o.selectOption('#langSelect', '');
+    await o.waitForFunction(() => document.querySelector('h1').textContent.trim() ===
+      'Advanced settings', null, { timeout: 15000 }).catch(() => {});
+    const back = await o.evaluate(() => document.querySelector('h1').textContent.trim());
+    ok(back === en.optH1.message, `clearing the choice follows the browser again (${back})`);
+  } finally {
+    await ctx.close();
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows keeps a handle */ }
+  }
+}
+
 server.close();
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

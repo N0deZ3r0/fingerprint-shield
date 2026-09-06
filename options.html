@@ -81,6 +81,24 @@
       <div id="learnedList" class="hint">—</div>
     </section>
 
+    <!-- The interface follows the browser's language by default. This is the way out of
+         that for someone whose Chrome is in a language they do not want to read this in —
+         chrome.i18n has no API for asking it, so i18n.js consults a second catalogue read
+         from the extension's own _locales. See its header. -->
+    <section class="card">
+      <div class="card-head">
+        <h2 data-i18n="optLangH2">Язык интерфейса</h2>
+        <select id="langSelect" class="sel" aria-label="Язык интерфейса"
+                data-i18n-aria-label="optLangH2">
+          <option value="" data-i18n="optLangAuto">Как в браузере</option>
+          <option value="en">English</option>
+          <option value="ru">Русский</option>
+        </select>
+      </div>
+      <p class="hint" data-i18n="optLangHint">По умолчанию интерфейс идёт на языке браузера. Выбор здесь действует на попап, эту страницу и Who Am I; страница аудита и комментарии в коде — только на английском. Название и описание расширения в списке Chrome берутся у браузера и этой настройке не подчиняются.</p>
+      <div id="langState" class="hint">—</div>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <h2 data-i18n="optGeoH2">Проверка страны выхода</h2>

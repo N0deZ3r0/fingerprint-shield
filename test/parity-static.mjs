@@ -1624,6 +1624,40 @@ const list = (src, re) => {
     'write of the profile, which a fresh install performs and which is not a machine change');
 }
 
+// ===== a ratchet against waiting by the clock =====
+// [FIX ten-suites-bet-on-a-clock] Forty-eight suites waited a fixed 1500-4000ms for
+// `initDefaults` to finish and then planted a fixture, which lands underneath the
+// background's own write whenever the machine is slower than the guess. They wait for
+// bootSettled() now — but 113 fixed sleeps remain elsewhere in test/, 55 of them a second or
+// longer, and every one is the same bet waiting to be lost on a slower machine than this.
+//
+// They are not rewritten wholesale: each has its own reason and some are legitimately
+// waiting for wall-clock behaviour. What must not happen is the number GROWING, which is
+// how the forty-eight accumulated in the first place. A new one has to displace an old one,
+// or come with a note explaining what it waits for that no condition can express.
+//
+// Lower the ceiling when you convert one. Never raise it.
+{
+  const CEILING = 55;
+  const files = fs.readdirSync(path.join(root, 'test')).filter((f) => f.endsWith('.mjs'));
+  const long = [];
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(root, 'test', f), 'utf8');
+    const n = (src.match(/setTimeout\(\s*r\s*,\s*\d{4,}\s*\)/g) || []).length;
+    if (n) long.push([f, n]);
+  }
+  const total = long.reduce((a, [, n]) => a + n, 0);
+  assert(total <= CEILING,
+    `waits of a second or more in test/: ${total}, ceiling ${CEILING} — a new fixed sleep ` +
+    'is a new bet that this machine is as fast as the next one. Wait for the value ' +
+    '(bootSettled, waitForFunction) or lower the ceiling by converting an old one. ' +
+    `Busiest: ${long.sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, n]) => `${f}:${n}`).join(', ')}`);
+  if (total < CEILING) {
+    assert(false, `the clock-wait ceiling is stale: ${total} left, ceiling still ${CEILING} ` +
+      '— lower it to lock the improvement in, or the next one silently spends the slack');
+  }
+}
+
 if (failed) {
   console.error('\n' + failed + ' assertion(s) failed');
   process.exit(1);

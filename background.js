@@ -2273,6 +2273,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse(afpCspVerdictFor({ tab: { id: Number(message.tabId) }, frameId: 0 }));
         return false;
     }
+    // [FIX the-two-halves-were-only-checkable-in-CI] The stand-down has two deliveries and
+    // they are not one mechanism: the MAIN-world bundle stops claiming a profile, and an
+    // `allow` rule takes the origin out of every header rewrite. A page can see the first
+    // — it is what navigator answers — and can never see the second, because no document
+    // can read the headers its own request went out with.
+    //
+    // So the halves could only ever be compared from a suite, and the suite that does it
+    // runs on a CI runner whose failure set on unchanged code ranges 0..12. One observation
+    // of them diverging past the first visit could not be confirmed there and 20x CPU
+    // throttling did not reproduce it here.
+    //
+    // This hands the second half to audit.html, which runs in the browser the user actually
+    // browses with, against the sites they actually visit. Two booleans and the host they
+    // are about: what the window decided, and whether this origin is out of the header
+    // rewrite. Disagreement between them is the thing nothing could observe before.
+    if (message.type === 'afpStandDownHalvesForHost') {
+        const href = String(message.href || '');
+        let host = '', seg = '';
+        try {
+            const u = new URL(href);
+            host = u.hostname;
+            seg = (u.pathname.split('/')[1] || '');
+        } catch (eU) { host = ''; }
+        standDownScopes().then(function (scopes) {
+            const hosts = (scopes && scopes.hosts) || [];
+            const routes = (scopes && scopes.routes) || [];
+            const covers = function (h) { return host === h || host.endsWith('.' + h); };
+            // BOTH shapes, because the exclusion has both: a host that stands down whole is
+            // in `hosts`, and one that stands down on a single route is in `routes` with the
+            // path segment. Reading only `hosts` reported "the headers still carry the
+            // profile" for every per-route stand-down — measured against the audit suite's
+            // own fixture, which learns a route.
+            const byHost = hosts.some(covers);
+            const byRoute = routes.some(function (r) { return covers(r.host) && r.seg === seg; });
+            sendResponse({
+                host: host, route: host + '/' + seg,
+                headerExempt: byHost || byRoute,
+                how: byHost ? 'host' : (byRoute ? 'route' : 'none'),
+                hosts: hosts.length, routes: routes.length
+            });
+        }).catch(function () { sendResponse({ host: host, headerExempt: null }); });
+        return true;
+    }
     if (message.type === 'getFullConfig') {
         Promise.all([
             getCachedProfile(),

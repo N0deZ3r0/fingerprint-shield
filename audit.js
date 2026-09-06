@@ -38,6 +38,10 @@ function pageCollector() {
   const out = { errors: [] };
   const t = (k, f) => { try { out[k] = f(); } catch (e) { out[k] = 'THREW ' + e.name; } };
 
+  // The origin this reading is about. The header half of the stand-down is keyed by host
+  // and only the service worker can answer it, so the host has to travel back with the
+  // rest of the page reading.
+  t('href', () => location.href);
   t('cores', () => navigator.hardwareConcurrency);
   t('memory', () => navigator.deviceMemory);
   t('platform', () => navigator.platform);
@@ -463,8 +467,16 @@ function run(tabId) {
           return;
         }
         status.textContent = '';
-        render(profile, res[0].result || {}, hostValues());
-        buildDump(tabId, profile, res[0].result || {});
+        // The header half of the stand-down is the service worker's to answer: no document
+        // can read the headers its own request went out with. Asked here so render() has
+        // both halves for the same origin — see the row it builds.
+        var __href = '';
+        __href = (res[0].result && res[0].result.href) || '';
+        chrome.runtime.sendMessage({ type: 'afpStandDownHalvesForHost', href: __href }, function (halves) {
+          if (chrome.runtime.lastError) halves = null;
+          render(profile, res[0].result || {}, hostValues(), halves);
+          buildDump(tabId, profile, res[0].result || {});
+        });
       }
     );
   });
@@ -586,7 +598,7 @@ let AUDIT_ROWS = [];
 /** undefined/null stay distinguishable from the strings "undefined" and "null". */
 const str = (v) => (v === undefined || v === null) ? null : String(v);
 
-function render(profile, page, host) {
+function render(profile, page, host, sdHalves) {
   let bad = 0, checked = 0;
   const out = [];
   AUDIT_ROWS = [];
@@ -739,6 +751,37 @@ function render(profile, page, host) {
         : r)}</td>` + verdictCell('skip', 'not applicable');
     }
   }
+  // [FIX the-two-halves-were-only-checkable-in-CI] The stand-down is delivered twice and by
+  // two different mechanisms: the MAIN-world bundle stops claiming a profile, and an `allow`
+  // rule takes the origin out of every header rewrite. No document can read the headers its
+  // own request went out with, so a page can see the first half and never the second — the
+  // comparison existed only inside a suite, on a runner whose failure set on unchanged code
+  // ranges 0..12. One observation there of the halves diverging past the first visit could
+  // not be confirmed, and 20x CPU throttling did not reproduce it here.
+  //
+  // The service worker knows the second half exactly, so the row asks it. Either half alone
+  // is a coherent state; the two disagreeing is the contradiction, and it is the one a site
+  // reads for free by comparing what it was told over HTTP with what its own JS says.
+  if (sdHalves && typeof sdHalves === 'object' && sdHalves.headerExempt !== null) {
+    const js = page.standDown === true;
+    const hdr = sdHalves.headerExempt === true;
+    const agree = js === hdr;
+    const text = agree
+      ? (js ? 'both halves are standing down: the window answers this machine and the request ' +
+        'was exempt from every header rewrite'
+        : 'neither half is standing down: this origin can be spoofed, and both agree on it')
+      : js
+        ? 'the window stands down but the request STILL carried the profile — a site compares ' +
+          'its own log with one line of JS and sees the disagreement'
+        : 'the request was exempt from the rewrite but the window is still claiming a profile ' +
+          '— the same disagreement, the other way round';
+    if (!agree) bad++;
+    checked++;
+    body += `<tr><td>stand-down, both halves</td><td class="v" colspan="3">${esc(text)}` +
+      ` (JS ${js ? 'yes' : 'no'}, headers exempt ${hdr ? 'yes' : 'no'} by ${esc(sdHalves.how || 'none')})</td>` +
+      verdictCell(agree ? 'ok' : 'bad', agree ? 'the halves agree' : 'HALVES DISAGREE');
+  }
+
   out.push(section('every scope tells the same story', ['scope', 'reading', '', '', ''], body));
 
   // ---- 3. what a page can read about the extension itself ----

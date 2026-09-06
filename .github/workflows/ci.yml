@@ -32,6 +32,19 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      # [FIX conclusions-were-drawn-one-run-at-a-time] The browser job returned 12 red
+      # suites, then 0, then 2, then 4, then 0 on ONE unchanged commit on 2026-09-06, with
+      # failure sets that did not overlap — and three conclusions were drawn from single
+      # runs that day, one of them wrong. A job with that range cannot be read one run at a
+      # time. Setting this runs the whole set N times over the same tree and prints how many
+      # of the N each suite failed, which is the only shape of evidence that separates a
+      # flaky suite from a broken one — and the only thing that can say whether this job has
+      # earned the right to gate a release.
+      repeat:
+        description: 'Browser suites: run the set N times and print a flake ledger'
+        required: false
+        default: '1'
 
 # The actions are pinned to v7 and not v4. v4 declares `using: node20`, and GitHub
 # deprecated that action runtime in September 2025 — it still runs them, forced onto Node 24,
@@ -225,4 +238,21 @@ jobs:
       # firefox and webkit alongside it would download several hundred megabytes this repo
       # never touches.
       - run: npx playwright install chromium
-      - run: node test/all.mjs --browser
+      # One run normally; N runs with a per-suite failure count when the dispatch asks for
+      # it. The ledger is the answer to "is that suite flaky or broken", which reading one
+      # run at a time cannot give — see the note on the `repeat` input above.
+      - name: suites
+        shell: bash
+        run: |
+          n="${{ github.event.inputs.repeat }}"
+          if [ -n "$n" ] && [ "$n" != "1" ]; then
+            node tools/flake-ledger.mjs "$n" --json
+          else
+            node test/all.mjs --browser
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always() && github.event.inputs.repeat != '' && github.event.inputs.repeat != '1'
+        with:
+          name: flake-ledger
+          path: flake-ledger.json
+          if-no-files-found: ignore
