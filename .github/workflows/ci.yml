@@ -106,7 +106,10 @@ jobs:
     #
     # The repository is public, so that URL is a link anyone can follow — no token, no
     # sign-in. It was not always: on a private repository the same URL needs authentication.
-    needs: node
+    #
+    # [FIX a-release-shipped-without-the-browser-suites] This was `needs: node`. See the
+    # browser job below, which now runs on a tag so that a release can wait for it.
+    needs: [node, browser]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     # The only job that writes anything. The rest of the workflow stays read-only.
@@ -140,6 +143,33 @@ jobs:
         run: cd dist && zip -qr "../fingerprint-shield-${{ steps.v.outputs.version }}.zip" .
       # gh is preinstalled on the runner, so this needs no third-party action — one less
       # thing with write access to the repository.
+      # [FIX every-release-said-the-same-thing] The body used to be a constant: a SHA and
+      # install instructions, identical on every release, saying nothing about WHAT was
+      # released. The annotated tag already carries that — each tag here is written with the
+      # measurement behind the change — and it was being thrown away.
+      #
+      # `git tag -l --format=%(contents)` needs the tag OBJECT, which a default checkout of
+      # a tag ref does not fetch, so it is fetched explicitly. A lightweight tag has no
+      # contents at all; that is not an error, it is a release nobody described, and the
+      # body says so rather than pretending.
+      - name: release notes from the tag
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" || true
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+          if [ ! -s notes.md ]; then
+            echo "This tag carries no annotation, so there is nothing here describing the change." > notes.md
+            echo "Tag it with \`git tag -a\` to have the message appear in this place." >> notes.md
+          fi
+          cat >> notes.md <<EOF
+
+          ---
+
+          **Install:** download the zip, extract it, then \`chrome://extensions\` → Developer mode → **Load unpacked** → point at the extracted folder.
+
+          Contents are the extension only — no dev pages, no suites, no generators. Built by CI from \`$GITHUB_SHA\` and verified by \`tools/pack.mjs\`, which refuses to package if anything the manifest, \`background.js\` or any shipped page references is missing.
+          EOF
+          echo '--- the body this release will carry ---'
+          cat notes.md
       - name: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,11 +177,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             "fingerprint-shield-${{ steps.v.outputs.version }}.zip" \
             --title "Fingerprint Shield ${{ steps.v.outputs.version }}" \
-            --notes "Unpacked extension, built by CI from \`$GITHUB_SHA\`.
-
-          Install: download the zip, extract it, then \`chrome://extensions\` → Developer mode → **Load unpacked** → point at the extracted folder.
-
-          Contents are the extension only — no dev pages, no suites, no generators. Built and verified by \`tools/pack.mjs\`, which refuses to package if anything the manifest, \`background.js\` or any shipped page references is missing."
+            --notes-file notes.md
 
   browser:
     name: Playwright suites (Windows)
@@ -177,10 +203,16 @@ jobs:
     # To make it nightly once the runner's environment is known, add to `on:` above:
     #     schedule:
     #       - cron: '0 3 * * *'
-    # and add `|| github.event_name == 'schedule'` to the condition below. At six to eight
-    # minutes billed 2x, that is roughly 450 of the 2000 free private-repo minutes a month.
+    # and add `|| github.event_name == 'schedule'` to the condition below.
     runs-on: windows-latest
-    if: github.event_name == 'workflow_dispatch'
+    # [FIX a-release-shipped-without-the-browser-suites] Tags run this too. It was
+    # workflow_dispatch alone, and `release` below needed only `node` — so a tag built,
+    # zipped and PUBLISHED after nine Node suites while forty-five Playwright suites had
+    # never run for it. Five releases went out that way, each resting entirely on a local
+    # run that CI could not see and would not have missed. The reasons above are about not
+    # wiring this to every PUSH; none of them argues for letting a published release skip
+    # it. The cost is six to eight Windows minutes per RELEASE rather than per push.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
