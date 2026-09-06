@@ -132,6 +132,11 @@ if (withBrowser) SUITES.push(['worker patch gate (Chromium)', ['test/workerpatch
 // exclusions are measured rather than listed, and a frame that redefines a property on itself
 // is carried as the negative control.
 if (withBrowser) SUITES.push(['realm matrix (Chromium)', ['test/realmmatrix.mjs']]);
+// The TIME axis, which had the best instrument in the repository and no verdict: every
+// readable value at eight moments across a load and a reload, against a clean browser, with
+// the queue asserted empty. Its negative control is a second, --cold sweep that MUST find
+// the install window — a green warm run alone passes on a broken collector just as well.
+if (withBrowser) SUITES.push(['time axis (Chromium)', ['test/timeaxis.mjs']]);
 // The options page is the only place either per-site list can be READ or cleared, and an
 // invisible list is what made the WebRTC switch look broken for weeks. Drives the real page:
 // what it shows, what Clear does to storage AND to the document_start registration that

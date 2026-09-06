@@ -901,18 +901,37 @@ try {
     out.temporalClock = (typeof Temporal === 'undefined') ? 'n/a'
       : Temporal.Now.plainDateTimeISO().toString().slice(11, 16);
     out.dateClock = (function () { var d = new Date(); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); })();
-    // Every Intl constructor must resolve to ONE locale. Segmenter and DurationFormat are
-    // newer than the rest and were missing from the hand-written list, so they answered
-    // with the host's while their siblings answered with the profile's.
-    out.intlLocales = ['Collator', 'DateTimeFormat', 'DisplayNames', 'ListFormat', 'NumberFormat',
-      'PluralRules', 'RelativeTimeFormat', 'Segmenter', 'DurationFormat'].map(function (n) {
+    // Every Intl constructor must resolve to ONE locale.
+    //
+    // [FIX the-intl-list-was-still-a-list] This was nine names typed out, and the comment
+    // above it recorded why that is dangerous: Segmenter and DurationFormat were newer than
+    // the rest, were missing from the list, and answered with the HOST's locale while their
+    // siblings answered with the profile's. The fix at the time was to add two names — which
+    // leaves the next new constructor in exactly the same position.
+    //
+    // So the list is gone and Intl is ENUMERATED (backticks avoided on purpose: this whole
+    // probe is a template literal, and one backtick here ends it). Whatever the engine ships
+    // is what gets asked, including a constructor that does not exist on this machine yet.
+    // The names ride alongside the locales so a failure says WHICH one disagreed, and the
+    // count rides too, so an enumeration that silently found nothing cannot read as agreement.
+    out.intlSeen = [];
+    out.intlLocales = Object.getOwnPropertyNames(Intl).map(function (n) {
+      var C;
+      try { C = Intl[n]; } catch (e) { return null; }
+      // A constructor, not Intl.getCanonicalLocales or a namespace object.
+      if (typeof C !== 'function' || !/^[A-Z]/.test(n)) return null;
       try {
-        var C = Intl[n];
-        if (!C) return null;
+        // DisplayNames is the one that refuses to be constructed without an option.
         var i = (n === 'DisplayNames') ? new C(undefined, { type: 'region' }) : new C();
-        return i.resolvedOptions().locale;
+        if (!i || typeof i.resolvedOptions !== 'function') return null;
+        var loc = i.resolvedOptions().locale;
+        if (typeof loc !== 'string' || !loc) return null;
+        out.intlSeen.push(n + '=' + loc);
+        return loc;
       } catch (e) { return null; }
     }).filter(Boolean).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort().join(',');
+    out.intlCount = out.intlSeen.length;
+    out.intlSeen = out.intlSeen.join(' ');
   `;
   const dp = await first.page.evaluate(async (probe) => {
     const win = (new Function(probe + 'return out;'))();
@@ -944,7 +963,13 @@ try {
       eq(v.temporalClock, v.dateClock, `date/${scope}: Temporal wall clock agrees with Date`);
     }
     // One locale, not two — the assertion is the COUNT, so it holds for any country.
-    eq(v.intlLocales.split(',').length, 1, `date/${scope}: every Intl constructor resolves one locale (${v.intlLocales})`);
+    eq(v.intlLocales.split(',').length, 1,
+      `date/${scope}: every Intl constructor resolves one locale (${v.intlLocales}) — ${v.intlSeen}`);
+    // [FIX the-intl-list-was-still-a-list] An enumeration that finds nothing agrees with
+    // itself perfectly. Nine were hand-listed before, so anything below that is a broken
+    // sweep rather than a smaller engine.
+    eq(v.intlCount >= 9, true,
+      `date/${scope}: the enumeration reached the whole of Intl (${v.intlCount} constructors: ${v.intlSeen})`);
   }
   // And the two scopes must not merely each be self-consistent — they must agree.
   const dpDiff = Object.keys(dp.win)
