@@ -229,6 +229,50 @@ if (shimSrc) {
   assert(coreKeys.length < 31, 'the flag count still fits the bitmask');
 }
 
+
+// ---- no source file may carry a raw NUL byte -------------------------------
+// [FIX a-raw-nul-made-git-stop-normalising-a-module] Two of them sat inside a string
+// literal in mw/mw-canvas-audio.js, used as a cache-key separator, and they cost a red CI
+// that pointed somewhere else entirely: `mw-bundle.js matches its modules — run
+// gen-bundle`, on a tree where the generator had just been run.
+//
+// `.gitattributes` says `* text=auto eol=lf`, and text=auto AUTO-DETECTS: a file holding a
+// control character is called BINARY and then stored verbatim, line endings and all. So
+// that one module (and the bundle built from it) kept CRLF through a clone while every
+// other module was normalised to LF — and the generated artefact, which
+// test/parity-static.mjs compares BYTE FOR BYTE, came out different on Linux from what a
+// Windows working tree had committed. The comparison was right; the input was platform-
+// dependent without saying so.
+//
+// The escape `\u0000` is the same character to the engine and plain text to git, which is
+// why the fix is one substitution rather than an attributes exception.
+{
+  const files = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+      const rel = dir ? dir + '/' + e.name : e.name;
+      if (e.isDirectory()) {
+        if (/^(node_modules|dist|_metadata|\.git)$/.test(e.name)) continue;
+        walk(rel);
+      } else if (/\.(js|mjs|cjs|json|html|css|md|txt|yml)$/.test(e.name)) {
+        files.push(rel);
+      }
+    }
+  };
+  walk('');
+  const dirty = files.filter((f) => fs.readFileSync(path.join(root, f)).includes(0));
+  assert(dirty.length === 0,
+    `no source file carries a raw NUL byte, which would make git treat it as binary and ` +
+    `stop normalising its line endings (${files.length} files scanned` +
+    (dirty.length ? ', offenders: ' + dirty.join(', ') : '') + ')');
+  // A scan that cannot find anything is a scan that proves nothing — the check above reads
+  // as a pass whether it works or not, and this is the whole class of instrument bug this
+  // project keeps meeting.
+  assert(Buffer.from('a\u0000b', 'latin1').includes(0),
+    'the scan can actually see a NUL byte (negative control)');
+  assert(files.length > 200, `and it looked at the whole tree, not a corner (${files.length} files)`);
+}
+
 console.log('\n=== summary ===');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

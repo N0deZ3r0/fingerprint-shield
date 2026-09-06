@@ -1374,7 +1374,7 @@ if (!_STEALTH)     (function() {
             function _substWidth(W, real, fontKey, text) {
                 var sd = _getSessionSeed() >>> 0;
                 if (!_swMap || _swSeed !== sd) { _swMap = new Map(); _swSeed = sd; }
-                var key = fontKey + ' ' + real + ' ' + text;
+                var key = fontKey + '\u0000' + real + '\u0000' + text;
                 var hit = _swMap.get(key);
                 if (hit !== undefined) return hit;
                 var w = (W && W.substituteTextWidth)
