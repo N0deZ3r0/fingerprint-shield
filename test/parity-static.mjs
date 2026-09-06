@@ -1637,9 +1637,24 @@ const list = (src, re) => {
 // or come with a note explaining what it waits for that no condition can express.
 //
 // Lower the ceiling when you convert one. Never raise it.
+// [FIX the-ceiling-counted-a-file-the-repository-does-not-have] The first version read the
+// test/ DIRECTORY, which on this machine also holds test/fps-core.mjs — the successor
+// browser project's instrument, listed in .gitignore, present in no clone. It carries one
+// long sleep, so the count was 55 here and 54 in CI, and the ratchet failed on the first
+// clean checkout it met. A ceiling has to be counted from something every checkout has.
+//
+// Counting only what test/all.mjs lists was the first fix and it was too narrow: it would
+// have let sleeps grow freely in the suites that are run by hand. .gitignore already names
+// what is not part of this repository, so it is read here — self-maintaining, and it keeps
+// every suite under the ratchet rather than only the gated ones.
 {
-  const CEILING = 55;
-  const files = fs.readdirSync(path.join(root, 'test')).filter((f) => f.endsWith('.mjs'));
+  const CEILING = 54;
+  const ignored = new Set(read('.gitignore').split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith('test/') && !l.includes('*'))
+    .map((l) => l.slice(5)));
+  const files = fs.readdirSync(path.join(root, 'test'))
+    .filter((f) => f.endsWith('.mjs') && !ignored.has(f));
   const long = [];
   for (const f of files) {
     const src = fs.readFileSync(path.join(root, 'test', f), 'utf8');
@@ -1656,9 +1671,7 @@ const list = (src, re) => {
     assert(false, `the clock-wait ceiling is stale: ${total} left, ceiling still ${CEILING} ` +
       '— lower it to lock the improvement in, or the next one silently spends the slack');
   }
-}
-
-if (failed) {
+}if (failed) {
   console.error('\n' + failed + ' assertion(s) failed');
   process.exit(1);
 }
