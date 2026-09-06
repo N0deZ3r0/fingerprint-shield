@@ -103,7 +103,24 @@
   // has — Playwright's bundled Chromium reports none, the installed Chromium build
   // reports five, and both are clean. The signal for "already patched" is the one
   // dev-ownprops.html uses: stock Chromium gives navigator no own properties at all.
+  // [FIX the-dirty-baseline-detector-stopped-detecting-us] The three signals below are
+  // exactly the tells this extension has since removed: navigator gained no own properties
+  // ([FIX uad-own-property-lie] and the rest of that work), no own symbols are left on the
+  // collections, and every patched function passes a [native code] toString. So on a browser
+  // with the extension loaded all three read CLEAN, the page decided the baseline was usable,
+  // compared patched against patched, and threw
+  // `Cannot read properties of undefined (reading 'item')` into the console instead of
+  // printing its own "skipped, no usable baseline". Measured 2026-09-05 by
+  // tools/probe-devpages.mjs, which loads every dev page WITH the extension — the run
+  // test/run.mjs does not do.
+  //
+  // The marker is the signal that still works, and it is the one dev-ownprops.html and
+  // test/framerealm.mjs already use for the same question: mw-core defines a non-enumerable
+  // __p0 on every realm it bootstraps, and mw-cleanup leaves it there on purpose. The three
+  // original signals are kept — a future build that regains one of them should still be
+  // caught here, and by then the marker may be gone (README "Limits" names it as a signature).
   const baselineDirty =
+    ('__p0' in W) || ('__t0' in W) ||
     Object.getOwnPropertyNames(W.navigator).length > 0 ||
     Object.getOwnPropertySymbols(refPlugins).length > 0 ||
     !/\[native code\]/.test(nativeStr(W.PluginArray.prototype.item));

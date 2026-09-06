@@ -145,6 +145,34 @@ try {
   const hidden = await audit.$eval('#dump', (e) => e.hidden);
   assert(hidden === false, 'the snapshot is shown on the page once built');
 
+  // [AUDIT the-snapshot-could-only-be-read-by-eye] The machine-readable half. Parsed rather
+  // than pattern-matched: a regex over a JSON blob would pass on a string that no parser
+  // accepts, which is the failure mode this block is here to prevent. The rows are the
+  // claim/page/host table — the one measurement no rig can produce, because branded Chrome
+  // refuses --load-extension — so a bug report can now be diffed instead of retyped.
+  const jsonPart = dump.split('\n--- json ---\n')[1];
+  assert(!!jsonPart, 'the snapshot carries a --- json --- block');
+  let parsed = null;
+  try { parsed = JSON.parse((jsonPart || '').trim()); } catch (e) { parsed = null; }
+  assert(parsed && typeof parsed === 'object', 'and it parses');
+  if (parsed) {
+    assert(Array.isArray(parsed.rows) && parsed.rows.length > 0,
+      `and carries the table as rows (${parsed.rows && parsed.rows.length})`);
+    const row = (parsed.rows || [])[0] || {};
+    assert(['key', 'claim', 'page', 'host', 'state', 'why'].every((k) => k in row),
+      `each row has all five columns and its verdict (${Object.keys(row).join(',')})`);
+    assert(parsed.rows.every((r) => ['ok', 'bad', 'skip'].includes(r.state)),
+      'every row state is one of ok/bad/skip');
+    // The prose and the object are written by one call each — assert they agree, or the
+    // half nobody reads is free to drift.
+    assert(parsed.verdict === verdict,
+      `the json repeats the verdict the page printed (${parsed.verdict})`);
+    assert(typeof parsed.extension === 'string' && /^\d+\.\d+/.test(parsed.extension),
+      `and the extension version (${parsed.extension})`);
+    const bad = parsed.rows.filter((r) => r.state === 'bad').length;
+    console.log(`  json: ${parsed.rows.length} rows, ${bad} failing, verdict "${parsed.verdict}"`);
+  }
+
   // And the three sources really are three: if the host column equalled the page column the
   // page would be reporting the machine, which is the failure the whole page exists to catch.
   const hostRow = await audit.$$eval('table tr', (trs) => {

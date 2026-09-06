@@ -98,11 +98,17 @@ try {
     await site.bringToFront();
     await popup.reload({ waitUntil: 'load' });
     await new Promise((r) => setTimeout(r, 1400));
+    // [FIX the-warning-ate-the-timezone] The warning used to be written OVER the timezone,
+    // so `line` and `warn` were the same element and reading one meant losing the other —
+    // which is precisely what the popup did to the user. They are two elements now, and
+    // both are read on every row: the point of the change is that the zone SURVIVES a
+    // mismatch, and a suite that only looked at the warning could not have said so.
     return popup.evaluate(() => ({
       code: document.getElementById('countryCode').textContent,
       line: document.getElementById('countryTz').textContent,
-      warn: document.getElementById('countryTz').classList.contains('warn'),
-      title: document.getElementById('countryTz').title,
+      warn: !document.getElementById('countryWarn').hidden,
+      note: document.getElementById('countryWarn').textContent,
+      title: document.getElementById('countryWarn').title,
       height: document.body.scrollHeight
     }));
   }
@@ -113,9 +119,14 @@ try {
   const bad = await withReading({ cc: 'DE', at: NOW });
   console.log('mismatch (EE vs DE) :', JSON.stringify(bad));
   ok(bad.code === 'EE', `the selected country is still shown (${bad.code})`);
-  ok(bad.warn === true, 'the country line is marked as a warning');
-  ok(/не совпадает/.test(bad.line), `the line says the address disagrees (${bad.line})`);
-  ok(/Germany|DE/.test(bad.line), `and names where the address actually is (${bad.line})`);
+  ok(bad.warn === true, 'the warning row is shown');
+  ok(/не совпадает/.test(bad.note), `it says the address disagrees (${bad.note})`);
+  ok(/Germany|DE/.test(bad.note), `and names where the address actually is (${bad.note})`);
+  // The assertion the redesign is FOR. A user deciding what to do about the disagreement
+  // needs to see what the profile claims at the same time; the old line showed one by
+  // deleting the other, and left them reading a country name with no zone under it.
+  ok(bad.line === 'Europe/Tallinn',
+    `and the claimed timezone is still on screen beside it (${bad.line})`);
   ok(/seed|visitor id|Смените/i.test(bad.title),
     'the tooltip explains the consequence rather than only the fact');
 
@@ -123,7 +134,7 @@ try {
   const good = await withReading({ cc: 'EE', at: NOW });
   console.log('match    (EE vs EE) :', JSON.stringify(good));
   ok(good.warn === false, 'no warning when the address agrees with the profile');
-  ok(good.line === 'Europe/Tallinn', `the line goes back to the timezone (${good.line})`);
+  ok(good.line === 'Europe/Tallinn', `and the timezone line is unaffected (${good.line})`);
 
   // 3) A reading older than the TTL is not evidence of anything. Asserting a mismatch from
   //    it would nag about a VPN node the user may have already changed back.
@@ -142,12 +153,18 @@ try {
   console.log('never read          :', JSON.stringify(none));
   ok(none.warn === false, 'no warning before anything has been read');
 
-  // Height is the constraint the whole design turns on: the popup rests at 590 against
-  // Chrome's 600 cap. Asserted in every state, not just the warning one.
-  const heights = [bad, good, stale, off, none].map((s) => s.height);
-  ok(heights.every((h) => h === heights[0]),
-    `every exit-country state is the same height (${JSON.stringify(heights)})`);
-  ok(heights[0] <= 600, `and inside Chrome's popup cap (${heights[0]}px)`);
+  // Height is still the constraint, but it is no longer a constant. The warning row costs
+  // what a row costs, and that is the trade the redesign made: the three silent states are
+  // one height, the warning state is taller, and the cap is what has to hold. It does with
+  // room — the state that used to be the tallest of all (no http tab) got 84px SHORTER in
+  // the same change, because the per-site card is swapped out for the note there.
+  const quiet = [good, stale, off, none].map((s) => s.height);
+  ok(quiet.every((h) => h === quiet[0]),
+    `every state without a warning is the same height (${JSON.stringify(quiet)})`);
+  console.log(`heights: quiet ${quiet[0]}px, with the warning ${bad.height}px, cap 600`);
+  ok(bad.height > quiet[0],
+    `the warning costs a row rather than overwriting the timezone (${bad.height} vs ${quiet[0]})`);
+  ok(bad.height <= 600, `and the popup still fits inside Chrome's cap (${bad.height}px)`);
 
   // 6) The contract with the network, allowed to skip. Not "is the country EE" — that is
   //    the rig's VPN, not a property of the code.

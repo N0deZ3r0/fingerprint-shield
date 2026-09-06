@@ -445,8 +445,67 @@
                 }
                 return null;
             }
+            // [FIX the-date-wrappers-named-an-internal-variable-in-their-error]
+            //
+            // Every local getter below routes through zoneAt / getLocalFromUTC, and both read
+            // the instant as `utcDate.getTime()`. On a receiver that is not a Date that is a
+            // plain JS TypeError about OUR variable, and the page reads it in one line:
+            //
+            //   Date.prototype.getDate.call({})
+            //     clean  TypeError: this is not a Date object.
+            //     ours   TypeError: utcDate.getTime is not a function
+            //
+            // Measured by the method half of test/receivers.mjs. It is the accessor lesson of
+            // v2.5.11 again — do not describe the refusal, ask the platform — plus something
+            // worse than a wrong message: the name of an internal is an extension signature,
+            // the class [FIX extension-id-leaked-in-error-stacks] exists for.
+            //
+            // The capture is the native `getTime`, taken before anything here is installed and
+            // never patched by this file (nothing touches the getUTC*/getTime family, which is
+            // exactly why getLocalFromUTC can build a plain Date and read its UTC fields).
+            // Calling it with the caller's receiver reproduces the platform's own error, for
+            // exactly the receivers the platform refuses, cross-realm Dates included.
+            var _natGetTime = OrigDateProto.getTime;
+            function _instantOf(d) { return _natGetTime.call(d); }
+
+            // …but getTime's message is getTime's. V8 names the METHOD and the receiver:
+            //
+            //   Date.prototype.getYear.call({})
+            //     clean  TypeError: Method Date.prototype.getYear called on incompatible receiver #<Object>
+            //     via getTime  TypeError: this is not a Date object.
+            //
+            // so every wrapper has to answer with ITS OWN native's refusal. _dateGuard does
+            // that without putting a second native call on the hot path: the ordinary read is
+            // the try branch and costs nothing, and only a receiver that made our own body
+            // throw pays for the platform's verdict. If the native unexpectedly does NOT
+            // refuse, our original error is rethrown rather than swallowed — a silent
+            // difference would be worse than either message.
+            // Captured here, where every one of them is still the platform's — the wrappers
+            // below this point are what replace them.
+            var _DATE_PATCHED = ['getTimezoneOffset', 'toLocaleString', 'toLocaleDateString',
+                'toLocaleTimeString', 'toString', 'toTimeString', 'toDateString', 'getFullYear',
+                'getMonth', 'getDate', 'getDay', 'getHours', 'getMinutes', 'getSeconds',
+                'setFullYear', 'setMonth', 'setDate', 'setHours', 'setMinutes', 'setSeconds',
+                'setMilliseconds', 'getYear', 'setYear'];
+            var _dateNatives = {};
+            for (var _dn = 0; _dn < _DATE_PATCHED.length; _dn++) {
+                try { _dateNatives[_DATE_PATCHED[_dn]] = OrigDateProto[_DATE_PATCHED[_dn]]; } catch (eDn) {}
+            }
+            function _dateGuard(name) {
+                var nat = _dateNatives[name], wrapped = OrigDateProto[name];
+                if (typeof nat !== 'function' || typeof wrapped !== 'function') return;
+                var g = ({ [name]: function () {
+                    try { return wrapped.apply(this, arguments); }
+                    catch (e) { nat.apply(this, arguments); throw e; }
+                } })[name];
+                // A rest-less wrapper reports .length 0, and the wrapper it replaces reported
+                // the native's arity — dev-vsnative.html and dev-allfn.html caught exactly that
+                // on setHours the first time this landed. Same class as [FIX anon-fn-name-length].
+                try { Object.defineProperty(g, 'length', { value: nat.length, configurable: true }); } catch (eL) {}
+                OrigDateProto[name] = _mn(g);
+            }
             function zoneAt(utcDate) {
-                var zd = getZoneData(), ts = utcDate.getTime();
+                var zd = getZoneData(), ts = _instantOf(utcDate);
                 var o = _icuZoneAt(_getTimezone(), ts);
                 if (o !== null) return { zd: zd, dst: o === zd.base - 60, off: o };
                 var dst = _dstAt(zd, ts);
@@ -458,7 +517,7 @@
                 // The shifted instant as a plain Date: its UTC getters are the local fields,
                 // and they are native — nothing here patches getUTC*.
                 var off = zoneAt(utcDate).off;
-                return new OrigDate(utcDate.getTime() - off * 60000);
+                return new OrigDate(_instantOf(utcDate) - off * 60000);
             }
             
 
@@ -748,9 +807,9 @@
                     return _oTLT.call(this, arguments[0], _tzForceOpts(arguments[1]));
                 });
             })();
-            OrigDateProto.toString = _mn(function toString() { if (isNaN(this.getTime())) return 'Invalid Date'; var _z = zoneAt(this), off = _z.off, _dstF = _z.dst, a = Math.abs(off), gs = off <= 0 ? '+' : '-', gmt = 'GMT'+gs+(Math.floor(a/60)<10?'0':'')+Math.floor(a/60)+(Math.floor(a%60)<10?'0':'')+Math.floor(a%60), name = localizedZoneName(null, 'long', this.getTime(), _dstF, _z.zd), l = getLocalFromUTC(this); return DAYS[l.getUTCDay()]+' '+MONTHS[l.getUTCMonth()]+' '+pad2(l.getUTCDate())+' '+l.getUTCFullYear()+' '+pad2(l.getUTCHours())+':'+pad2(l.getUTCMinutes())+':'+pad2(l.getUTCSeconds())+' '+gmt+' ('+name+')'; });
-            OrigDateProto.toTimeString = _mn(function toTimeString() { if (isNaN(this.getTime())) return 'Invalid Date'; var _z = zoneAt(this), off = _z.off, _dstF = _z.dst, a = Math.abs(off), gs = off <= 0 ? '+' : '-', gmt = 'GMT'+gs+(Math.floor(a/60)<10?'0':'')+Math.floor(a/60)+(Math.floor(a%60)<10?'0':'')+Math.floor(a%60), name = localizedZoneName(null, 'long', this.getTime(), _dstF, _z.zd), l = getLocalFromUTC(this); return pad2(l.getUTCHours())+':'+pad2(l.getUTCMinutes())+':'+pad2(l.getUTCSeconds())+' '+gmt+' ('+name+')'; });
-            OrigDateProto.toDateString = _mn(function toDateString() { if (isNaN(this.getTime())) return 'Invalid Date'; var l = getLocalFromUTC(this); return DAYS[l.getUTCDay()]+' '+MONTHS[l.getUTCMonth()]+' '+pad2(l.getUTCDate())+' '+l.getUTCFullYear(); });
+            OrigDateProto.toString = _mn(function toString() { if (isNaN(_instantOf(this))) return 'Invalid Date'; var _z = zoneAt(this), off = _z.off, _dstF = _z.dst, a = Math.abs(off), gs = off <= 0 ? '+' : '-', gmt = 'GMT'+gs+(Math.floor(a/60)<10?'0':'')+Math.floor(a/60)+(Math.floor(a%60)<10?'0':'')+Math.floor(a%60), name = localizedZoneName(null, 'long', _instantOf(this), _dstF, _z.zd), l = getLocalFromUTC(this); return DAYS[l.getUTCDay()]+' '+MONTHS[l.getUTCMonth()]+' '+pad2(l.getUTCDate())+' '+l.getUTCFullYear()+' '+pad2(l.getUTCHours())+':'+pad2(l.getUTCMinutes())+':'+pad2(l.getUTCSeconds())+' '+gmt+' ('+name+')'; });
+            OrigDateProto.toTimeString = _mn(function toTimeString() { if (isNaN(_instantOf(this))) return 'Invalid Date'; var _z = zoneAt(this), off = _z.off, _dstF = _z.dst, a = Math.abs(off), gs = off <= 0 ? '+' : '-', gmt = 'GMT'+gs+(Math.floor(a/60)<10?'0':'')+Math.floor(a/60)+(Math.floor(a%60)<10?'0':'')+Math.floor(a%60), name = localizedZoneName(null, 'long', _instantOf(this), _dstF, _z.zd), l = getLocalFromUTC(this); return pad2(l.getUTCHours())+':'+pad2(l.getUTCMinutes())+':'+pad2(l.getUTCSeconds())+' '+gmt+' ('+name+')'; });
+            OrigDateProto.toDateString = _mn(function toDateString() { if (isNaN(_instantOf(this))) return 'Invalid Date'; var l = getLocalFromUTC(this); return DAYS[l.getUTCDay()]+' '+MONTHS[l.getUTCMonth()]+' '+pad2(l.getUTCDate())+' '+l.getUTCFullYear(); });
             OrigDateProto.getFullYear = _mn(function getFullYear() { return getLocalFromUTC(this).getUTCFullYear(); });
             OrigDateProto.getMonth = _mn(function getMonth() { return getLocalFromUTC(this).getUTCMonth(); });
             OrigDateProto.getDate = _mn(function getDate() { return getLocalFromUTC(this).getUTCDate(); });
@@ -839,7 +898,14 @@
                 if (yi >= 0 && yi <= 99) y = 1900 + yi;
                 return _setLocal(this, 0, [y], 1, true);
             });
-            
+
+            // Every wrapper above now answers a bad receiver with ITS OWN native refusal.
+            // Applied here, after the last of them, and in one place: a wrapper added later is
+            // guarded by putting its name in _DATE_PATCHED rather than by remembering a
+            // pattern at each site.
+            for (var _dg = 0; _dg < _DATE_PATCHED.length; _dg++) _dateGuard(_DATE_PATCHED[_dg]);
+
+
             // The per-zone `epoch` field that ZONE_DATA carried for the constructor's old
             // 'M/D/YYYY' branch is gone with that branch — see the note inside _RealDateCtor.
             
@@ -1425,6 +1491,54 @@
         _defIfDiff(screen, 'colorDepth', function() { return (ID.colorDepth != null ? ID.colorDepth : 24); });
         _defIfDiff(screen, 'pixelDepth', function() { return (ID.colorDepth != null ? ID.colorDepth : 24); });
     } catch(_) {} }
+
+    // [FIX window-globals-ignored-their-receiver] The nine window accessors below —
+    // devicePixelRatio, inner/outer width and height, screenX/Y and their screenLeft/Top
+    // spellings — answered the same number no matter WHO they were called on. Measured on
+    // a clean Chromium 151 (channel:'chromium'), the descriptor getter taken off `window`:
+    //
+    //   get.call(window)            1280        get.call({})               TypeError
+    //   get.call(null)              1280        get.call(Window.prototype) TypeError
+    //   get.call(undefined)         1280        get.call(document)         TypeError
+    //   get.call(childFrameWindow)   300        get.call(document.all)     TypeError
+    //
+    // Ours answered THIS window's clamped number for all eight of the non-window receivers,
+    // because the getter never looked at `this` at all. Three separate tells: we invent a
+    // number where the platform refuses, we hand OUR window's geometry to a caller asking
+    // about a DIFFERENT window, and `.call(document.all)` proves the null test has to be
+    // written strictly — `this == null` is TRUE for document.all (the [[IsHTMLDDA]]
+    // abstract-equality quirk) while the platform still throws there.
+    //
+    // The oracle is the platform's own getter, not a brand list: it refuses exactly the
+    // receivers the platform refuses, including the ones no `instanceof` can express (a
+    // cross-realm Window is not `instanceof` our Window, yet the native answers for it).
+    //
+    // These accessors are [Global] members — own properties of the window OBJECT — so
+    // `window` in this closure IS the object being patched (this file defines only on its
+    // own realm's window, never on a frame's), and identity against it is sound. Measured
+    // on the same browser: an UNQUALIFIED read (`innerWidth`, the common minified form),
+    // a qualified one, one from a nested function and one from eval ALL arrive with
+    // `this === window`, so the fast path really is the ordinary path and no hot read pays
+    // for the oracle.
+    var _selfWin = window;
+    function _isSelfWin(recv) {
+        // Strict, per the document.all measurement above. `use strict` at the top of this
+        // file plus Reflect.apply in the _mn trap means `this` arrives uncoerced, so the
+        // null/undefined arms are load-bearing rather than defensive.
+        return recv === _selfWin || recv === null || recv === undefined;
+    }
+    // A capture is only an oracle if it REFUSES a receiver the platform refuses. Verified
+    // once, at install: a descriptor that answers for a plain object is not the platform's
+    // getter — either there was nothing to capture, or another MAIN-world extension won the
+    // document_start race and we captured its shim (AdGuard is documented as active in the
+    // user's own profile). Delegating to something that answers everything would be worse
+    // than no check at all, so an unverified capture degrades to the old receiver-blind
+    // behaviour instead.
+    var _oracleProbe = {};
+    function _winOracle(get) {
+        try { get.call(_oracleProbe); } catch (eO) { return get; }
+        return null;
+    }
     // [FIX dpr-was-gated-on-the-boot-profile] This read `if (ID.devicePixelRatio)` at
     // INSTALL time, at document_start. When the profile has not landed yet the answer is
     // undefined, no accessor is installed at all, and the page keeps the host's real ratio
@@ -1445,8 +1559,37 @@
     // The getter is installed unconditionally now and falls back to the host's own value
     // while the profile is silent, so nothing is invented before there is something to say.
     try {
+        // Captured BEFORE _def installs, so it is the platform's getter and not ours.
+        // _def threads the receiver into this value function (`fn.call(this)`), which is
+        // the only reason the check below can live here rather than in mw-core.
+        var _natDprGet = (function () {
+            var d = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+            return (d && d.get) ? _winOracle(d.get) : null;
+        })();
         var _natDpr = window.devicePixelRatio;
         _def(window, 'devicePixelRatio', function () {
+            // A foreign receiver goes to the platform first: it throws for {} / document /
+            // Window.prototype exactly as clean does. If it ANSWERS, the receiver is a real
+            // Window and we answer the claim — never the native value. dpr is one number per
+            // browser window, so `get.call(childWindow)` returns the HOST's ratio (measured:
+            // 1 on the rig, and the comment above records a real 1.5 host), while that
+            // frame's own devicePixelRatio is the profile's. Handing back the native here
+            // would publish the host ratio and split the frame from its own answer — the
+            // field this file's note calls the one that changed the visitorId per tab.
+            // KEPT DELIBERATELY, though _namedGetter in mw-core.js normally vets the
+            // receiver before this function ever runs and makes the line look redundant.
+            // It is the fallback for the one case where mw-core's own oracle declines:
+            // _origOracle drops a capture that is not demonstrably a refusing getter (a
+            // double install, where the descriptor it finds is another module's wrapper
+            // rather than the platform's). That case is not theoretical — instrumenting the
+            // bundle and loading it showed the UAD prototype patch running TWICE in every
+            // child frame, once from the parent's frame bridge and once from the frame's own
+            // copy. There the check here is the only one left, and dpr is the field that
+            // most deserves it: it scales every text metric, and a tab that got the host
+            // ratio produced a different visitorId (measured, in the note above).
+            // Cost is one native call on the foreign-receiver path only; the common read
+            // is `this === window` and returns without touching it.
+            if (!_isSelfWin(this) && _natDprGet) _natDprGet.call(this);
             var v = ID.devicePixelRatio;
             return (typeof v === 'number' && v > 0) ? v : _natDpr;
         });
@@ -1488,17 +1631,49 @@
             // Reading the instance first fixes it. The prototype lookup stays as the
             // fallback for anything that really does live there, and the 0-stub stays for
             // a property that exists on neither — but nothing reaches it now.
+            //
+            // [FIX window-globals-ignored-their-receiver] The bound copy stays: every
+            // clamp below wants OUR window's live number and nothing else, and binding is
+            // what makes `_giW()` mean that. But a bound function discards the receiver,
+            // so it is useless as the oracle — `_giW.call({})` would answer 1280 where the
+            // platform throws, and `_giW.call(otherWindow)` would hand our geometry over
+            // under the name of theirs. The UNBOUND getter is kept beside it as `afpRaw`
+            // (null when the capture did not verify) and is the ONLY thing the receiver
+            // check calls.
             function _origGetter(prop) {
                 var d = Object.getOwnPropertyDescriptor(window, prop);
                 if (!(d && d.get)) d = Object.getOwnPropertyDescriptor(_wProto, prop);
-                if (d && d.get) return d.get.bind(window);
+                if (d && d.get) {
+                    var bound = d.get.bind(window);
+                    bound.afpRaw = _winOracle(d.get);
+                    return bound;
+                }
                 // The 0-stub is tagged, because outerWidth/outerHeight below have to tell
                 // "the browser answered 0" from "there was nothing to ask". The first is
                 // ordinary and transient and gets passed through; the second would pin the
                 // window at zero forever, which no browser does.
                 var miss = function() { return 0; };
                 miss.afpNoGetter = true;
+                // No afpRaw: a stub that answers 0 for everything is the exact opposite of
+                // an oracle, so the property keeps the old receiver-blind behaviour rather
+                // than delegating into it.
                 return miss;
+            }
+            // Reads the raw platform value for a receiver that is NOT this window. It
+            // throws whatever the platform throws, which is the whole point: the refusal is
+            // the platform's own, not a TypeError we constructed and could get wrong.
+            // Measured against a clean browser, both halves of the same probe page:
+            //
+            //   .call({})                TypeError: Illegal invocation          (identical)
+            //   .call(crossOriginFrame)  SecurityError: Blocked a frame with …  (identical)
+            //
+            // and with the modules served as ONE file, the shape they ship in, the thrown
+            // stack carries only the page's own frames — _mn's apply trap routes it through
+            // _stripOwnFrames, so no extension URL rides out. Served as separate files the
+            // rig sees our frames, because _selfUrl is then mw-core.js's URL alone; that is
+            // the rig, not the build.
+            function _rawFor(g, recv) {
+                return g.afpRaw ? g.afpRaw.call(recv) : g();
             }
             var _giW = _origGetter('innerWidth'),  _giH = _origGetter('innerHeight');
             var _goW = _origGetter('outerWidth'),  _goH = _origGetter('outerHeight');
@@ -1526,15 +1701,44 @@
             // forces a large window, and why headless with a default viewport cannot see it.
             // Held by test/windowchrome.mjs.
             var _CHROME_H = 95;
-            Object.defineProperty(window, 'innerWidth',  { get: _mn(function innerWidth() {
-                var v = _giW();
+            // [FIX window-globals-ignored-their-receiver] The clamps are split out of the
+            // getters so the SAME transform can run on another window's raw numbers.
+            //
+            // A valid foreign Window must not get the native value raw. Every realm this
+            // extension patches carries one profile, and sw()/sh()/_availH()/_CHROME_H are
+            // all profile-derived, so re-running the clamp here reproduces that frame's own
+            // answer BY CONSTRUCTION. Returning the raw native instead would split the two
+            // halves of one pair in a single line of page script — measured on a clean
+            // Chromium 151, a 300px-wide child frame:
+            //
+            //   child.innerWidth                        300     (child's own getter)
+            //   innerWidth-descriptor.call(childWin)    300     (clean: they agree)
+            //   outerWidth-descriptor.call(childWin)   1280     (the top-level browser window)
+            //   screenX-descriptor.call(childWin)        10     (the real desktop offset)
+            //
+            // Under a claimed screen those last two are exactly the numbers _fitPos and the
+            // sw() cap exist to hide, and the frame's own getters would have hidden them.
+            //
+            // NOT FIXED HERE, and measured so the next reader does not have to: a HIDDEN or
+            // zero-size frame reads 0x0 in a clean browser, and the `v <= 0` arms below
+            // answer the claimed screen instead — 1920x945 under a 1920x1080 profile, which
+            // then drags that frame's screenX/screenY to 0 against a clean 10. That is the
+            // frame's OWN getter misreporting and predates this change; running the same
+            // transform for a foreign receiver keeps the two halves agreeing rather than
+            // opening a frame-vs-top split. outerWidth/outerHeight had the same arm repaired
+            // by [FIX outer-was-the-screen-while-inner-was-the-window]; inner never did, and
+            // the position pair would need the `inner <= 0 -> sw()` fallback repaired too,
+            // so it is one defect of its own and not a line to slip in here.
+            function _inWv(v) {
                 // [FIX host-mode] The window is the window: no claimed screen to clamp to.
                 if (_hostHwNow()) return v;
                 if (v <= 0) return sw();
                 return Math.min(sw(), v);
+            }
+            Object.defineProperty(window, 'innerWidth',  { get: _mn(function innerWidth() {
+                return _inWv(_isSelfWin(this) ? _giW() : _rawFor(_giW, this));
             }, true), configurable: true });
-            Object.defineProperty(window, 'innerHeight', { get: _mn(function innerHeight() {
-                var v = _giH();
+            function _inHv(v) {
                 if (_hostHwNow()) return v;
                 // [FIX chrome-height-was-measured-from-the-wrong-edge] _CHROME_H used to be
                 // subtracted from the SCREEN height while outerHeight is capped at the
@@ -1565,6 +1769,9 @@
                 if (v <= sh()) return v;
                 if (v >= sh() - 10) return maxInner;
                 return Math.min(maxInner, v);
+            }
+            Object.defineProperty(window, 'innerHeight', { get: _mn(function innerHeight() {
+                return _inHv(_isSelfWin(this) ? _giH() : _rawFor(_giH, this));
             }, true), configurable: true });
             // avail-like height (taskbar) — never report outerHeight === screen.height
             function _availH() { return Math.round((sh() * 0.963) / 8) * 8; }
@@ -1599,19 +1806,19 @@
             //
             // The maximized case is untouched: a window whose inner already fills the claimed
             // screen still reports the screen.
-            Object.defineProperty(window, 'outerWidth',  { get: _mn(function outerWidth() {
-                var inner = _giW();
-                var outer = _goW();
+            function _outWv(inner, outer) {
                 if (_hostHwNow()) return outer;
                 var i = inner > 0 ? Math.min(sw(), inner) : sw();
                 if (outer <= 0) return _goW.afpNoGetter ? sw() : outer;
                 // maximized: outerWidth can equal screen.width (normal)
                 if (outer >= sw() - 2 || i >= sw() - 2) return sw();
                 return Math.min(sw(), Math.max(i, outer));
+            }
+            Object.defineProperty(window, 'outerWidth',  { get: _mn(function outerWidth() {
+                if (_isSelfWin(this)) return _outWv(_giW(), _goW());
+                return _outWv(_rawFor(_giW, this), _rawFor(_goW, this));
             }, true), configurable: true });
-            Object.defineProperty(window, 'outerHeight', { get: _mn(function outerHeight() {
-                var inner = _giH();
-                var outer = _goH();
+            function _outHv(inner, outer) {
                 if (_hostHwNow()) return outer;
                 var ah = _availH();
                 var i = inner > 0 ? Math.min(ah, inner) : Math.max(200, ah - _CHROME_H);
@@ -1626,6 +1833,10 @@
                 if (outer <= 0) return _goH.afpNoGetter ? ah : outer;
                 if (outer >= sh() - 2 || inner >= sh() - 10) return ah;
                 return Math.min(ah, Math.max(i + _CHROME_H, outer));
+            }
+            Object.defineProperty(window, 'outerHeight', { get: _mn(function outerHeight() {
+                if (_isSelfWin(this)) return _outHv(_giH(), _goH());
+                return _outHv(_rawFor(_giH, this), _rawFor(_goH, this));
             }, true), configurable: true });
             // [FIX window-position-put-it-off-the-screen-edge] inner/outer are clamped to
             // the SPOOFED screen above, but the window's POSITION was left real — and the
@@ -1655,10 +1866,39 @@
             }
             function _posX() { if (_hostHwNow()) return _gSX(); return _fitPos(_gSX(), window.outerWidth, sw()); }
             function _posY() { if (_hostHwNow()) return _gSY(); return _fitPos(_gSY(), window.outerHeight, _availH()); }
-            Object.defineProperty(window, 'screenX', { get: _mn(function screenX() { return _posX(); }, true), configurable: true });
-            Object.defineProperty(window, 'screenY', { get: _mn(function screenY() { return _posY(); }, true), configurable: true });
-            Object.defineProperty(window, 'screenLeft', { get: _mn(function screenLeft() { return _posX(); }, true), configurable: true });
-            Object.defineProperty(window, 'screenTop', { get: _mn(function screenTop() { return _posY(); }, true), configurable: true });
+            // [FIX window-globals-ignored-their-receiver] The foreign-Window arm rebuilds the
+            // clamp's second argument from THAT window's raw inner/outer rather than reading
+            // `window.outerWidth`, which would be ours. Reaching it through the receiver as a
+            // property (`recv.outerWidth`) is deliberately not done: that invokes a
+            // page-reachable accessor, so a detector could install a counting getter on a
+            // frame and watch it tick whenever the top's descriptor is called with that
+            // frame — a side channel a clean browser does not have.
+            //
+            // screenLeft/screenTop are separate descriptors with their own native getters, so
+            // each one delegates to its own: sharing _gSX would answer for screenX where the
+            // platform was asked about screenLeft, and the two spellings must not drift.
+            function _posFor(g, recv, vertical) {
+                var real = _rawFor(g, recv);
+                if (_hostHwNow()) return real;
+                var inner = _rawFor(vertical ? _giH : _giW, recv);
+                var outer = _rawFor(vertical ? _goH : _goW, recv);
+                return vertical
+                    ? _fitPos(real, _outHv(inner, outer), _availH())
+                    : _fitPos(real, _outWv(inner, outer), sw());
+            }
+            var _gSL = _origGetter('screenLeft'), _gST = _origGetter('screenTop');
+            Object.defineProperty(window, 'screenX', { get: _mn(function screenX() {
+                return _isSelfWin(this) ? _posX() : _posFor(_gSX, this, false);
+            }, true), configurable: true });
+            Object.defineProperty(window, 'screenY', { get: _mn(function screenY() {
+                return _isSelfWin(this) ? _posY() : _posFor(_gSY, this, true);
+            }, true), configurable: true });
+            Object.defineProperty(window, 'screenLeft', { get: _mn(function screenLeft() {
+                return _isSelfWin(this) ? _posX() : _posFor(_gSL, this, false);
+            }, true), configurable: true });
+            Object.defineProperty(window, 'screenTop', { get: _mn(function screenTop() {
+                return _isSelfWin(this) ? _posY() : _posFor(_gST, this, true);
+            }, true), configurable: true });
 
             // documentElement.clientWidth — живое свойство, читаем напрямую через прото
             var docEl = document.documentElement;

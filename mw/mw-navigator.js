@@ -6,7 +6,11 @@
     // instead of once. The reader now lives in mw-core.js and is taken from MW below.
     if (!MW) return;
     var _prof = MW.prof;
-    var _STEALTH = MW.STEALTH;
+    // No `_STEALTH` here on purpose. The Bluetooth branch was its last reader in this file
+    // and it went with [FIX bluetooth-claim-never-fired]; everything
+    // that still asks about the mode asks `_featNow`, which folds it in and reads it LIVE
+    // — install-time `_STEALTH` is false on a tab's first load and any gate built on it is
+    // a first-load split, as the note at the connection block records.
     var _FEAT = MW.FEAT;
     var ID = MW.ID;
     var _mn = MW.mn;
@@ -162,12 +166,131 @@
             } catch (eDnt) {}
             // pdfViewerEnabled only if not already true
             _defIfDiff(nav, 'pdfViewerEnabled', true);
-            // Bluetooth: только в normal (скрытие = лишний defineProperty)
-            if (!_STEALTH && ID.hasBluetooth === false) {
-                try {
-                    _def(nav, 'bluetooth', undefined, false);
-                } catch(_) {}
-            }
+            // [FIX bluetooth-claim-never-fired] [FIX bluetooth-was-removed-not-unavailable]
+            // Two tags because there were two defects and test/btreadback.mjs part 1 guards
+            // both of them under those names. What stood here was
+            //
+            //     if (!_STEALTH && ID.hasBluetooth === false) _def(nav,'bluetooth',undefined,false);
+            //
+            // and it was wrong twice over, in a way where repairing either half alone leaves
+            // the extension worse off than leaving both.
+            //
+            // 1) IT NEVER FIRED. The condition is evaluated ONCE, while this file installs at
+            //    document_start, and at that instant `_prof()` is still profile-injector's
+            //    FALLBACK SKELETON — its hardcoded laptop_mid defaults, where hasBluetooth is
+            //    true. Read by the FIRST inline script in <head>, pc_gaming selected, after a
+            //    full browser restart with the profile settled:
+            //
+            //      cores 12   screen 2560x1440              the machine IS delivered by then
+            //      navigator.bluetooth [object Bluetooth]   but nothing was hidden
+            //      injector at that moment: detail.profileId undefined, resolved
+            //      profileId laptop_mid, resolved bluetooth null, BOOTDEV absent
+            //
+            //    Every neighbour above is a live getter over ID and self-corrects when the
+            //    real profile lands; a boolean CONDITION cannot. Identical shape to
+            //    [FIX dpr-was-gated-on-the-boot-profile] in mw/mw-timezone-screen.js, and
+            //    the reason the decision below is taken inside the call instead.
+            //
+            // 2) THE MECHANISM WAS WRONG, so making it fire would only have started shipping
+            //    a browser that does not exist. Measured with the branch forced on:
+            //
+            //      navigator.bluetooth                  undefined
+            //      'bluetooth' in Navigator.prototype   true
+            //      typeof Bluetooth                     "function"   the constructor STAYS
+            //
+            //    Web Bluetooth ships with the BROWSER; an adapter comes with the MACHINE.
+            //    Deleting the property claims a build without the feature — rarer than a
+            //    desktop without the hardware, and contradicted one line later by the global
+            //    constructor left standing beside it.
+            //
+            // A real machine with no adapter says so through getAvailability. Measured on a
+            // clean Chromium 151, this rig, over http://127.0.0.1 (trustworthy):
+            //
+            //   navigator.bluetooth  [object Bluetooth]   getOwnPropertyNames  []
+            //   navigator.bluetooth.getAvailability()  ->  true      (this host HAS one)
+            //
+            // so that is the only thing patched, and only DOWNWARDS: a profile claiming no
+            // adapter answers false, a profile claiming one never turns a native false into
+            // true — requestDevice would open a chooser that finds nothing and say otherwise.
+            //
+            // THE RECEIVER RULE IS THE NATIVE'S OWN, because the native is called FIRST and
+            // its answer is what gets transformed. Clean, same rig, every receiver through
+            // Bluetooth.prototype.getAvailability.call(x):
+            //
+            //   own, cross-realm iframe             resolve true                    ANSWERS
+            //   prototype, Object.create(proto), Proxy(own), {}, null, undefined,
+            //   navigator                           REJECTED PROMISE, not a sync throw —
+            //       TypeError: Failed to execute 'getAvailability' on 'Bluetooth': Illegal
+            //       invocation
+            //
+            // `.then(onFulfilled)` passes a rejection straight through, so both halves stay
+            // the platform's: the refusal AND the cross-realm answer, which isPrototypeOf
+            // would have got backwards. No separate oracle probe, deliberately — an oracle is
+            // only needed where a check is CONSTRUCTED, and calling this one at install would
+            // mint a rejected promise on every page load for nothing.
+            //
+            // Reached through nav.bluetooth rather than the Bluetooth global, so the
+            // [SecureContext] case needs no branch of its own: on a non-trustworthy origin
+            // there is no interface at all — measured over http://<name mapped to loopback>,
+            // typeof Bluetooth "undefined", navigator.bluetooth undefined, not in
+            // Navigator.prototype — nothing to hide and nothing to contradict.
+            //
+            // Not gated on the mode any more. `!_STEALTH` was there because HIDING cost an
+            // extra defineProperty on the navigator instance and stealth installs less; the
+            // wrap sits on the prototype now and there is no own property to save. Every
+            // other navigator claim (platform, cores, memory, UA) already applies in stealth
+            // — `_STEALTH_FEAT.navigator` is true — and `_STEALTH` read at install is false
+            // on a tab's FIRST load anyway, so the old gate was a first-load split by
+            // construction. `_featNow` is the live reader that folds the mode in, the same
+            // one the connection block below moved to for that reason. `_hostHwNow` is here
+            // because mw-core lists `bluetooth` in _HW_PROPS and a prototype method does not
+            // pass through _def's _sdProp, so the host-mode rule has to be restated at this
+            // site. Bluetooth is not exposed to workers, so there is no second scope for a
+            // stand-down to stay coherent with.
+            //
+            // AFTER, same rig, extension loaded, profile written through the service worker
+            // and the dyn/ registration awaited — the top window, a 300x200 same-origin
+            // iframe and a srcdoc frame, all three:
+            //
+            //   pc_gaming  ("bluetooth":false)   getAvailability() -> false   clean true
+            //   laptop_mid (claims an adapter)   getAvailability() -> true    clean true
+            //
+            // with all nine receivers, the descriptor, the prototype's own keys, name,
+            // length, toString and Object.getOwnPropertyNames(navigator.bluetooth) === []
+            // identical to clean in both, no extension frame in any rejection's stack, and
+            // 0 console errors. The laptop row is the negative control: without it a wrapper
+            // that answers false for everyone reads exactly like this one.
+            //
+            // And the timing the first defect was about — the FIRST inline script in <head>
+            // calling getAvailability() immediately, pc_gaming, on the very first page after
+            // a browser restart as well as on a warm one:
+            //
+            //   clean   resolved true  after 2456ms      the platform asks the OS; it is slow
+            //   ours    resolved false after 2147 / 2441 / 1942ms
+            //
+            // i.e. the claim is in place by the time the answer is produced, which is the
+            // whole point of deciding inside the call. The ~2s native latency also swallows
+            // the one extra microtask the transform costs, so the derived promise is not a
+            // timing tell here the way it would be on a cheap call.
+            try {
+                var _bt = nav.bluetooth;
+                var _btProto = _bt ? Object.getPrototypeOf(_bt) : null;
+                var _oga = _btProto ? _btProto.getAvailability : null;
+                if (typeof _oga === 'function') {
+                    _btProto.getAvailability = _mn(function getAvailability() {
+                        var r = _oga.apply(this, arguments);
+                        var noAdapter = false;
+                        try {
+                            noAdapter = ID.hasBluetooth === false &&
+                                _featNow('navigator') && !_hostHwNow();
+                        } catch (eC) {}
+                        // Untouched when the profile has nothing to say: the native promise
+                        // is handed back as it came, without even a derived one.
+                        if (!noAdapter || !r || typeof r.then !== 'function') return r;
+                        return r.then(function () { return false; });
+                    });
+                }
+            } catch (eBt) {}
         } catch(_) {}
     })();
 
@@ -263,7 +386,12 @@
             // же имя 'getParameter', чтобы toString/shape совпадали с нативной.
             var g1 = WebGLRenderingContext.prototype;
             var _ogp = g1.getParameter;
-            var _gp1 = _mn(function getParameter(p) { return _wgParam(p, _ogp, this); });
+            var _gp1 = _mn(function getParameter(p) {
+                // [FIX the-wrappers-forwarded-arguments-the-page-never-passed] no argument must
+                // throw "1 argument required", not return null for an undefined enum.
+                if (arguments.length < 1) return _ogp.apply(this, arguments);
+                return _wgParam(p, _ogp, this);
+            });
             try {
                 Object.defineProperty(g1, 'getParameter', {
                     value: _gp1, writable: true, configurable: true, enumerable: true
@@ -275,7 +403,10 @@
             if (typeof WebGL2RenderingContext !== 'undefined') {
                 var g2 = WebGL2RenderingContext.prototype;
                 var _ogp2 = g2.getParameter;
-                var _gp2 = _mn(function getParameter(p) { return _wgParam(p, _ogp2, this); });
+                var _gp2 = _mn(function getParameter(p) {
+                    if (arguments.length < 1) return _ogp2.apply(this, arguments);
+                    return _wgParam(p, _ogp2, this);
+                });
                 try {
                     Object.defineProperty(g2, 'getParameter', {
                         value: _gp2, writable: true, configurable: true, enumerable: true
@@ -545,6 +676,43 @@
             // property read would return our own synthesised one.
             var _uadNativeBrands = null;
             var _uadProtoDone = {};
+            // [FIX accessors-answered-every-receiver] name -> the native getter we replaced,
+            // kept as the RECEIVER ORACLE. brands/mobile/platform had no receiver check at
+            // all, so they answered off anything. Measured, clean Chromium 151 against this
+            // build:
+            //   NavigatorUAData.platform.call(NavigatorUAData.prototype) clean THREW TypeError
+            //   NavigatorUAData.platform.call(navigator)                 clean THREW TypeError
+            // and ours returned "Windows" for both — a value where the platform refuses to
+            // give one, which is one line to check and needs no statistics.
+            //
+            // No brand list can express the rule the platform actually follows, which is why
+            // the oracle is the native getter and not `isPrototypeOf`: clean ANSWERS for a
+            // CROSS-REALM NavigatorUAData (measured, `.call(otherRealmUad)` -> "Windows")
+            // although instanceof and isPrototypeOf are both false there. So we hand the
+            // receiver to the getter we took out: it throws for exactly the receivers it
+            // refuses, and where it answers we return the profile — every realm this
+            // extension patches claims the SAME profile, so that realm's own accessor would
+            // give the same string, and returning the native value there is what would leak
+            // the host.
+            var _uadNative = {};
+            // Membership, not identity, and the difference is load-bearing: measured in
+            // headless Chromium 151 with nothing patched,
+            //   navigator.userAgentData === navigator.userAgentData   ->  false
+            // so `this === <the uad we patched>` would MISS on every ordinary read and put
+            // the hot path through a native call. A WeakSet does not: the wrapped
+            // `userAgentData` getter runs _patchUAD on whatever object it hands back, so a
+            // freshly built instance is already in the set by the time its accessor runs.
+            // Measured with a counter in the oracle: 5 reads each of platform/mobile/brands
+            // -> 0 native calls, one foreign receiver -> exactly 1.
+            var _uadOurs = new WeakSet();
+            function _uadRecv(recv, name) {
+                if (_uadOurs.has(recv)) return;
+                var nat = _uadNative[name];
+                // Nothing to ask means no oracle. Answer for every receiver rather than
+                // invent a refusal this browser does not have.
+                if (!nat) return;
+                return nat.call(recv);
+            }
             /**
              * Replace an accessor on NavigatorUAData.prototype, once, keeping the native
              * descriptor's flags. Nothing is written to the instance — that is the whole
@@ -558,6 +726,7 @@
                     var d = Object.getOwnPropertyDescriptor(proto, name);
                     if (!d || typeof d.get !== 'function') return;
                     if (name === 'brands' && !_uadNativeBrands) _uadNativeBrands = d.get;
+                    if (!_uadNative[name]) _uadNative[name] = d.get;
                     Object.defineProperty(proto, name, {
                         get: _mn(getter, true),
                         set: d.set,
@@ -570,6 +739,11 @@
 
             function _patchUAD(uad) {
                 if (!uad) return uad;
+                // [FIX accessors-answered-every-receiver] The oracle's fast path: every
+                // NavigatorUAData that leaves the patched `userAgentData` getter passes
+                // through here, so this is the set of instances our accessors may answer
+                // for without asking the native one first.
+                try { _uadOurs.add(uad); } catch (eOwn) {}
                 // Re-entry safe: GHEV wrapper guarded by _ghevPatched (WeakSet), not an own marker.
                 try {
                     // Снимок берём РОВНО ОДИН РАЗ и только с нативного brands: на
@@ -593,29 +767,75 @@
                             if (_nb && _nb.length) _uadBrands.set(uad, _plainBrands(_nb));
                         } catch (eSnap) {}
                     }
-                    _defUadProto(uad, 'platform', function platform() { return 'Windows'; });
-                    _defUadProto(uad, 'mobile', function mobile() { return false; });
+                    // _uadRecv first in each: the identity test is what keeps the ordinary
+                    // read off the native path, and a refused receiver must be refused
+                    // before we build an answer for it.
+                    _defUadProto(uad, 'platform', function platform() {
+                        _uadRecv(this, 'platform');
+                        return 'Windows';
+                    });
+                    _defUadProto(uad, 'mobile', function mobile() {
+                        _uadRecv(this, 'mobile');
+                        return false;
+                    });
                     _defUadProto(uad, 'brands', function brands() {
-                        return _ensureChromeBrands(_uadBrands.get(this), _chromeMajor());
+                        // The oracle's answer is not discarded here: a VALID but foreign
+                        // NavigatorUAData has no snapshot in _uadBrands, and its own realm
+                        // runs its native list through this same normaliser — so using it
+                        // reproduces what that realm answers instead of the empty list
+                        // _plainBrands(undefined) used to give.
+                        var nat = _uadRecv(this, 'brands');
+                        return _ensureChromeBrands(_uadBrands.get(this) || nat, _chromeMajor());
                     });
                 } catch (e) {}
-                if (typeof uad.getHighEntropyValues === 'function' && !_ghevPatched.has(uad.getHighEntropyValues)) {
-                    var _orig = uad.getHighEntropyValues;
-                    var _patched = _mn(function getHighEntropyValues(hints) {
-                        var list = hints || [];
-                        return _orig.apply(uad, arguments).then(function(r) {
-                            return _forceUAD(r, list);
+                // [FIX ghev-was-an-own-property-in-every-frame] getHighEntropyValues is
+                // patched on the PROTOTYPE of whatever realm this uad belongs to, which
+                // covers both call shapes at once — a plain `uad.getHighEntropyValues(...)`
+                // resolves through it, and so does the
+                // `NavigatorUAData.prototype.getHighEntropyValues.call(uad)` bypass that
+                // CreepJS and FP use to step around an instance-level defineProperty.
+                //
+                // It used to be patched on the INSTANCE instead, and a real NavigatorUAData
+                // has no own properties at all. In the TOP window that never showed, because
+                // the prototype was patched a few lines after this function's first call. A
+                // FRAME never got that far: the parent-side _patchFrameAll calls _patchUAD on
+                // the child's uad while the child's prototype is untouched, so the instance
+                // branch fired and left the own property behind. Measured by
+                // tools/probe-scopes.mjs on the frame axis: `iframe / userAgentData own ->
+                // getHighEntropyValues`, present in a same-origin iframe, absent in its
+                // parent, absent everywhere clean — the same own-property lie
+                // [FIX uad-own-property-lie] removed for brands/mobile/platform and
+                // [FIX worker-uad-own-props-outlived-the-window-fix] removed in workers.
+                //
+                // [CLEANUP] The instance branch that followed this one is GONE, and so are
+                // the two blocks after _patchUAD(navigator.userAgentData) that re-wrapped
+                // getHighEntropyValues on Object.getPrototypeOf(navigator.userAgentData) and
+                // on NavigatorUAData.prototype. All three were kept as belt-and-braces for
+                // call shapes this block already covers, and all three were dead: the
+                // prototype patch below runs first and puts its wrapper in _ghevPatched, so
+                // every one of their guards is false by the time it is reached. Measured by
+                // instrumenting the bundle and loading it — top window, same-origin iframe
+                // and srcdoc frame each recorded ONLY this block:
+                //   TOP    ["A:proto-inside-patchUAD"]
+                //   PLAIN  ["A:proto-inside-patchUAD","A:proto-inside-patchUAD"]
+                //   SRCDOC ["A:proto-inside-patchUAD","A:proto-inside-patchUAD"]
+                try {
+                    var _pp = Object.getPrototypeOf(uad);
+                    if (_pp && typeof _pp.getHighEntropyValues === 'function' &&
+                        !_ghevPatched.has(_pp.getHighEntropyValues)) {
+                        var _po = _pp.getHighEntropyValues;
+                        var _pw = _mn(function getHighEntropyValues(hints) {
+                            var list = hints || [];
+                            return _po.apply(this, arguments).then(function (r) { return _forceUAD(r, list); });
                         });
-                    });
-                    _ghevPatched.add(_patched);
-                    try {
-                        Object.defineProperty(uad, 'getHighEntropyValues', {
-                            value: _patched, configurable: true, writable: true
-                        });
-                    } catch (e2) {
-                        try { uad.getHighEntropyValues = _patched; } catch (e3) {}
+                        _ghevPatched.add(_pw);
+                        try {
+                            Object.defineProperty(_pp, 'getHighEntropyValues', {
+                                value: _pw, configurable: true, writable: true
+                            });
+                        } catch (ePp) { try { _pp.getHighEntropyValues = _pw; } catch (ePp2) {} }
                     }
-                }
+                } catch (ePr) {}
                 // [CLEANUP] uad.__afpUAD = true убрано: значение только записывалось и
                 // нигде не читалось (последний читатель исчез вместе с прежней логикой
                 // "skip re-wrap"), но при этом создавало перечислимое own-свойство с
@@ -623,54 +843,16 @@
                 return uad;
             }
             _patchUAD(navigator.userAgentData);
-            // CRITICAL: CreepJS / FP often call
-            //   NavigatorUAData.prototype.getHighEntropyValues.call(uad, hints)
-            // which BYPASSES instance-level defineProperty. Must wrap prototype.
-            try {
-                var proto = Object.getPrototypeOf(navigator.userAgentData);
-                if (proto && typeof proto.getHighEntropyValues === 'function') {
-                    var _origP = proto.getHighEntropyValues;
-                    if (!_ghevPatched.has(_origP)) {
-                        var _patP = _mn(function getHighEntropyValues(hints) {
-                            var list = hints || [];
-                            return _origP.apply(this, arguments).then(function(r) {
-                                return _forceUAD(r, list);
-                            });
-                        });
-                        _ghevPatched.add(_patP);
-                        try {
-                            Object.defineProperty(proto, 'getHighEntropyValues', {
-                                value: _patP, configurable: true, writable: true
-                            });
-                        } catch (e5) {
-                            try { proto.getHighEntropyValues = _patP; } catch (e5b) {}
-                        }
-                    }
-                }
-            } catch (e6) {}
-            // Also lock global prototype if different from instance proto
-            try {
-                if (typeof NavigatorUAData !== 'undefined' && NavigatorUAData.prototype) {
-                    var NP = NavigatorUAData.prototype;
-                    var _o2 = NP.getHighEntropyValues;
-                    if (typeof _o2 === 'function' && !_ghevPatched.has(_o2)) {
-                        var _p2 = _mn(function getHighEntropyValues(hints) {
-                            var list = hints || [];
-                            return _o2.apply(this, arguments).then(function(r) {
-                                return _forceUAD(r, list);
-                            });
-                        });
-                        _ghevPatched.add(_p2);
-                        try {
-                            Object.defineProperty(NP, 'getHighEntropyValues', {
-                                value: _p2, configurable: true, writable: true
-                            });
-                        } catch (eN2) {
-                            try { NP.getHighEntropyValues = _p2; } catch (eN3) {}
-                        }
-                    }
-                }
-            } catch (e7b) {}
+            // [CLEANUP] Two blocks stood here: one re-read
+            // Object.getPrototypeOf(navigator.userAgentData) and wrapped
+            // getHighEntropyValues again, the other did the same for
+            // NavigatorUAData.prototype "if different from instance proto". Both were for
+            // the `NavigatorUAData.prototype.getHighEntropyValues.call(uad, hints)` shape
+            // that bypasses an instance-level defineProperty — and _patchUAD has patched the
+            // prototype itself since v2.5.8, so that shape and `uad.ghev(...)` are both
+            // covered there, for whatever realm the uad belongs to. Their guards read
+            // _ghevPatched, which the surviving block fills, so neither could ever run;
+            // see the measurement in _patchUAD.
             // Navigator.userAgentData getter — re-patch if browser recreates object
             try {
                 var _navProto = Object.getPrototypeOf(navigator);
@@ -1519,6 +1701,40 @@
             // values. They cost two own-property lies to buy nothing, and relocating them
             // is not an option either: natively they are inherited from
             // EventTarget.prototype, so an own copy anywhere below that is equally visible.
+            // [FIX accessors-answered-every-receiver] The onchange getter below returned
+            // null for ANY receiver, so measured against clean Chromium 151:
+            //   NetworkInformation.prototype.onchange   clean THREW TypeError   ours null
+            // Same rule as the four accessors above and as brands/mobile/platform: the
+            // native getter we are about to replace IS the receiver oracle. A brand list
+            // cannot stand in for it — clean ANSWERS for a cross-realm NetworkInformation
+            // (measured, `NetworkInformation.effectiveType.call(otherRealmConn)` -> "4g")
+            // where isPrototypeOf is false — and answering our null there is right, because
+            // that realm's own copy of this patch returns null too.
+            //
+            // The SETTER shares the GETTER's oracle rather than calling the native setter,
+            // because the getter is the side-effect-free half: delegating to the native
+            // setter for a valid foreign receiver would actually install a handler there,
+            // which no realm of ours does. That substitution is exact — measured on clean
+            // Chromium 151, every refused receiver gets the same object out of both halves:
+            //   E.get.call({}) / E.set.call({}, null)   both TypeError: Illegal invocation
+            //   .call(null) and .call(NetworkInformation.prototype)   likewise, both halves
+            // Guarding only the getter would leave one descriptor honest on read and lying on
+            // write, the same one-descriptor mismatch [FIX bare-setter] below is about.
+            var _natOnchange = null;
+            try {
+                var _dOc = Object.getOwnPropertyDescriptor(proto, 'onchange');
+                if (_dOc && typeof _dOc.get === 'function') _natOnchange = _dOc.get;
+            } catch (eOc) {}
+            function _connRecv(recv) {
+                // Identity is enough here where it was not enough for NavigatorUAData:
+                // navigator.connection IS a singleton, the same fact the stand-down above
+                // already relies on to reach the instance without a `this`. Measured with a
+                // counter in the oracle: 5 ordinary reads -> 0 native calls.
+                if (recv === conn) return;
+                // No native descriptor means no oracle: answer for every receiver rather
+                // than invent a refusal this browser does not have.
+                if (_natOnchange) _natOnchange.call(recv);
+            }
             try {
                 // [FIX bare-setter] The setter was a plain function expression, so
                 // Function.prototype.toString.call(desc.set) printed "function() {}" next to
@@ -1528,8 +1744,14 @@
                 // relying on _mn's accessor flag, which only knows how to prepend "get ".
                 // Native setters take one argument; `function () {}` would report length 0.
                 Object.defineProperty(proto, 'onchange', {
-                    get: _mn(function onchange() { return null; }, true),
-                    set: _mn(({ 'set onchange': function (v) { return v; } })['set onchange']),
+                    get: _mn(function onchange() {
+                        _connRecv(this);
+                        return null;
+                    }, true),
+                    set: _mn(({ 'set onchange': function (v) {
+                        _connRecv(this);
+                        return v;
+                    } })['set onchange']),
                     configurable: true
                 });
             } catch(e) {}

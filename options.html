@@ -57,6 +57,25 @@
       <div id="cspList" class="hint">—</div>
     </section>
 
+    <!-- [FIX the-learned-lists-were-the-invisible-ones] Every other list on this page was
+         filled by the user pressing a switch. These six the extension fills by itself while
+         you browse, one entry per site whose CSP has a shape worth remembering — and until
+         now they had no screen, no count and no way to clear, while a profile change left
+         them untouched. Same treatment the WebRTC exception list got for the same reason. -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Что расширение запомнило само</h2>
+        <button type="button" class="btn ghost" id="learnedClearBtn"
+                title="Забыть всё, что выучено о CSP сайтов">Очистить</button>
+      </div>
+      <p class="hint">Заполняется без вашего участия: при заходе на сайт расширение запоминает,
+        что его Content-Security-Policy запрещает — чтобы на следующей странице ответить верно
+        с первого скрипта, а не со второго. Ничего из этого не видно странице и не уходит
+        наружу, но это список посещённых сайтов, и смена профиля его не стирает. Очистка
+        безопасна: каждый сайт будет выучен заново, ценой одной загрузки страницы.</p>
+      <div id="learnedList" class="hint">—</div>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <h2>Проверка страны выхода</h2>

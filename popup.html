@@ -43,12 +43,11 @@
            block alone would have frozen the hero on "Защита не активна". -->
     </div>
 
-    <p class="note" id="emptyState" hidden>Откройте http/https-вкладку</p>
-
     <!-- ── country ──────────────────────────────────────────────────────── -->
     <section class="card">
       <div class="country-select" id="countrySelect">
-        <button type="button" class="country-btn" id="countryBtn" aria-haspopup="listbox" aria-expanded="false">
+        <button type="button" class="country-btn" id="countryBtn" aria-haspopup="listbox"
+                aria-expanded="false" aria-controls="optionList">
           <span class="country-code" id="countryCode">US</span>
           <span class="country-meta">
             <span class="country-name" id="countryName">United States</span>
@@ -61,22 +60,42 @@
           <div class="search-wrap">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                  stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
-            <input class="menu-search" id="searchInput" type="search" placeholder="Поиск страны" autocomplete="off" />
+            <input class="menu-search" id="searchInput" type="search" placeholder="Поиск страны"
+                   autocomplete="off" role="combobox" aria-controls="optionList" aria-expanded="true"
+                   aria-autocomplete="list" />
           </div>
-          <div class="option-list" id="optionList" role="listbox"></div>
+          <div class="option-list" id="optionList" role="listbox" tabindex="-1" aria-label="Страна"></div>
         </div>
       </div>
+      <!-- [FIX the-warning-ate-the-timezone] The exit-country disagreement had no room of
+           its own and was written INTO the timezone line, so a mismatch replaced the zone
+           the profile claims — the single fact the user needs while deciding what to do
+           about the mismatch. The measurement that justified it is stale: the popup rests
+           at 551px, not 590, and popupfit.mjs prints the headroom on every run. -->
+      <div class="country-warn" id="countryWarn" hidden></div>
     </section>
     <span id="tzValue" hidden></span>
 
     <!-- ── per-site switches ────────────────────────────────────────────
-         One card, one host line. Both switches decide something about THIS site, and
-         printing the hostname twice was what pushed the popup past Chrome's 600px and
-         gave it a scrollbar. Polarity differs by design: WebRTC ON = protection we add,
+         One card for everything decided per site. Two cards printed the hostname twice
+         over and pushed the popup past Chrome's 600px; the hero above is now the only
+         place the host is named. Polarity differs by design: WebRTC ON = protection we add,
          Service Worker ON = a capability the site keeps (blocking it takes the site's
          offline mode with it — see SW_BLOCKED_KEY in background.js). -->
+    <!-- [FIX three-ways-of-saying-there-is-no-site] With no http tab the hero said "Нет
+         активной вкладки", this note said "Откройте http/https-вкладку", and the card below
+         said it a third time over three switches that were all disabled. The note stands
+         where the card stands and takes its place: one statement, and 84px less popup in
+         the state that had grown closest to Chrome's 600px cap. -->
+    <p class="note" id="emptyState" hidden>Откройте http- или https-вкладку, чтобы настроить её отдельно</p>
+
     <section class="card site" id="siteCard">
-      <div class="hint" id="siteHost">—</div>
+      <!-- [FIX the-host-was-printed-twice] This line used to lead with the hostname, which
+           the hero above already shows — and with both per-site notes appended it ran past
+           the edge and was ellipsised (measured: clipped true with WebRTC off on a standing
+           down site). The hero names the tab; this line says what the card decides about it,
+           and the notes now have the width the duplicate was taking. -->
+      <div class="hint" id="siteHost">Только для этого сайта</div>
 
       <div class="row-line">
         <div class="row-t" id="webrtcLabel">
@@ -86,7 +105,7 @@
           </svg>
           WebRTC
         </div>
-        <button type="button" class="switch" id="webrtcToggle" role="switch" aria-label="WebRTC защита">
+        <button type="button" class="switch" id="webrtcToggle" role="switch" aria-checked="false" aria-label="WebRTC защита">
           <i class="knob"></i>
         </button>
       </div>
@@ -99,7 +118,7 @@
           </svg>
           Service Worker
         </div>
-        <button type="button" class="switch" id="swToggle" role="switch" aria-label="Service Worker для сайта">
+        <button type="button" class="switch" id="swToggle" role="switch" aria-checked="false" aria-label="Service Worker для сайта">
           <i class="knob"></i>
         </button>
       </div>
@@ -117,7 +136,7 @@
           </svg>
           CSP → воркеры
         </div>
-        <button type="button" class="switch" id="cspToggle" role="switch" aria-label="Переписать CSP сайта, чтобы подмена работала в его воркерах">
+        <button type="button" class="switch" id="cspToggle" role="switch" aria-checked="false" aria-label="Переписать CSP сайта, чтобы подмена работала в его воркерах">
           <i class="knob"></i>
         </button>
       </div>
@@ -125,9 +144,13 @@
 
     <!-- ── mode ─────────────────────────────────────────────────────────── -->
     <section class="card compact">
-      <div class="seg" id="modeGrid" role="tablist">
-        <button type="button" class="mode active" data-mode="normal" role="tab">Обычный</button>
-        <button type="button" class="mode" data-mode="hidden" role="tab">Скрытый</button>
+      <!-- role="tab" promised a tabpanel this popup does not have, and neither button ever
+           carried aria-selected: measured null on both. Two mutually exclusive settings are a
+           radio group, and that role is also where the arrow-key contract in popup.js comes
+           from — a radiogroup is expected to move between its radios with the arrows. -->
+      <div class="seg" id="modeGrid" role="radiogroup" aria-label="Режим подмены">
+        <button type="button" class="mode active" data-mode="normal" role="radio" aria-checked="true">Обычный</button>
+        <button type="button" class="mode" data-mode="hidden" role="radio" aria-checked="false">Скрытый</button>
       </div>
       <p class="hint" id="modeHint">Полная подмена профиля устройства</p>
     </section>
@@ -142,20 +165,26 @@
          the button names its machine itself. -->
     <section class="card">
       <div class="country-select" id="profileSelect">
-        <button type="button" class="country-btn" id="profileBtn" aria-haspopup="listbox" aria-expanded="false">
+        <button type="button" class="country-btn" id="profileBtn" aria-haspopup="listbox"
+                aria-expanded="false" aria-controls="profileList">
           <span class="prof-ic" id="profileIcon" aria-hidden="true"></span>
           <span class="country-meta">
             <span class="country-name" id="profileName">Laptop Mid</span>
             <span class="country-tz" id="profileSpec">1920×1080 · 8c · 8GB · Intel Iris Xe</span>
           </span>
+          <!-- [FIX the-popup-never-said-the-screen-claim-was-dropped] Shown when the
+               selected row's screen is smaller than this machine's; the title carries both
+               numbers. It rides in the button's existing row rather than a line of its
+               own: a chip on the row it describes needs no height at all, and it is read
+               where the machine is chosen (test/popupfit.mjs measures both). -->
+          <span class="tag" id="profileScreenTag" hidden>экран хоста</span>
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         <div class="dropdown" id="profileDropdown">
-          <div class="option-list" id="profileList" role="listbox"></div>
+          <div class="option-list" id="profileList" role="listbox" tabindex="-1" aria-label="Профиль устройства"></div>
         </div>
       </div>
-      <div class="warnings" id="warnings" hidden></div>
     </section>
 
     <!-- ── actions ──────────────────────────────────────────────────────── -->

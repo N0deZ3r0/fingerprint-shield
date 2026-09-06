@@ -650,8 +650,19 @@ t.section('9) afpRewriteCsp');
   t.eq(afpRewriteCsp(["script-src 'self'", "script-src 'nonce-abc' 'strict-dynamic'"]),
     "script-src 'self'; worker-src 'self' blob:, script-src 'unsafe-inline'; worker-src blob:",
     'but once ANOTHER policy in the set needs the static rule, the nonce policy loses its nonce too — one set replaces the whole header');
-  t.eq(afpRewriteCsp(["default-src 'self'"]), "default-src 'self'; worker-src 'self' blob:",
-    'a lone default-src gets an explicit worker-src beside it');
+  // [FIX the-switch-created-the-split-it-was-meant-to-close] connect-src joined worker-src
+  // here. Admitting the WORKER without admitting the source READ gave a worker that could be
+  // created and could not be patched, and mw-core's stand-down keys on worker-src, so it
+  // lifted: window on the profile beside a worker on the machine, reported from a real
+  // github.com tab. Neither of these two policies constrains connect-src, so each inherits
+  // one — for the first from its own absent default-src (nothing to inherit, so none is
+  // added), for the second from nothing at all.
+  t.eq(afpRewriteCsp(["default-src 'self'"]),
+    "default-src 'self'; worker-src 'self' blob:; connect-src 'self' blob:",
+    'a lone default-src gets an explicit worker-src AND connect-src beside it — the wrapper reads the worker source before it patches it');
+  t.eq(afpRewriteCsp(["script-src 'self'; connect-src 'self' blob:"]),
+    "script-src 'self'; connect-src 'self' blob:; worker-src 'self' blob:",
+    'a connect-src that already admits blob: is left exactly as it was');
   t.eq(afpRewriteCsp(["script-src 'nonce-x'; worker-src 'self'"]), "script-src 'unsafe-inline'; worker-src 'self' blob:",
     'a nonce-only script-src is opened to inline (the cost the switch is amber for) and worker-src gains blob:');
   t.eq(afpRewriteCsp([]), null, 'no header, nothing to do');

@@ -106,6 +106,9 @@ html, body {
    and that heading is gone (see the note in popup.html), so these rules styled nothing.
    options.html and whoami.html use `card-head`, a different class in different
    stylesheets, so nothing else depended on it. */
+/* A card is display:flex, and an author rule beats the UA sheet's [hidden], so the
+   attribute needs saying again here or hiding a card would do nothing. */
+.card[hidden] { display: none !important; }
 .hint { font-size: 11px; color: var(--mu); }
 
 /* ── segmented mode switch ────────────────────────────────────────────── */
@@ -157,18 +160,29 @@ html, body {
    taller than the country one and still show most of the seven rows at once. */
 #profileSelect .dropdown { top: auto; bottom: calc(100% + 6px); }
 #profileList { max-height: 264px; }
-/* the "this machine" row: hardware is NOT substituted, and the option says so in amber */
-.option .tag {
+/* the "this machine" row: hardware is NOT substituted, and the option says so in amber.
+   The same chip marks a row whose screen is smaller than this machine's — there the claim
+   is dropped whole by mw-core's _screenAtLeastNative — and the selected row repeats it in
+   the button, which is why the rule is not scoped to .option alone. */
+.option .tag, .country-btn .tag {
   flex: 0 0 auto; font-size: 9.5px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
   color: var(--wn); background: var(--wn-bg); border-radius: var(--r-xs); padding: 2px 5px;
 }
-.warnings {
-  display: flex; flex-direction: column; gap: 4px;
-  font-size: 10.5px; color: var(--wn); background: var(--wn-bg);
-  border-radius: var(--r-s); padding: 8px 10px;
+/* The exit-country disagreement, on a line of its own under the picker. It was written
+   over the timezone text until the height budget was re-measured — see popup.html. Kept to
+   one line by nowrap so a long country name cannot grow the popup; the full sentence is on
+   the title, as it was before. */
+.country-warn {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; line-height: 1.35; color: var(--wn); background: var(--wn-bg);
+  border-radius: var(--r-xs); padding: 6px 9px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.warnings[hidden] { display: none !important; }
-.warning { line-height: 1.4; }
+.country-warn[hidden] { display: none !important; }
+.country-warn::before {
+  content: ""; flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--wn);
+}
 
 /* ── country picker ───────────────────────────────────────────────────── */
 .country-select { position: relative; }
@@ -229,16 +243,34 @@ html, body {
 .option.selected { background: var(--ac-bg); color: var(--ac); font-weight: 620; }
 .option .code { font-size: 10.5px; font-weight: 720; color: var(--mu); }
 .option.selected .code { color: var(--ac); }
+/* The keyboard cursor. Neither list had one, because neither list could be reached from a
+   keyboard at all: 67 country rows and 7 machine rows, all of them <div>s, none focusable —
+   measured. Focus stays on the input (or on the list), and THIS class marks the row that
+   Enter would take, named to the reader through aria-activedescendant. It has to read as
+   different from .selected, which means "this is the current choice", not "this is where
+   the cursor is": .selected tints the text, the cursor draws a ring. */
+.option.active { background: var(--raise); box-shadow: inset 0 0 0 1px var(--ac); }
+.option.selected.active { background: var(--ac-bg); }
+/* Both lists take focus so the arrows have somewhere to land; the ring belongs on the row,
+   not on the scrolling box around it. */
+.option-list:focus { outline: none; }
 
 /* ── row card (WebRTC) ────────────────────────────────────────────────── */
 .card.row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 11px; }
 /* Both per-site switches share one card and one host line — see popup.html. Tighter than
    two .card.row blocks by ~40px, which is what put the popup back under Chrome's 600. */
 .card.site { padding: 7px 11px; gap: 6px; }
-.card.site .hint { margin-bottom: 1px; }
+/* One line whatever the text says, for the same reason .country-tz has it: both the
+   "WebRTC выключен в настройках" suffix and the stand-down note ride in this line instead of
+   a new row, and a wrap would grow the popup past Chrome's 600px cap. Held by
+   test/popupfit.mjs, which asserts the height does not move when the note is shown. */
+.card.site .hint {
+  margin-bottom: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .row-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.row-t.warn { color: #d98324; }
-.row-t.warn svg { color: #d98324; }
+.row-t.warn { color: var(--wn); }
+.row-t.warn svg { color: var(--wn); }
 .row-t.off { opacity: 0.5; }
 .row-txt { min-width: 0; }
 .row-t {
@@ -265,6 +297,11 @@ html, body {
 }
 .switch.on { background: var(--ok-bg); border-color: transparent; }
 .switch.on .knob { transform: translateX(19px); background: var(--ok); }
+/* A switch with nothing to decide — no http tab under it. It used to be dimmed with an
+   inline opacity and pointer-events:none, which stops a mouse and nothing else: the button
+   stayed in the tab order and still fired on Enter. :disabled stops both, and tells
+   assistive tech the same thing the dimming tells the eye. */
+.switch:disabled { opacity: .4; cursor: default; }
 
 /* ── actions ──────────────────────────────────────────────────────────── */
 .foot { display: flex; flex-direction: column; gap: 8px; margin-top: 1px; }
@@ -337,6 +374,6 @@ html, body {
    current site. The switch alone did not read as a state anyone could notice a week later
    — see the note in popup.js updateWebrtcToggle. */
 .hint.warn {
-  color: #d98324;
+  color: var(--wn);
   font-weight: 600;
 }

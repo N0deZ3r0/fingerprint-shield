@@ -174,7 +174,38 @@ if (wkOurs.length >= 3 && wkClean.length >= 3) {
   // Which scopes the page paints red against the window — that pattern, not the hashes
   // themselves, is what a reader of this page sees as "the scopes disagree".
   const pattern = (cols) => cols.map((c) => `${c.scope || 'window'}:${c.red ? 'red' : c.grey ? 'none' : 'ok'}`).join(',');
-  eq(pattern(wkOurs), pattern(wkClean), 'the same scopes agree with the window as in a clean browser');
+  // [FIX this-page-cannot-support-a-scope-verdict] NOT ASSERTED, and the reason is measured.
+  //
+  // This was `eq(pattern(wkOurs), pattern(wkClean))`, then a one-sided version of the same
+  // rule ("a scope may not be RED for us where it is OK for clean"). Both flaked, and the
+  // second one flaked in the direction that looks like a real defect. The counting settles it
+  // — EIGHT consecutive runs of this suite, one unchanged build, tallying both sides of the
+  // same run:
+  //
+  //     the clean browser's window disagreed with its own workers   6 of 8
+  //     ours did                                                    4 of 8
+  //
+  // The window-scope hash on this page is BISTABLE in an unpatched browser, at a rate higher
+  // than ours. A single draw from that cannot support any verdict about the extension: with
+  // p ~ 0.5 on each side independently, "ours red, clean green" comes up by chance a quarter
+  // of the time, and asserting on it manufactures a defect out of a coin toss. Reading either
+  // side twice does not help — both reads land on the same alternate value often enough
+  // (measured when a two-read stand-down was tried and still failed).
+  //
+  // So the pattern is PRINTED and not judged. The claim it was trying to make — this
+  // extension does not pull the scopes apart — is made properly by two instruments that
+  // enumerate stable values instead of hashing a page:
+  //
+  //   test/wbcoherence.mjs        the worker-readable surface on stand-down origins
+  //   test/modeclaims.mjs part 4  36 enumerated values, window against worker, with a
+  //                               liveness check that the stand-down actually fired
+  //
+  // Both are deterministic and both report 0 disagreements. Deleting this readout instead of
+  // printing it would lose the only place the upstream page's own verdict is visible at all.
+  const cleanPat = pattern(wkClean), oursPat = pattern(wkOurs);
+  console.log(`  scope pattern (printed, NOT judged — this page's window hash is bistable in a\n` +
+    `  clean browser too, 6 of 8 runs against our 4; see the comment in this file)\n` +
+    `      ours  ${oursPat}\n      clean ${cleanPat}`);
   // And the window's own hash must have MOVED, or the page was measuring a clean browser.
   ok(wkOurs[0].hash !== wkClean[0].hash,
     `the window scope reports something else than clean (ours ${wkOurs[0].hash}, clean ${wkClean[0].hash})`);

@@ -234,6 +234,33 @@ note(`cores ${CLEAN.win.cores}, memory ${CLEAN.win.memory}, screen ${CLEAN.win.s
   `platformVersion ${CLEAN.win.platformVersion}, av1 ${CLEAN.win.av1}`);
 note(`gl ${String(CLEAN.win.gl).slice(0, 90)}`);
 note(`hints sent: device-memory ${CLEAN.sent.mem || '(none)'}, dpr ${CLEAN.sent.dpr || '(none)'}, platform-version ${CLEAN.sent.pv || '(none)'}`);
+/**
+ * [FIX the-suite-assumed-every-hardware-key-exists-in-a-worker] Some hardware keys exist on
+ * `Navigator` and NOT on `WorkerNavigator`, and this loop asserted the two scopes agree on
+ * all of them. `navigator.cpuPerformance` is the first: measured present in the window and
+ * absent in a worker. The rig's Chromium 151 has it in NEITHER scope, so both sides read
+ * "n/a", the comparison was "n/a" === "n/a", and the key passed for two months without once
+ * being exercised — it will start failing here of its own accord the day the rig's browser
+ * gains the property, with nothing wrong in the extension.
+ *
+ * (Found by running this suite against a second binary through FPS_CHROME, since branded
+ * Chrome refuses --load-extension and the rig's Chromium is a major behind. The scope split
+ * is a platform fact, not that browser's quirk — the CONTROL row failed identically, which
+ * is the shape of a fact rather than a defect. Not re-measured on Chrome 152, which cannot
+ * be driven; audit.html is the instrument there.)
+ *
+ * The clean browser is the authority, and the answer is a SKIP that says so — never a silent
+ * pass, which is the failure this project keeps paying for. A key the platform does have in
+ * a worker stays asserted, so a real desync still fails.
+ */
+const WORKER_BLIND = new Set(
+  (CLEAN.worker && typeof CLEAN.worker === 'object')
+    ? HW_ALL_SCOPES.filter((k) => String(CLEAN.worker[k]) === 'n/a' && String(CLEAN.win[k]) !== 'n/a')
+    : []);
+if (WORKER_BLIND.size) {
+  note(`the clean browser has no ${[...WORKER_BLIND].join(', ')} in a worker at all ` +
+    `(window has it) — those scope comparisons are skipped, not asserted`);
+}
 const cleanSeesAgency = !near(CLEAN.win.fontAgency, CLEAN.win.fontMono, 0.5);
 note(`Agency FB ${cleanSeesAgency ? 'is installed here (' + CLEAN.win.fontAgency + ' vs monospace ' + CLEAN.win.fontMono + ')' : 'is NOT installed here — the font collapse cannot be seen on this host'}`);
 
@@ -327,6 +354,7 @@ try {
   assert(HOST.frame && typeof HOST.frame === 'object', `the iframe answered (${typeof HOST.frame === 'object' ? 'ok' : HOST.frame})`);
   if (HOST.worker && typeof HOST.worker === 'object') {
     for (const k of HW_ALL_SCOPES.concat(['lang', 'tz', 'ua'])) {
+      if (WORKER_BLIND.has(k)) continue;   // the platform has no such key in a worker
       eq(String(HOST.worker[k]), String(HOST.win[k]), `worker ${k} equals the window`);
     }
     assert(near(HOST.worker.fontAgency, HOST.win.fontAgency, 0.05),
@@ -397,7 +425,10 @@ try {
   eq(CTRL.sent.mem, String(low.memory), `and sec-ch-device-memory carries the row's memory (${CTRL.sent.mem})`);
   eq(CTRL.sent.pv, `"${CTRL.win.platformVersion}"`, `the OS bucket on the wire equals the one in JS (${CTRL.sent.pv})`);
   if (CTRL.worker && typeof CTRL.worker === 'object') {
-    for (const k of HW_ALL_SCOPES) eq(String(CTRL.worker[k]), String(CTRL.win[k]), `control: worker ${k} equals the window`);
+    for (const k of HW_ALL_SCOPES) {
+      if (WORKER_BLIND.has(k)) continue;
+      eq(String(CTRL.worker[k]), String(CTRL.win[k]), `control: worker ${k} equals the window`);
+    }
   }
 } finally {
   await ctx.close();

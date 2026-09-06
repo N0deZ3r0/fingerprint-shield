@@ -44,6 +44,13 @@
     // [FIX host-mode] Captured at load like the others; asked when the payload is BUILT,
     // which is when the page constructs a worker — long after the profile has landed.
     var _hostHwNow = (window.__AFP_MW__ && window.__AFP_MW__.hostHwNow) || function () { return false; };
+    // [FIX worker-readpixels-was-window-only] Captured and asked at build time for the same
+    // reason as _hostHwNow. `_stealthParityOnly` below cannot answer this one: it is read as
+    // this file LOADS, and it is the wrong question anyway — stealth keeps `webgl` ON (the
+    // GL strings must still match the window, or CreepJS's hasBadWebGL fires) while turning
+    // the pixel noise OFF, which in the window is _noiseOff() asked per read. So the GL
+    // readback shim needs the mode itself, not the feature flag.
+    var _stealthNow = (window.__AFP_MW__ && window.__AFP_MW__.stealthNow) || function () { return false; };
     try {
         // [FIX stealth-worker-parity] Do not abort the whole worker patch in stealth.
         // Main still spoofs cores/lang/TZ; returning here left Worker native → anti_detect.
@@ -550,19 +557,36 @@
                     // (hardwareConcurrency, deviceMemory, language, languages) were flagged,
                     // and platform/userAgent were not, purely because those two already
                     // matched the host and _defIf had left them native.
-                    var brand = (tg !== o) ? tg : null;
+                    // [FIX the-worker-brand-check-passed-object-create] The check above used
+                    // to be `brand.isPrototypeOf(Object(this))`, and a prototype-chain test
+                    // is not what a platform accessor does. Two ordinary receivers walk
+                    // straight through it while a clean browser refuses both, measured on
+                    // six WorkerNavigator accessors (appVersion, deviceMemory,
+                    // hardwareConcurrency, language, languages, userAgent), twelve cases:
+                    //
+                    //   Object.create(WorkerNavigator.prototype)   clean THREW  ours answered
+                    //   new Proxy(navigator, {})                   clean THREW  ours answered
+                    //
+                    // Both have the right prototype and neither has the internal slots the
+                    // native getter actually requires. The same fix as _namedGetter in
+                    // mw/mw-core.js: stop describing the rule and ASK the platform. The
+                    // native getter found on the chain is the oracle — it refuses exactly the
+                    // receivers the browser refuses, including shapes nobody enumerated.
+                    //
+                    // Probed once here, for the reason _origOracle and _winOracle are probed:
+                    // a capture that ANSWERS for a plain object is somebody's shim, not an
+                    // oracle, and inheriting it would turn the check off while looking like
+                    // it was on. No oracle means no check — the pre-fix behaviour — never a
+                    // wrong one.
+                    var oracle = null;
+                    if (d && typeof d.get === 'function') {
+                        try { d.get.call({}); } catch (eProbe) { oracle = d.get; }
+                    }
                     Object.defineProperty(tg, p, {
                         get: _M(({ [p]: function () {
-                            if (brand) {
-                                try {
-                                    if (this == null || !brand.isPrototypeOf(Object(this))) {
-                                        throw new TypeError('Illegal invocation');
-                                    }
-                                } catch (eInv) {
-                                    if (eInv && eInv.message === 'Illegal invocation') throw eInv;
-                                    throw new TypeError('Illegal invocation');
-                                }
-                            }
+                            // The instance we patched for answers without touching the
+                            // oracle: that is every real read, and it must stay free.
+                            if (this !== o && oracle) oracle.call(this);
                             return v;
                         } })[p], true),
                         enumerable: d ? !!d.enumerable : true,
@@ -655,6 +679,10 @@
             }
             function make(orig) {
                 return _M(function getParameter(p) {
+                    // [FIX the-wrappers-forwarded-arguments-the-page-never-passed] getParameter()
+                    // with no argument throws "1 argument required" natively; forwarding an
+                    // undefined enum makes it return null instead. Measured against clean.
+                    if (arguments.length < 1) return orig.apply(this, arguments);
                     if (p === 0x1F00) return 'WebKit';
                     if (p === 0x1F01) return 'WebKit WebGL';
                     var native;
@@ -948,6 +976,12 @@
                         Intl[name] = _MC(C, name, O.length);
                         Intl[name].prototype = O.prototype;
                         O.prototype.resolvedOptions = _M(function resolvedOptions() {
+                            // 'use strict' for the reason spelled out at _dateGuard: this
+                            // payload is sloppy, so a null/undefined receiver would be coerced
+                            // to the global before .call reaches the native, and V8 then reports
+                            // #<DedicatedWorkerGlobalScope> and routes through UnwrapDateTimeFormat
+                            // instead of naming the method and the receiver the caller passed.
+                            'use strict';
                             var r = ro.call(this);
                             if (_IW.has(this)) r.locale = L;
                             return r;
@@ -1006,89 +1040,106 @@
                 });
             } catch (e) {}
         }
+        // [FIX worker-readpixels-was-window-only] hp / n / rfe were locals of _canvasShim.
+        // The WebGL readback ported below (_glPixelShim) needs exactly those three and is
+        // emitted under a DIFFERENT flag — webgl, not canvas — so keeping a copy in each
+        // shim would mean two definitions of one noise formula, and the two paths could
+        // then drift apart without either scope noticing. This project has already paid
+        // for a canvas seed with three sources; it is not paying for a fourth. One copy,
+        // one box, both readers.
+        //
         // SEED used to arrive as a number literal, frozen at the moment the worker was
         // built. It arrives as the shared _SD box now, read at draw time, so the update
         // _seedShim receives can still reach it.
-        function _canvasShim(_SDB, _M) {
-            try {
-                function hp(x, y, s) {
-                    var h = (s ^ ((x + 1) * 0x27D4EB2F) ^ ((y + 1) * 0x85EBCA6B)) >>> 0;
-                    h = Math.imul(h ^ (h >>> 15), 0x2545F491) >>> 0;
-                    return (h ^ (h >>> 13)) >>> 0;
+        function _pixShim(_SDB) {
+            function hp(x, y, s) {
+                var h = (s ^ ((x + 1) * 0x27D4EB2F) ^ ((y + 1) * 0x85EBCA6B)) >>> 0;
+                h = Math.imul(h ^ (h >>> 15), 0x2545F491) >>> 0;
+                return (h ^ (h >>> 13)) >>> 0;
+            }
+            // [FIX size-gate-was-read-size-not-canvas-size] Same bug and same fix as
+            // mw-canvas-audio._noiseImageData: the "trivial canvas" threshold was
+            // compared against the READ size, so getImageData(x,y,1,1) always came
+            // back clean while a block read of the same pixel came back noised. The
+            // threshold is taken from the canvas itself (cw/ch) at the call site.
+            function n(d, w, h, ox, oy) {
+                ox = ox || 0; oy = oy || 0;
+                // Read once per call, not per pixel: the box can only change between
+                // reads, never inside one.
+                var SEED = _SDB.v >>> 0;
+                for (var ly = 0; ly < h; ly++) {
+                    for (var lx = 0; lx < w; lx++) {
+                        var i = (ly * w + lx) * 4;
+                        var hh = hp(ox + lx, oy + ly, SEED);
+                        d[i]     = Math.max(0, Math.min(255, d[i]     + ((hh & 3) - 1)));
+                        d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + ((hh >>> 4 & 3) - 1)));
+                        d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + ((hh >>> 8 & 3) - 1)));
+                    }
                 }
-                // [FIX size-gate-was-read-size-not-canvas-size] Same bug and same fix as
-                // mw-canvas-audio._noiseImageData: the "trivial canvas" threshold was
-                // compared against the READ size, so getImageData(x,y,1,1) always came
-                // back clean while a block read of the same pixel came back noised. The
-                // threshold is taken from the canvas itself (cw/ch) at the call site.
-                function n(d, w, h, ox, oy) {
-                    ox = ox || 0; oy = oy || 0;
-                    // Read once per call, not per pixel: the box can only change between
-                    // reads, never inside one.
-                    var SEED = _SDB.v >>> 0;
-                    for (var ly = 0; ly < h; ly++) {
-                        for (var lx = 0; lx < w; lx++) {
+            }
+            // [FIX worker-missing-flat-restore] The worker had no SECOND step, the one
+            // the main thread does: rolling the noise back in flat regions
+            // (_restoreFlatRegionsExpanded in mw-canvas-audio.js). Window and Worker
+            // therefore diverged on any image with uniform areas — a single-colour
+            // fill measured bd3170c5 against d1701ef4, a gradient ed0620b1 against
+            // 86ea4923, while a SINGLE pixel matched perfectly, i.e. the noise formula
+            // and seed already agreed and only this missing step differed.
+            // Line-for-line port: neighbours are read with the REAL (un-noised)
+            // getImageData, 1px wider than the requested region and clamped to the
+            // canvas edges, so "flat or not" is decided the same way no matter how the
+            // read is sliced.
+            function rfe(d, ox, oy, ex, exX, exY) {
+                var w = d.width, h = d.height, da = d.data, ew = ex.width, eh = ex.height, ed = ex.data;
+                function at(ax, ay) {
+                    var lx = ax - exX, ly = ay - exY;
+                    if (lx < 0 || ly < 0 || lx >= ew || ly >= eh) return null;
+                    var i = (ly * ew + lx) * 4;
+                    return [ed[i], ed[i + 1], ed[i + 2], ed[i + 3]];
+                }
+                // [FIX solid-fill-canvas-was-noised] Port of the main thread's
+                // at-most-two-colours rule (MAX_FLAT_COLORS in mw-canvas-audio.js):
+                // one colour is a flat interior, two is a hard edge between two flat
+                // fills, and neither carries per-machine entropy. Must stay identical
+                // to the window's copy or Window and Worker diverge on any shape with
+                // a hard edge — which is exactly what dev-wvw.html measures.
+                function kk(c) { return ((c[0] << 16) | (c[1] << 8) | c[2]) >>> 0; }
+                function few(cols) {
+                    var n = 0, seen = [];
+                    for (var k = 0; k < cols.length; k++) {
+                        var v = cols[k], known = false;
+                        for (var j = 0; j < n; j++) { if (seen[j] === v) { known = true; break; } }
+                        if (known) continue;
+                        seen[n++] = v;
+                        if (n > 2) return false;
+                    }
+                    return true;
+                }
+                for (var ly = 0; ly < h; ly++) {
+                    for (var lx = 0; lx < w; lx++) {
+                        var ax = ox + lx, ay = oy + ly, c = at(ax, ay);
+                        if (!c) continue;
+                        var cols = [kk(c)], nb;
+                        nb = at(ax - 1, ay); if (nb) cols.push(kk(nb));
+                        nb = at(ax + 1, ay); if (nb) cols.push(kk(nb));
+                        nb = at(ax, ay - 1); if (nb) cols.push(kk(nb));
+                        nb = at(ax, ay + 1); if (nb) cols.push(kk(nb));
+                        if (few(cols)) {
                             var i = (ly * w + lx) * 4;
-                            var hh = hp(ox + lx, oy + ly, SEED);
-                            d[i]     = Math.max(0, Math.min(255, d[i]     + ((hh & 3) - 1)));
-                            d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + ((hh >>> 4 & 3) - 1)));
-                            d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + ((hh >>> 8 & 3) - 1)));
+                            da[i] = c[0]; da[i + 1] = c[1]; da[i + 2] = c[2]; da[i + 3] = c[3];
                         }
                     }
                 }
-                // [FIX worker-missing-flat-restore] The worker had no SECOND step, the one
-                // the main thread does: rolling the noise back in flat regions
-                // (_restoreFlatRegionsExpanded in mw-canvas-audio.js). Window and Worker
-                // therefore diverged on any image with uniform areas — a single-colour
-                // fill measured bd3170c5 against d1701ef4, a gradient ed0620b1 against
-                // 86ea4923, while a SINGLE pixel matched perfectly, i.e. the noise formula
-                // and seed already agreed and only this missing step differed.
-                // Line-for-line port: neighbours are read with the REAL (un-noised)
-                // getImageData, 1px wider than the requested region and clamped to the
-                // canvas edges, so "flat or not" is decided the same way no matter how the
-                // read is sliced.
-                function rfe(d, ox, oy, ex, exX, exY) {
-                    var w = d.width, h = d.height, da = d.data, ew = ex.width, eh = ex.height, ed = ex.data;
-                    function at(ax, ay) {
-                        var lx = ax - exX, ly = ay - exY;
-                        if (lx < 0 || ly < 0 || lx >= ew || ly >= eh) return null;
-                        var i = (ly * ew + lx) * 4;
-                        return [ed[i], ed[i + 1], ed[i + 2], ed[i + 3]];
-                    }
-                    // [FIX solid-fill-canvas-was-noised] Port of the main thread's
-                    // at-most-two-colours rule (MAX_FLAT_COLORS in mw-canvas-audio.js):
-                    // one colour is a flat interior, two is a hard edge between two flat
-                    // fills, and neither carries per-machine entropy. Must stay identical
-                    // to the window's copy or Window and Worker diverge on any shape with
-                    // a hard edge — which is exactly what dev-wvw.html measures.
-                    function kk(c) { return ((c[0] << 16) | (c[1] << 8) | c[2]) >>> 0; }
-                    function few(cols) {
-                        var n = 0, seen = [];
-                        for (var k = 0; k < cols.length; k++) {
-                            var v = cols[k], known = false;
-                            for (var j = 0; j < n; j++) { if (seen[j] === v) { known = true; break; } }
-                            if (known) continue;
-                            seen[n++] = v;
-                            if (n > 2) return false;
-                        }
-                        return true;
-                    }
-                    for (var ly = 0; ly < h; ly++) {
-                        for (var lx = 0; lx < w; lx++) {
-                            var ax = ox + lx, ay = oy + ly, c = at(ax, ay);
-                            if (!c) continue;
-                            var cols = [kk(c)], nb;
-                            nb = at(ax - 1, ay); if (nb) cols.push(kk(nb));
-                            nb = at(ax + 1, ay); if (nb) cols.push(kk(nb));
-                            nb = at(ax, ay - 1); if (nb) cols.push(kk(nb));
-                            nb = at(ax, ay + 1); if (nb) cols.push(kk(nb));
-                            if (few(cols)) {
-                                var i = (ly * w + lx) * 4;
-                                da[i] = c[0]; da[i + 1] = c[1]; da[i + 2] = c[2]; da[i + 3] = c[3];
-                            }
-                        }
-                    }
-                }
+            }
+            // hp is deliberately not exported: its only caller is n, and a second entry
+            // point to the hash is a second way for the two paths to disagree.
+            return { n: n, rfe: rfe };
+        }
+        function _canvasShim(_M, _PX) {
+            try {
+                // The noise and the flat-region rollback come from _pixShim above — one
+                // copy shared with the WebGL readback — under the names the rest of this
+                // shim already used.
+                var n = _PX.n, rfe = _PX.rfe;
                 // [FIX worker-canvas-backend-mismatch] — withdrawn. willReadFrequently:true
                 // used to be forced here to follow the main thread, which forced it always,
                 // so the window always rasterised on CPU while the worker did not by
@@ -1155,8 +1206,36 @@
                 if (typeof OffscreenCanvas !== 'undefined' && OffscreenCanvas.prototype &&
                     OffscreenCanvas.prototype.convertToBlob && typeof g === 'function') {
                     var _octb = OffscreenCanvas.prototype.convertToBlob;
+                    // [FIX convertToBlob-answered-for-a-canvas-the-platform-refuses] — the
+                    // worker half; the reasoning is written out at the window copy in
+                    // mw/mw-canvas-audio.js. Short version: the noising works on a COPY, and a
+                    // copy always has a context, so a source the platform refuses to convert
+                    // got converted anyway —
+                    //   clean  rejects InvalidStateError: "OffscreenCanvas" has no rendering context.
+                    //   ours   resolves a Blob
+                    // and no cheap probe for "has a context" exists (drawImage of a
+                    // context-less OffscreenCanvas does not throw; getContext creates one;
+                    // transferToImageBitmap destroys the bitmap).
+                    //
+                    // The window can answer for free because it already wraps getContext for
+                    // other reasons. This scope did not, so the wrapper below exists only to
+                    // record — it forwards everything, including the argument count, and is
+                    // masked like every other. The alternative was gating on the native for
+                    // EVERY call, which doubles the encode on the legitimate path; a worker
+                    // exporting images is exactly where that would be felt.
+                    var _ocWithContext = new WeakSet();
+                    var _oGetCtx = OffscreenCanvas.prototype.getContext;
+                    if (typeof _oGetCtx === 'function') {
+                        OffscreenCanvas.prototype.getContext = _M(function getContext(contextId, options = undefined) {
+                            var c = _oGetCtx.apply(this, arguments);
+                            try { if (c) _ocWithContext.add(this); } catch (eW) {}
+                            return c;
+                        });
+                    }
                     OffscreenCanvas.prototype.convertToBlob = _M(function convertToBlob(opts = undefined) {
                         var target = this;
+                        var _gate = null;
+                        try { if (!_ocWithContext.has(this)) _gate = _octb.apply(this, arguments); } catch (eG) {}
                         try {
                             var w = this.width, h = this.height;
                             if (w > 0 && h > 0 && !(w <= 32 && h <= 32)) {
@@ -1209,9 +1288,126 @@
                                 }
                             }
                         } catch (e) {}
+                        // Gate first, its rejection verbatim; its blob discarded for ours.
+                        if (_gate && typeof _gate.then === 'function') {
+                            var _t = target, _o = opts;
+                            return _gate.then(function () { return _octb.call(_t, _o); });
+                        }
                         return _octb.call(target, opts);
                     });
                 }
+            } catch (e) {}
+        }
+
+        // [FIX worker-readpixels-was-window-only] gl.readPixels was noised in the window
+        // and NOTHING did it here, so a page read two different rasterisation fingerprints
+        // one `new Worker()` apart. Measured by tools/probe-values.mjs on an ordinary http
+        // origin, 64x64 shaded quad, clean Chromium against this build:
+        //
+        //     clean   window 508124549  |  dedicated 508124549  |  shared 508124549
+        //     ours    window 4177413246 |  dedicated 508124549  |  shared 508124549
+        //
+        // A clean browser gives ONE value in all three scopes; we changed one of them.
+        // Same class as [FIX connection-was-half-patched-in-workers], and the same answer:
+        // port the window, rule for rule, rather than write a second implementation.
+        //
+        // The rules below are mw-canvas-audio's _noiseReadback, not a summary of it — the
+        // reasons are all written up there, next to the two-machine measurement that says
+        // GPU rasterisation is one of the 2 carriers out of 175 fields:
+        //   - RGBA + UNSIGNED_BYTE only, and no dstOffset: float and integer readbacks are
+        //     GPU compute results, not pictures;
+        //   - the "trivial surface" gate is on the DRAWING BUFFER, never on this read — a
+        //     per-read gate answers differently for a 1x1 than for the same pixel inside a
+        //     block, which is precisely what CheckIntegrity compares;
+        //   - the hash takes ABSOLUTE framebuffer coordinates (x+lx, y+ly), never the
+        //     call's offset or size — the invariant that makes those two reads agree;
+        //   - flat regions are rolled back, and the pre-noise snapshot is taken BEFORE the
+        //     noise so the rollback survives a failure — this file learned that one the
+        //     hard way, see [FIX worker-lost-flat-restore-when-the-expanded-read-failed].
+        // The rollback is _pixShim's rfe against a same-rect snapshot, which is what the
+        // window's _restoreFlatRegions(d, orig) is: at() returns null outside the snapshot
+        // exactly where the window skips a neighbour at the buffer edge. There is no
+        // expanded neighbour read here for the same reason the window has none — the only
+        // way to widen a readback is a second GL call, and that would move the driver's
+        // error flag the page is entitled to read.
+        function _glPixelShim(_PX, _M) {
+            try {
+                var RGBA = 0x1908, UNSIGNED_BYTE = 0x1401;
+                function noise(gl, x, y, w, h, format, type, pixels, dstOffset, readRaw) {
+                    if (format !== RGBA || type !== UNSIGNED_BYTE) return;
+                    if (dstOffset) return;
+                    if (!(pixels instanceof Uint8Array || pixels instanceof Uint8ClampedArray)) return;
+                    x = x | 0; y = y | 0; w = w | 0; h = h | 0;
+                    if (w <= 0 || h <= 0 || pixels.length < w * h * 4) return;
+                    try {
+                        if ((gl.drawingBufferWidth | 0) <= 32 && (gl.drawingBufferHeight | 0) <= 32) return;
+                    } catch (eD) { return; }
+                    var orig = pixels.slice(0, w * h * 4);
+                    _PX.n(pixels, w, h, x, y);
+                    // [FIX the-readback-noise-was-strippable-one-pixel-at-a-time] The
+                    // expanded neighbour read, ported from mw/mw-canvas-audio.js together
+                    // with the defect it fixes. Judging flatness on the RECTANGLE THAT WAS
+                    // READ makes every 1x1 readback trivially flat, so its noise was rolled
+                    // straight back off and the raw GPU output came back one pixel at a
+                    // time — in all three scopes, since this file mirrored the window's rule
+                    // faithfully. The header note above this shim said there is no expanded
+                    // read here "for the same reason the window has none"; the window has
+                    // one now, and the reason it gave — a second GL call moving the driver's
+                    // error flag — turned out to be real and is handled the same way, by
+                    // pinning PACK_ALIGNMENT for the duration of our read (measured: with
+                    // alignment 8 and an odd width a tightly packed buffer raises
+                    // INVALID_OPERATION where clean raises nothing).
+                    var d = { width: w, height: h, data: pixels };
+                    var done = false, PACK_ALIGNMENT = 0x0D05, packSaved = null;
+                    try {
+                        var dbW = gl.drawingBufferWidth | 0, dbH = gl.drawingBufferHeight | 0;
+                        var exX = x > 0 ? x - 1 : 0, exY = y > 0 ? y - 1 : 0;
+                        var exX2 = (x + w + 1) < dbW ? (x + w + 1) : dbW;
+                        var exY2 = (y + h + 1) < dbH ? (y + h + 1) : dbH;
+                        var exW = exX2 - exX, exH = exY2 - exY;
+                        if (readRaw && exW > 0 && exH > 0) {
+                            try {
+                                var pa = gl.getParameter(PACK_ALIGNMENT);
+                                if (pa === 1 || pa === 2 || pa === 8) {
+                                    gl.pixelStorei(PACK_ALIGNMENT, 4);
+                                    packSaved = pa;
+                                }
+                            } catch (ePa) {}
+                            var exBuf = new Uint8Array(exW * exH * 4);
+                            readRaw(exX, exY, exW, exH, format, type, exBuf);
+                            _PX.rfe(d, x, y, { width: exW, height: exH, data: exBuf }, exX, exY);
+                            done = true;
+                        }
+                    } catch (eEx) {}
+                    if (packSaved !== null) { try { gl.pixelStorei(PACK_ALIGNMENT, packSaved); } catch (eR) {} }
+                    if (!done) _PX.rfe(d, x, y, { width: w, height: h, data: orig }, x, y);
+                }
+                function patch(proto) {
+                    if (!proto || typeof proto.readPixels !== 'function') return;
+                    var origRP = proto.readPixels;
+                    // Seven declared parameters because that is what the native method
+                    // reports for .length; WebGL2's dstOffset overload does not widen it,
+                    // so that argument is read off `arguments`. The native call goes FIRST,
+                    // so a foreign receiver fails exactly as it would unpatched and there is
+                    // nothing to noise when it does.
+                    proto.readPixels = _M(function readPixels(x, y, width, height, format, type, pixels) {
+                        var r = origRP.apply(this, arguments);
+                        var self = this;
+                        // Through the NATIVE method, bound to this context: routing the
+                        // neighbourhood read through the wrapper would noise the very pixels
+                        // the flatness test has to judge raw, and would recurse.
+                        var readRaw = function (rx, ry, rw, rh, rf, rt, buf) {
+                            return origRP.call(self, rx, ry, rw, rh, rf, rt, buf);
+                        };
+                        try { noise(this, x, y, width, height, format, type, pixels, arguments[7], readRaw); } catch (e) {}
+                        return r;
+                    });
+                }
+                // Both prototypes, the way _webglShim patches getParameter on both: a
+                // worker reaches WebGL through OffscreenCanvas.getContext and may ask for
+                // either version.
+                if (typeof WebGLRenderingContext !== 'undefined') patch(WebGLRenderingContext.prototype);
+                if (typeof WebGL2RenderingContext !== 'undefined') patch(WebGL2RenderingContext.prototype);
             } catch (e) {}
         }
 
@@ -1335,11 +1531,22 @@
                 if (typeof OffscreenCanvasRenderingContext2D !== 'undefined' && OffscreenCanvasRenderingContext2D.prototype) {
                     var OP = OffscreenCanvasRenderingContext2D.prototype;
                     _oMT = OP.measureText;
-                    if (_oMT) OP.measureText = _M(function measureText(text) { return _mt(this, text); });
+                    if (_oMT) OP.measureText = _M(function measureText(text) {
+                        // [FIX the-wrappers-forwarded-arguments-the-page-never-passed] mirror of
+                        // the window guard in mw/mw-canvas-audio.js; the note lives there.
+                        if (arguments.length < 1) return _oMT.apply(this, arguments);
+                        return _mt(this, text);
+                    });
                     var _oF = OP.fillText;
-                    if (_oF) OP.fillText = _M(function fillText(text, x, y, maxWidth = undefined) { return _draw(_oF, this, text, x, y, maxWidth); });
+                    if (_oF) OP.fillText = _M(function fillText(text, x, y, maxWidth = undefined) {
+                        if (arguments.length < 3) return _oF.apply(this, arguments);
+                        return _draw(_oF, this, text, x, y, maxWidth);
+                    });
                     var _oS = OP.strokeText;
-                    if (_oS) OP.strokeText = _M(function strokeText(text, x, y, maxWidth = undefined) { return _draw(_oS, this, text, x, y, maxWidth); });
+                    if (_oS) OP.strokeText = _M(function strokeText(text, x, y, maxWidth = undefined) {
+                        if (arguments.length < 3) return _oS.apply(this, arguments);
+                        return _draw(_oS, this, text, x, y, maxWidth);
+                    });
                 }
             } catch (e) {}
         }
@@ -1413,33 +1620,86 @@
                 // returned; the prototype stays untouched (except getHighEntropyValues,
                 // which the window also patches on the prototype).
                 if (NP) {
+                    // [FIX worker-uad-own-props-outlived-the-window-fix] These three were
+                    // defined on the INSTANCE here, and the comment above says that was the
+                    // window's approach. It WAS, and the window has since moved:
+                    // [FIX uad-own-property-lie] in mw-navigator.js put them back on the
+                    // prototype, because a real NavigatorUAData has NO own properties at all
+                    // and `Object.getOwnPropertyNames(navigator.userAgentData)` answered
+                    // `brands,mobile,platform` for us and `` for every browser. The window
+                    // half was fixed; the worker half was not, so the same one-line tell
+                    // stayed readable inside every worker for anyone who looked there
+                    // instead of at the window.
+                    //
+                    // Found by tools/probe-scopes.mjs, which diffs the NAME surface of
+                    // window against worker in a clean browser and in ours, and reports only
+                    // the splits the extension itself introduces. These three were the whole
+                    // report: three own properties, worker-only, added by us.
+                    //
+                    // Same shape as the window's _defUadProto: patch the prototype, keep the
+                    // native descriptor's set/enumerable/configurable so nothing else about
+                    // the shape moves, and key the brands snapshot off `this` so a second
+                    // NavigatorUAData still gets its own.
+                    //
+                    // [FIX worker-uad-prototype-answered-any-receiver] These three had no
+                    // receiver check at all, so the accessor answered for anything it was
+                    // called with. Measured against a clean browser:
+                    //   NavigatorUAData.platform.call(uad)                  -> "Windows"
+                    //   NavigatorUAData.platform.call(otherRealmUad)        -> "Windows"
+                    //   NavigatorUAData.platform.call(NavigatorUAData.prototype) -> THREW TypeError
+                    //   NavigatorUAData.platform.call(navigator)            -> THREW TypeError
+                    // Ours answered the profile for all four — the last two are the
+                    // divergence — and `brands` was worse than the other two: its native
+                    // call sat inside `catch (eB) { nb = []; }`, so the platform's own
+                    // refusal came back as an empty list where clean throws.
+                    //
+                    // No brand list can express that split. A cross-realm NavigatorUAData
+                    // is ANSWERED for while `instanceof` and `isPrototypeOf` are both false
+                    // for it, and `Object.create(NavigatorUAData.prototype)` is the mirror:
+                    // the brand check says yes, the internal slot is not there. So the
+                    // CAPTURED NATIVE GETTER is the oracle: call it first and let the
+                    // platform decide. It throws exactly what it throws, for exactly the
+                    // receivers it refuses. Falling through means a valid but possibly
+                    // foreign instance, and there we still answer the profile — every realm
+                    // this extension patches carries the SAME profile, so returning the
+                    // native there would leak the host instead.
+                    //
+                    // No identity fast path here, unlike the connection block below: the
+                    // instance is rebuilt on every access (see the note above), so there is
+                    // no stable OWN to compare against and every read pays one native call.
+                    // These are not hot reads — test/costceiling.mjs times measureText,
+                    // getBoundingClientRect and hardwareConcurrency, none of them this.
+                    // The oracle's return value is handed to the getter rather than fetched
+                    // a second time, which is why the separate _npBrandsGet capture is gone.
                     try {
-                        var _wnp = Object.getPrototypeOf(navigator);
-                        var _ud = null, _q = _wnp;
-                        while (_q && !_ud) {
-                            _ud = Object.getOwnPropertyDescriptor(_q, 'userAgentData');
-                            if (!_ud) _q = Object.getPrototypeOf(_q);
-                        }
-                        if (_ud && _ud.get) {
-                            var _ug = _ud.get;
-                            Object.defineProperty(_q, 'userAgentData', {
-                                get: _M(function userAgentData() {
-                                    var u = _ug.call(this);
-                                    if (!u) return u;
-                                    try { Object.defineProperty(u, 'platform', { get: _M(function platform() { return 'Windows'; }, true), configurable: true }); } catch (e) {}
-                                    try { Object.defineProperty(u, 'mobile', { get: _M(function mobile() { return false; }, true), configurable: true }); } catch (e) {}
-                                    try {
-                                        var nb = _bsrc.get(u);
-                                        if (nb === undefined) {
-                                            nb = _pb(Object.getOwnPropertyDescriptor(NP, 'brands').get.call(u));
-                                            _bsrc.set(u, nb);
-                                        }
-                                        Object.defineProperty(u, 'brands', { get: _M(function brands() { return _ecb(nb, MAJ); }, true), configurable: true, enumerable: true });
-                                    } catch (e) {}
-                                    return u;
-                                }, true), configurable: true, enumerable: _ud.enumerable
+                        var _defNP = function (name, getter) {
+                            var d = Object.getOwnPropertyDescriptor(NP, name);
+                            if (!d || typeof d.get !== 'function') return;
+                            var nat = d.get;
+                            // Computed name so _M still masks this as
+                            // `function get platform() { [native code] }` — same trap as
+                            // [FIX wrong-getter-name]; the wrapper takes no declared
+                            // parameters so `length` stays 0 like a native accessor.
+                            var g = ({ [name]: function () {
+                                var nv = nat.call(this);
+                                return getter.call(this, nv);
+                            } })[name];
+                            Object.defineProperty(NP, name, {
+                                get: _M(g, true), set: d.set,
+                                enumerable: d.enumerable, configurable: d.configurable
                             });
-                        }
+                        };
+                        _defNP('platform', function platform() { return 'Windows'; });
+                        _defNP('mobile', function mobile() { return false; });
+                        _defNP('brands', function brands(nv) {
+                            var nb = _bsrc.get(this);
+                            if (nb === undefined) {
+                                nb = _pb(nv);
+                                // memo only — a failure here must not surface as our throw
+                                try { _bsrc.set(this, nb); } catch (eS) {}
+                            }
+                            return _ecb(nb, MAJ);
+                        });
                     } catch (e) {}
                     // [FIX worker-uad-diverged-from-main] What used to be here was a
                     // SIMPLIFIED UA-CH edit that did not match _forceUAD in
@@ -1556,11 +1816,47 @@
                         // toString out of `f.name`, so an anonymous getter would report
                         // `function get () { [native code] }` — a name that cannot occur
                         // natively and reads as a substitution on its own. Same trap as
-                        // [FIX wrong-getter-name] in mw-navigator.js.
+                        // [FIX wrong-getter-name] in mw-navigator.js. The receiver wrapper
+                        // below is given the same name via a computed key so that stays true.
+                        //
+                        // [FIX worker-connection-answered-any-receiver] All four answered
+                        // for any receiver, because the getter never looked at `this` and
+                        // this block never read the native descriptor. Measured against a
+                        // clean browser:
+                        //   NetworkInformation.effectiveType.call(conn)           -> "4g"
+                        //   NetworkInformation.effectiveType.call(otherRealmConn) -> "4g"
+                        //   NetworkInformation.effectiveType.call(NIP)            -> THREW TypeError
+                        // So `NetworkInformation.prototype.effectiveType` read "4g" out of
+                        // us and threw everywhere else — and no brand check can be written
+                        // for it either, since the cross-realm instance ANSWERS while
+                        // instanceof/isPrototypeOf are false for it.
+                        //
+                        // The captured native getter is the oracle: identity first (this is
+                        // the singleton the page reads, and it must not pay a native call —
+                        // the whole point of a fast path), then let the platform refuse what
+                        // it refuses. Falling through means a valid instance from another
+                        // realm, and there the profile is the right answer: every realm this
+                        // extension patches carries the same one, so its own accessor would
+                        // return these very literals and the native would return the host's.
+                        //
+                        // While reading the descriptor, its flags are reused instead of the
+                        // hardcoded `configurable:true, enumerable:true` that used to be
+                        // here — same reason as _defNP above: nothing about the shape moves.
                         var _cdef = function (name, getter) {
                             try {
+                                var d = Object.getOwnPropertyDescriptor(cproto, name);
+                                // No native accessor -> no oracle, and adding an attribute
+                                // the browser does not have would be a tell of its own. The
+                                // old code defined it anyway; leave it alone instead.
+                                if (!d || typeof d.get !== 'function') return;
+                                var nat = d.get;
+                                var g = ({ [name]: function () {
+                                    if (this !== c) nat.call(this);
+                                    return getter.call(this);
+                                } })[name];
                                 Object.defineProperty(cproto, name, {
-                                    get: _M(getter, true), configurable: true, enumerable: true
+                                    get: _M(g, true), set: d.set,
+                                    enumerable: d.enumerable, configurable: d.configurable
                                 });
                             } catch (eD) {}
                         };
@@ -1800,6 +2096,50 @@
                     (Math.floor(a % 60) < 10 ? '0' : '') + Math.floor(a % 60);
             }
 
+            // [FIX the-date-wrappers-named-an-internal-variable-in-their-error] — the WORKER
+            // half. mw/mw-timezone-screen.js carries the same block with the same reason; both
+            // are needed and neither alone is safe. Measured, this scope, before this:
+            //
+            //   Date.prototype.getDate.call({})
+            //     clean  TypeError: this is not a Date object.
+            //     ours   TypeError: d.getTime is not a function
+            //
+            // — an internal parameter name, readable by any page through a worker, which is
+            // the class [FIX extension-id-leaked-in-error-stacks] exists for. And fixing only
+            // the window SPLIT THE SCOPES: with the window guarded and this copy not,
+            // creepjs workers.html went Window=6600ecfd against Dedicated=Shared=627a97d2,
+            // caught by test/creepjs.mjs. A refusal is part of the surface, so it has to be
+            // mirrored like every other value here.
+            var _DATE_PATCHED = ['getTimezoneOffset', 'toString', 'toTimeString', 'toDateString',
+                'getFullYear', 'getMonth', 'getDate', 'getDay', 'getHours', 'getMinutes',
+                'getSeconds', 'setFullYear', 'setMonth', 'setDate', 'setHours', 'setMinutes',
+                'setSeconds', 'setMilliseconds', 'getYear', 'setYear'];
+            var _dateNatives = {};
+            for (var _dn = 0; _dn < _DATE_PATCHED.length; _dn++) {
+                try { _dateNatives[_DATE_PATCHED[_dn]] = Date.prototype[_DATE_PATCHED[_dn]]; } catch (eDn) {}
+            }
+            function _dateGuard(name) {
+                var nat = _dateNatives[name], wrapped = Date.prototype[name];
+                if (typeof nat !== 'function' || typeof wrapped !== 'function') return;
+                var g = ({ [name]: function () {
+                    // 'use strict' is load-bearing, not habit. This payload is not strict, so a
+                    // sloppy function coerces a null/undefined receiver to the global BEFORE we
+                    // can hand it to the native — and the native then names what it was given:
+                    //   Date.prototype.getYear.call(null)
+                    //     clean  ...called on incompatible receiver null
+                    //     sloppy ...called on incompatible receiver #<DedicatedWorkerGlobalScope>
+                    // which is both a different message and a statement about our scope.
+                    // mw/mw-timezone-screen.js gets this for free: that module is strict.
+                    'use strict';
+                    try { return wrapped.apply(this, arguments); }
+                    catch (e) { nat.apply(this, arguments); throw e; }
+                } })[name];
+                // The arity has to survive: a rest-less wrapper reports 0 and dev-vsnative.html
+                // caught exactly that on setHours when the window half landed without this.
+                try { Object.defineProperty(g, 'length', { value: nat.length, configurable: true }); } catch (eL) {}
+                Date.prototype[name] = _M(g);
+            }
+
             Date.prototype.getTimezoneOffset = _M(function getTimezoneOffset() {
                 if (new.target) throw new TypeError('Date.prototype.getTimezoneOffset is not a constructor');
                 return Math.trunc(offOf(this));
@@ -1910,6 +2250,9 @@
                 return _setLocal(this, 0, [y], 1, true);
             });
 
+            // Applied after the last wrapper, in one place, exactly as the window does it.
+            for (var _dg = 0; _dg < _DATE_PATCHED.length; _dg++) _dateGuard(_DATE_PATCHED[_dg]);
+
             // Only timeZone here; locale stays with _intlShim (navigator flag).
             // [FIX explicit-timezone-was-overridden] Forced only for instances whose zone
             // the constructor below supplied — the window's note in mw-timezone-screen.js
@@ -1919,6 +2262,8 @@
             if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
                 var _ro = Intl.DateTimeFormat.prototype.resolvedOptions;
                 Intl.DateTimeFormat.prototype.resolvedOptions = _M(function resolvedOptions() {
+                    // 'use strict' — see the sibling wrapper above and _dateGuard.
+                    'use strict';
                     var r = _ro.call(this);
                     if (_tzOurs.has(this)) r.timeZone = TZ;
                     return r;
@@ -1941,13 +2286,21 @@
                 var _oS = _OrigProto.toLocaleString;
                 var _oD = _OrigProto.toLocaleDateString;
                 var _oT = _OrigProto.toLocaleTimeString;
+                // 'use strict' in all three for the reason spelled out at _dateGuard above:
+                // this payload is sloppy, so without it a null/undefined receiver is coerced to
+                // the global before `.call` reaches the native, and the platform's refusal comes
+                // back naming #<DedicatedWorkerGlobalScope> instead of null — a different
+                // message AND a statement about the scope the caller is in.
                 Date.prototype.toLocaleString = _M(function toLocaleString() {
+                    'use strict';
                     return _oS.call(this, arguments[0], _forceTz(arguments[1]));
                 });
                 Date.prototype.toLocaleDateString = _M(function toLocaleDateString() {
+                    'use strict';
                     return _oD.call(this, arguments[0], _forceTz(arguments[1]));
                 });
                 Date.prototype.toLocaleTimeString = _M(function toLocaleTimeString() {
+                    'use strict';
                     return _oT.call(this, arguments[0], _forceTz(arguments[1]));
                 });
             })();
@@ -2272,6 +2625,24 @@
                 }
                 return _F[k] !== false;
             };
+            // [FIX worker-readpixels-was-window-only] The two readers of _pixShim, decided
+            // here because the box is only worth emitting when something will read it.
+            //
+            // The GL readback is NOT gated on `canvas` and NOT gated on `_hw`, and both are
+            // deliberate: mw-canvas-audio installs it under `webgl` and suppresses it only
+            // through _noiseOff(), so gating it on the canvas switch would leave the window
+            // noising a readback the worker handed over clean the moment a user turned
+            // canvas off, and gating it on host mode would do the same on every host-mode
+            // origin. Noise is not a hardware CLAIM — host mode drops what we assert about
+            // the machine, not the per-domain decorrelation. (_FEAT.webgl, which the window
+            // installs on, is not host-mode aware either; only _featNow is.)
+            //
+            // Measured, 64x64 shaded quad, second load of one origin, window | dedicated:
+            //   extension off   508124549 | 508124549
+            //   normal          759463147 | 759463147
+            //   stealth         508124549 | 508124549   ← left alone, as the window leaves it
+            var _canvasOn = _on('canvas');
+            var _glPixOn = _on('webgl') && !_stealthNow();
             return [
                 // Весь внедряемый код обёрнут в IIFE. Раньше он шёл top-level, из-за
                 // чего _M и прочие помощники становились ГЛОБАЛЬНЫМИ в воркере и были
@@ -2305,6 +2676,10 @@
                 // page can enumerate. See _seedShim.
                 'var _SD={v:' + seed + '};',
                 '(' + _seedShim.toString() + ')(_SD,' + JSON.stringify(_SEED_MSG_KEY) + ');',
+                // [FIX worker-readpixels-was-window-only] The pixel noise and the
+                // flat-region rollback, emitted once for both readers below — see _pixShim.
+                // Ahead of them in the array because they take it as an argument.
+                (_canvasOn || _glPixOn) ? ('var _PX=(' + _pixShim.toString() + ')(_SD);') : '',
                 // EARLY UAD lock — ТОЛЬКО прототип.
                 // [FIX worker-uad-instance-patch-was-dead] Здесь дополнительно
                 // патчился ИНСТАНС (var uad=navigator.userAgentData; uad.getHigh…=…),
@@ -2432,7 +2807,12 @@
                 // (not sequential LCG) → Window vs Worker canvas hash align on JS path.
                 // Body is a real function in this file — see _canvasShim above.
                 // `_M` is emitted verbatim and resolves inside the generated worker IIFE.
-                (_on('canvas')) ? ('(' + _canvasShim.toString() + ')(_SD,_M);') : '',
+                _canvasOn ? ('(' + _canvasShim.toString() + ')(_M,_PX);') : '',
+                // [FIX worker-readpixels-was-window-only] The WebGL half of the same
+                // pixels — the one path the canvas shim above never covered. Body is a
+                // real function in this file: see _glPixelShim, where the measurement and
+                // the ported rules are.
+                _glPixOn ? ('(' + _glPixelShim.toString() + ')(_PX,_M);') : '',
                 // [FIX nested-workers-were-never-reached] Last, so a failure here cannot
                 // cost the patches above. The URL is omitted when this very text is what
                 // goes INTO the shared blob (skipPatchUrl) — otherwise _patchBlobUrl would

@@ -285,8 +285,65 @@ geoCheck.addEventListener('change', function () {
 saveBtn.addEventListener('click', save);
 resetBtn.addEventListener('click', resetSafe);
 
+// ── What the extension learned by itself ─────────────────────────────────────
+// [FIX the-learned-lists-were-the-invisible-ones] The three lists above are filled by the
+// user pressing a switch; these six fill themselves while browsing. They had no screen, no
+// count and no way to clear, and a profile change leaves them in place — the same shape
+// [FIX the-off-state-was-invisible] named for the WebRTC list, on the lists that actually
+// grow on their own.
+var learnedList = document.getElementById('learnedList');
+var learnedClearBtn = document.getElementById('learnedClearBtn');
+
+// The key names are the extension's, not the reader's: a screen that says afp_csp_ns tells
+// nobody anything, and a screen that says nothing at all is what this fixes.
+var LEARNED_LABEL = {
+  afp_csp_noblob: 'не пускают blob-воркеры',
+  afp_csp_tt: 'ограничивают имена политик Trusted Types',
+  afp_csp_tte: 'требуют TrustedScriptURL у sink',
+  afp_csp_nc: 'не пускают blob: в fetch/XHR',
+  afp_csp_ns: 'не пускают importScripts blob:',
+  afp_csp_mixed: 'ограничивают на одних маршрутах и не на других'
+};
+
+function renderLearned(lists) {
+  lists = lists || {};
+  var total = 0, rows = [];
+  Object.keys(LEARNED_LABEL).forEach(function (k) {
+    var n = (lists[k] || []).length;
+    total += n;
+    if (n) rows.push(n + ' — ' + LEARNED_LABEL[k]);
+  });
+  learnedClearBtn.disabled = !total;
+  // The COUNT, not the hosts. A page of site names would be the browsing history this entry
+  // is about, printed larger; the number is what tells the reader there is something here.
+  learnedList.textContent = total
+    ? (total + ' записей: ' + rows.join('; '))
+    : 'Пусто — ничего ещё не выучено.';
+}
+
+function loadLearned() {
+  chrome.runtime.sendMessage({ type: 'getCspLearnedLists' }, function (res) {
+    if (chrome.runtime.lastError) { learnedList.textContent = 'не удалось прочитать состояние'; return; }
+    renderLearned(res && res.lists);
+  });
+}
+
+learnedClearBtn.addEventListener('click', function () {
+  learnedClearBtn.disabled = true;
+  chrome.runtime.sendMessage({ type: 'clearCspLearnedLists' }, function (res) {
+    if (chrome.runtime.lastError || !res || res.ok === false) {
+      showStatus((res && res.reason) || 'Не удалось очистить', true);
+      learnedClearBtn.disabled = false;
+      return;
+    }
+    renderLearned({});
+    showStatus('Забыто. Каждый сайт будет выучен заново — ценой одной загрузки страницы.');
+  });
+});
+
 load();
 loadRtcExceptions();
 loadSwBlocked();
 loadCspRewrite();
 loadGeoCheck();
+loadLearned();

@@ -62,7 +62,18 @@ const SKIP_FILES = new Set([
   '.gitattributes', '.gitignore', 'protect_c.source', 'profile-injector.js',
   'notes-baseline-ours.json', 'dev-workerjob.js',
 ]);
-const SKIP_PATTERNS = [/^dev-.*\.html$/, /\.md$/, /\.rar$/, /\.bak$/];
+// [FIX a-stray-log-in-the-root-shipped-in-the-release] The list above is a DENY list, so
+// anything in the root that nobody thought to name goes into dist/. Caught by leaving a
+// `npm run test:all > edge-run.log` in the root while working: the packer copied it, and
+// `--check` then reported dist/ as behind the source because the log kept growing. A build
+// log is the harmless version — a heap dump, a har capture or a scratch note with a session
+// cookie in it would have shipped the same way. These are the shapes a working tree grows.
+// NOT `/^_/` here, though a scratch file is as likely to be named `_note.js` as `note.log`:
+// the reserved-name check below walks the COLLECTED list, so skipping underscored files
+// would silence the guard that stops Chrome refusing the whole extension. A name Chrome
+// reserves has to FAIL, not disappear.
+const SKIP_PATTERNS = [/^dev-.*\.html$/, /\.md$/, /\.rar$/, /\.bak$/,
+  /\.log$/, /\.tmp$/, /\.zip$/, /\.har$/, /\.heapsnapshot$/];
 
 // README.txt and the three afp-*-console.js DO ship. They are not code the extension runs,
 // but README.txt is written as the release note for this package and it is the document

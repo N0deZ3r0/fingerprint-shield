@@ -93,13 +93,32 @@
         function _hasAttr(el, name) {
             try { return _protoHasAttr.call(el, name) === true; } catch (e) { return false; }
         }
+        // [FIX isbait-scanned-the-list-twice-per-element] isBait sits in FRONT of
+        // getComputedStyle, getBoundingClientRect, getClientRects, checkVisibility and the
+        // offset getters, so it runs on every element a page measures — and it ran the
+        // fourteen bait names as fourteen `indexOf` calls against the id and fourteen more
+        // against the class, twenty-eight scans per element, for a page that will never
+        // contain an ad slot. One alternation compiled once does the same job in one pass.
+        //
+        // Measured (tools/probe-cost.mjs cannot resolve this — one page, clean against ours,
+        // median of 7 rounds of 20000): getBoundingClientRect on an ordinary element cost
+        // 2435 ns with everything on and 1810 ns with hideAdBlocker off, so ~600 ns of every
+        // rect a page takes was this scan. The rest of the gap is the wrapper itself and is
+        // left alone — see README "Limits" on what a patched read costs.
+        //
+        // The names are still spelled out in BAIT above: it is the list a person edits, and
+        // the pattern is derived from it so the two cannot drift.
+        var BAIT_RE = new RegExp(BAIT.map(function (b) {
+            return b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }).join('|'));
         function isBait(el) {
             try {
                 if (!el) return false;
                 var id = _attr(el, 'id').toLowerCase();
                 var cls = _attr(el, 'class').toLowerCase();
-                for (var i = 0; i < BAIT.length; i++) {
-                    if (id.indexOf(BAIT[i]) !== -1 || cls.indexOf(BAIT[i]) !== -1) return true;
+                // The common case by a wide margin: nothing to match against.
+                if (id || cls) {
+                    if (BAIT_RE.test(id) || BAIT_RE.test(cls)) return true;
                 }
                 // Presence, not value: an empty data-ad still marks a slot, which is what
                 // the getAttribute(...) !== null test here meant.
@@ -180,7 +199,12 @@
         // and OUTSIDE the guard: a page that passes rubbish must get the browser's own
         // TypeError, unchanged. Everything after it is ours, and if ours throws the page
         // gets the value it would have had without this extension — see the fixture.
-        window.getComputedStyle = _mnRef(function getComputedStyle(el, pseudo) {
+        // [FIX getComputedStyle-reported-two-parameters] `pseudo` is optional in the IDL, so
+        // the native reports .length 1 and this wrapper reported 2 — one line for a page to
+        // read, and it was not in dev-vsnative.html's hand-written case list. A defaulted
+        // parameter is the fix the rest of this codebase already uses ([FIX anon-fn-name-length]).
+        // Found by enumerating every function on the touched surfaces rather than listing them.
+        window.getComputedStyle = _mnRef(function getComputedStyle(el, pseudo = undefined) {
             var style = _gcs.call(this, el, pseudo);
             try {
             if (!isBait(el) || _standDown()) return style;

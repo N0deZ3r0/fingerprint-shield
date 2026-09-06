@@ -112,6 +112,12 @@
       Chrome charges the console line to the innermost script frame &mdash; our wrapper.
       Same values and the same getError() as a clean browser; silencing it would cost the
       error flag, which a script CAN read.</li>
+    <li><b>Two marker names are fixed.</b> <code>'__t0' in window</code> answers yes for us
+      and no for a clean browser, in the top document and in frames, and
+      <code>__AFP_PATCH_URL</code> is the worker&rsquo;s equivalent. Non-enumerable, so a diff
+      against a fresh iframe does not show them &mdash; but a name anyone can guess once needs
+      no diff. Deriving them per site is blocked by the markers being set before the seed
+      exists and by the in-browser checks that read them.</li>
   </ul>
   <!-- defaults.js for afpCspScope / afpCspScopeMatches: the lists are per route now. -->
   <script src="defaults.js"></script>

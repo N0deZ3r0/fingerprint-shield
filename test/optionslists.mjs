@@ -1,14 +1,22 @@
 /**
- * The two per-site lists on the options page.
+ * The per-site lists on the options page.
  *
  *   node test/optionslists.mjs
  *
- * Both switches in the popup write a permanent, per-site decision, and the options page is
- * the only place either list can be READ or cleared — the confusion that started this work
- * was a WebRTC exception set weeks earlier and invisible from every page since. So the page
- * is driven here rather than eyeballed: the list has to show what storage holds, Clear has
- * to empty storage AND drop the document_start registration that mirrors it, and the button
- * has to be disabled when there is nothing to clear.
+ * Each switch in the popup writes a permanent, per-site decision, and the options page is the
+ * only place those lists can be READ or cleared — the confusion that started this work was a
+ * WebRTC exception set weeks earlier and invisible from every page since. So the page is
+ * driven here rather than eyeballed: the list has to show what storage holds, Clear has to
+ * empty storage AND drop the document_start registration that mirrors it, and the button has
+ * to be disabled when there is nothing to clear.
+ *
+ * THE LAST SECTION IS A DIFFERENT KIND OF LIST, and it was added because that difference is
+ * what had been missed. The three above are filled by the USER pressing a switch. Six more —
+ * the CSP shapes this extension learns per host as you browse — fill themselves, grow without
+ * a cap, are not touched by a profile change, and had no screen, no count and no way to clear.
+ * That is [FIX the-off-state-was-invisible] again, on the lists that actually grow on their
+ * own. The screen shows a COUNT and never the sites: a page of host names would be the
+ * browsing history the entry is about, printed larger.
  */
 import { chromium } from 'playwright';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -115,6 +123,51 @@ try {
   ok(/Список пуст/.test(afterRtc.rtc), `the WebRTC button clears its own list (${afterRtc.rtc})`);
   const last = await regIds();
   ok(!last.includes('afp-rtc-off'), `and drops its marker (${last.join(',')})`);
+
+  // [FIX the-learned-lists-were-the-invisible-ones] The three lists above are filled by the
+  // user pressing a switch. The six checked here fill themselves while browsing — one entry
+  // per site whose CSP has a shape worth remembering — and until this section they had no
+  // screen, no count and no way to clear, while a profile change left them in place. The
+  // treatment is the one [FIX the-off-state-was-invisible] gave the WebRTC list.
+  //
+  // THE COUNT IS ASSERTED, NOT THE HOSTS, and the screen shows the same: a page listing the
+  // sites would be the browsing history this entry is about, printed larger.
+  await bg.evaluate(async () => {
+    await chrome.storage.local.set({
+      afp_csp_noblob: ['a.example.com', 'b.example.com/app'],
+      afp_csp_tt: ['c.example.net'],
+      afp_csp_mixed: ['d.example.org']
+    });
+  });
+  await page.reload({ waitUntil: 'load' });
+  await new Promise((r) => setTimeout(r, 1200));
+  const learned = await page.evaluate(() => ({
+    text: document.getElementById('learnedList').textContent,
+    btn: document.getElementById('learnedClearBtn').disabled
+  }));
+  console.log('learned      ' + JSON.stringify(learned));
+  ok(/4 записей/.test(learned.text), `the learned lists are counted on screen (${learned.text})`);
+  ok(learned.btn === false, 'and Clear is enabled while there is something to clear');
+  // The hosts must NOT be on screen — that is the whole reason this shows a number.
+  ok(!/example\.(com|net|org)/.test(learned.text),
+    `no site name is printed (${learned.text})`);
+
+  await page.click('#learnedClearBtn');
+  await new Promise((r) => setTimeout(r, 1500));
+  const afterLearned = await page.evaluate(() => ({
+    text: document.getElementById('learnedList').textContent,
+    btn: document.getElementById('learnedClearBtn').disabled
+  }));
+  console.log('learned clr  ' + JSON.stringify(afterLearned));
+  ok(/Пусто/.test(afterLearned.text), `Clear empties them (${afterLearned.text})`);
+  ok(afterLearned.btn === true, 'and disables its own button');
+  // Storage, not just the screen: a button that repaints without writing is the failure this
+  // suite exists to catch on the other three lists.
+  const storedLearned = await bg.evaluate(async () => {
+    const g = await chrome.storage.local.get(['afp_csp_noblob', 'afp_csp_tt', 'afp_csp_mixed']);
+    return Object.keys(g).map((k) => k + '=' + JSON.stringify(g[k] || [])).join(' ');
+  });
+  ok(!/example/.test(storedLearned), `and storage is actually empty (${storedLearned})`);
 } finally {
   await ctx.close();
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows keeps a handle */ }

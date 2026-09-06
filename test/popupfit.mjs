@@ -119,46 +119,248 @@ try {
   ok(!!msgGeo.title,
     'and the full text is on the title attribute, so a longer one is still readable');
 
-  // [FIX nothing-compared-the-profile-against-the-exit-ip] The exit-country mismatch is
-  // written into the line under the country name instead of being added as a row, and the
-  // reason is arithmetic: the popup rests at 590px against Chrome's 600px cap, and the
-  // existing #warnings box takes it to 628 the moment it holds one line — measured right
-  // here, below. So a new row would have put every mismatch behind a scrollbar, and a
-  // mismatch is not a rare state: it happens to anyone who moves a VPN node.
+  // [FIX the-warning-ate-the-timezone] EVERY REACHABLE HEIGHT, not the resting one.
   //
-  // Both halves are asserted. The first is the one the design depends on.
-  const exitHeights = await popup.evaluate(() => {
+  // The exit-country mismatch used to be written OVER the timezone, and the justification
+  // was arithmetic printed by this very file: the popup rested at 590 against the 600 cap,
+  // so a row did not fit. The arithmetic moved and nobody re-read it — the line below had
+  // been printing "overflows the cap by -11px" for a while, which is the refutation, on
+  // every run. So the number is not left as a printed aside any more: the tallest state the
+  // popup can reach is measured and asserted.
+  //
+  // Two states move it, and they move it in opposite directions:
+  //   + the warning row, which is what the redesign spends
+  //   − no http tab, where the per-site card is swapped out for the note (84px shorter)
+  const exitHeights = await popup.evaluate(async () => {
     const out = {};
-    const tz = document.getElementById('countryTz');
-    const before = tz.textContent, hadWarn = tz.classList.contains('warn');
+    const w = document.getElementById('countryWarn');
+    const hadHidden = w.hidden, before = w.textContent;
     // The longest realistic form: a country name we do not offer, so exitName falls back.
-    tz.textContent = 'IP: Соединённые Штаты Америки — не совпадает';
-    tz.classList.add('warn');
-    out.withMismatch = document.body.scrollHeight;
-    tz.textContent = before;
-    tz.classList.toggle('warn', hadWarn);
-    out.restored = document.body.scrollHeight;
-    // And what a row would have cost, for the record.
-    const w = document.getElementById('warnings');
-    const wasHidden = w.hidden, html = w.innerHTML;
-    w.innerHTML = '<div class="warning">· sample</div>';
+    w.textContent = 'Адрес выхода: Соединённые Штаты Америки — не совпадает';
     w.hidden = false;
-    out.withRow = document.body.scrollHeight;
-    w.innerHTML = html; w.hidden = wasHidden;
+    out.withMismatch = document.body.scrollHeight;
+    out.clipped = w.scrollWidth > w.clientWidth + 1;
+    w.hidden = true;
+    out.quiet = document.body.scrollHeight;
+    // The state that used to be the tallest of all, driven through the popup's own code.
+    await window.updateTabInfo(null);
+    out.noTab = document.body.scrollHeight;
+    out.cardHidden = document.getElementById('siteCard').hidden;
+    out.noteShown = !document.getElementById('emptyState').hidden;
+    w.hidden = false;
+    out.noTabWithMismatch = document.body.scrollHeight;
+    w.textContent = before; w.hidden = hadHidden;
     return out;
   });
-  console.log(`with a country mismatch ${exitHeights.withMismatch}px ` +
-    `(a #warnings row would be ${exitHeights.withRow}px)`);
-  ok(exitHeights.withMismatch === resting,
-    `the exit-country warning costs no height (${exitHeights.withMismatch}px vs ${resting}px) — ` +
-    `it replaces the timezone line, which is nowrap + ellipsis`);
-  ok(exitHeights.withMismatch <= MAX,
-    `and the popup still fits with the warning shown (${exitHeights.withMismatch}px, cap ${MAX})`);
-  ok(exitHeights.restored === resting, 'restoring the timezone line restores the height');
-  // Not an assertion about our feature — a measurement of the pre-existing box, kept so the
-  // number in the comment above cannot quietly stop being true.
-  console.log(`       (#warnings overflows the cap by ${exitHeights.withRow - MAX}px when it fires — ` +
-    `pre-existing, untested before this line, and why the warning does not go there)`);
+  console.log(`heights: quiet ${exitHeights.quiet}px, mismatch ${exitHeights.withMismatch}px, ` +
+    `no tab ${exitHeights.noTab}px, no tab + mismatch ${exitHeights.noTabWithMismatch}px (cap ${MAX})`);
+  ok(exitHeights.withMismatch > exitHeights.quiet,
+    `the warning costs a row instead of deleting the timezone (${exitHeights.withMismatch} vs ${exitHeights.quiet})`);
+  ok(exitHeights.cardHidden && exitHeights.noteShown,
+    'with no http tab the per-site card is swapped out for the note, rather than sitting there disabled');
+  // The assertion the printed aside should have been all along.
+  const tallest = Math.max(exitHeights.quiet, exitHeights.withMismatch,
+    exitHeights.noTab, exitHeights.noTabWithMismatch);
+  ok(tallest <= MAX, `the TALLEST reachable state fits (${tallest}px, cap ${MAX})`);
+  // A row that could wrap would make the number above meaningless on a narrower name.
+  const nowrapWarn = await popup.evaluate(() =>
+    getComputedStyle(document.getElementById('countryWarn')).whiteSpace === 'nowrap');
+  ok(nowrapWarn, 'and the warning row is nowrap, so a long country name cannot grow it');
+  await popup.evaluate(async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
+    await window.updateTabInfo(tab);
+  });
+  await new Promise((r) => setTimeout(r, 300));
+
+  // [FIX the-popup-never-said-the-screen-claim-was-dropped] mw-core's _screenAtLeastNative
+  // reports the MACHINE's screen whole whenever the claimed pair does not contain it, so on
+  // an ordinary 1080p host most rows substitute nothing on that axis — and the popup said so
+  // nowhere. The chip is asserted against the SAME arithmetic, read off the popup's own
+  // `screen`, so this cannot pass by both sides being wrong the same way: the rule is
+  // recomputed here from the row and the machine, not copied from the code that renders it.
+  //
+  // It rides in the button/option row rather than #warnings for the reason measured right
+  // above — a #warnings row does not fit — so the height is asserted too.
+  // THE RIG CANNOT SUPPLY THE INTERESTING CASE. Playwright's setViewportSize emulates the
+  // device metrics, so `screen` in this popup reads 400×551 — smaller than every row, so
+  // every claim holds and the chip never fires. Asserted against that alone the block would
+  // be green on a build that never renders a chip at all. The machine is therefore stubbed
+  // to a known 1920×1080 for the real assertion, and the rig's own screen is read first
+  // only as a consistency check.
+  const chipsFor = (mw, mh, select) => popup.evaluate(({ mw, mh, select }) => {
+    const S = Object.getPrototypeOf(screen);
+    const dw = Object.getOwnPropertyDescriptor(S, 'width');
+    const dh = Object.getOwnPropertyDescriptor(S, 'height');
+    const wasSelected = selectedProfileId;
+    try {
+      if (mw) {
+        Object.defineProperty(S, 'width', { configurable: true, get: () => mw });
+        Object.defineProperty(S, 'height', { configurable: true, get: () => mh });
+      }
+      if (select) selectedProfileId = select;
+      renderProfiles();
+      const s = { w: screen.width | 0, h: screen.height | 0 };
+      const rows = [...document.querySelectorAll('#profileList .option')].map((el) => {
+        const p = (typeof PROFILES !== 'undefined' ? PROFILES : []).find((x) => x.id === el.dataset.id) || {};
+        const tag = el.querySelector('.tag');
+        return {
+          id: el.dataset.id,
+          claim: p.host ? 'хост' : `${p.screenW}×${p.screenH}`,
+          // The rule, recomputed: both dimensions or neither, as mw-core has it.
+          holds: p.host ? true : ((p.screenW | 0) >= s.w && (p.screenH | 0) >= s.h),
+          chip: tag ? tag.textContent : '',
+          titled: !!(tag && tag.title)
+        };
+      });
+      const btnTag = document.getElementById('profileScreenTag');
+      return {
+        s, rows, height: document.body.scrollHeight, selected: selectedProfileId,
+        btnHidden: !btnTag || btnTag.hidden, btnTitled: !!(btnTag && btnTag.title)
+      };
+    } finally {
+      if (mw) { Object.defineProperty(S, 'width', dw); Object.defineProperty(S, 'height', dh); }
+      selectedProfileId = wasSelected;
+      renderProfiles();
+    }
+  }, { mw, mh, select });
+
+  const chips = await chipsFor(0, 0, '');
+  const show = (c, label) => {
+    console.log(`screen chips          ${label}: machine ${c.s.w}×${c.s.h}`);
+    for (const r of c.rows) {
+      console.log(`  ${r.id.padEnd(11)} claims ${r.claim.padEnd(10)} ${r.holds ? 'holds' : 'DROPPED'}` +
+        (r.chip ? `  chip "${r.chip}"` : ''));
+    }
+  };
+  const agrees = (c) => {
+    for (const r of c.rows) {
+      if (r.id === 'host') {
+        ok(r.chip === 'хост', `the host row keeps its own chip (${r.chip})`);
+        continue;
+      }
+      ok((r.chip === 'экран хоста') === !r.holds,
+        `${r.id} claims ${r.claim} on a ${c.s.w}×${c.s.h} machine — ` +
+        `${r.holds ? 'the claim holds, so no chip' : 'the claim is dropped, so the chip is there'}` +
+        ` (chip: "${r.chip}")`);
+      if (!r.holds) ok(r.titled, `${r.id}'s chip carries the explanation on its title`);
+    }
+  };
+  show(chips, 'as the rig reports it');
+  ok(chips.rows.length > 0, `the picker rendered its rows (${chips.rows.length})`);
+  agrees(chips);
+
+  // The real case: a 1920×1080 machine, which is the single largest bucket there is, and
+  // laptop_low / laptop_125 / laptop_150 sitting under it. The selected row is one of them,
+  // so the button chip is exercised in its VISIBLE state — on the rig's own screen it never
+  // is.
+  const small = await chipsFor(1920, 1080, 'laptop_low');
+  show(small, 'stubbed 1920×1080');
+  agrees(small);
+  const DROPPED = ['laptop_low', 'laptop_125', 'laptop_150'];
+  const HOLDS = ['laptop_mid', 'pc_gaming', 'pc_power'];
+  for (const id of DROPPED) {
+    const r = small.rows.find((x) => x.id === id);
+    ok(r && r.chip === 'экран хоста',
+      `on a 1920×1080 machine ${id} (${r && r.claim}) is marked — its screen is never substituted`);
+  }
+  for (const id of HOLDS) {
+    const r = small.rows.find((x) => x.id === id);
+    ok(r && r.chip === '',
+      `and ${id} (${r && r.claim}) is not marked — it contains the machine`);
+  }
+  ok(small.btnHidden === false, 'the selected row repeats the chip in the button');
+  ok(small.btnTitled, 'and the button chip carries the explanation on its title');
+  ok(small.height === resting,
+    `the chip costs no height (${small.height}px vs ${resting}px) — it rides in the row, not in #warnings`);
+
+  // [FIX the-popup-never-said-the-site-had-stood-down] Driven end to end through the real
+  // popup code: the note is set by showStandDown(), which reads `window.__t0.sd` out of the
+  // ACTIVE TAB with chrome.scripting — the same boolean mw-core froze — so this exercises
+  // the read path and not a string. Both directions are asserted, because a note that never
+  // clears is as wrong as one that never shows.
+  const standDown = async (on) => {
+    await site.evaluate((v) => {
+      try {
+        if (!window.__t0 || typeof window.__t0 !== 'object') window.__t0 = {};
+        window.__t0.sd = v;
+      } catch (e) { /* the marker is non-configurable in some builds */ }
+    }, on);
+    await popup.evaluate(async () => { await window.updateWebrtcToggle(); });
+    // showStandDown is async and runs after updateWebrtcToggle returns.
+    await new Promise((r) => setTimeout(r, 400));
+    return popup.evaluate(() => {
+      const el = document.getElementById('siteHost');
+      return {
+        text: el.textContent, warn: el.classList.contains('warn'), title: el.title,
+        height: document.body.scrollHeight,
+        clipped: el.scrollWidth > el.clientWidth + 1,
+        nowrap: getComputedStyle(el).whiteSpace === 'nowrap'
+      };
+    });
+  };
+  // [FIX the-stand-down-note-erased-the-webrtc-one] The two notes that share this one line
+  // are decided by two different reads, so the axes have to be crossed rather than driven
+  // one at a time: with only the stand-down axis moved, the cell that regressed — the global
+  // WebRTC switch off AND the site standing down — was never entered, and the suite stayed
+  // green while showStandDown() wrote the line whole and dropped the other note.
+  //
+  // The global switch is the options page's, so it is set where the options page sets it:
+  // afp_features in chrome.storage.local, read back by background.js's getWebrtcStatus. It
+  // is restored at the end of the block, because everything below assumes the default.
+  const webrtcGlobal = async (on) => {
+    await popup.evaluate(async (on) => {
+      const st = await chrome.storage.local.get(['afp_features']);
+      await chrome.storage.local.set({ afp_features: { ...(st.afp_features || {}), webrtc: on } });
+    }, on);
+    await new Promise((r) => setTimeout(r, 150));
+  };
+  const cell = async (webrtcOn, sd) => { await webrtcGlobal(webrtcOn); return standDown(sd); };
+
+  const sdOn = await cell(true, true);
+  const sdOff = await cell(true, false);
+  const offSd = await cell(false, true);    // the cell that lost the WebRTC note
+  const offOnly = await cell(false, false);
+  await webrtcGlobal(true);
+  console.log(`stand-down note       "${sdOn.text}" (${sdOn.height}px), off: "${sdOff.text}"`);
+  console.log(`with WebRTC off       "${offSd.text}" (${offSd.height}px, clipped ${offSd.clipped}),` +
+    ` stand-down off: "${offOnly.text}"`);
+  ok(/машина не подменяется$/.test(sdOn.text),
+    `the site line says the machine is not substituted here (${sdOn.text})`);
+  ok(sdOn.warn, 'and it is amber, like the exit-country disagreement');
+  ok(!!sdOn.title, 'and the full explanation is on the title attribute');
+  ok(sdOn.height === resting,
+    `it costs no height (${sdOn.height}px vs ${resting}px) — it rides in the hostname line`);
+  ok(sdOn.nowrap && !sdOn.clipped,
+    `and that line is nowrap, so a longer note cannot wrap the popup taller (clipped ${sdOn.clipped})`);
+  ok(!/машина не подменяется/.test(sdOff.text) && !sdOff.warn && sdOff.title === '',
+    `the note, the amber and the title all clear when the site is not standing down (${sdOff.text})`);
+
+  // The other three cells of the same pair. The WebRTC note on its own is the state
+  // [FIX the-off-state-was-invisible] exists for, and it was being erased on exactly the
+  // sites where stand-down is common (github, youtube).
+  const RTC = 'WebRTC выключен в настройках', SD = 'машина не подменяется';
+  ok(offOnly.text.includes(RTC) && !offOnly.text.includes(SD) && !offOnly.warn,
+    `WebRTC off alone names the setting and nothing else (${offOnly.text})`);
+  ok(offOnly.title === '', `and carries no title — the line has room for it (${offOnly.title})`);
+  ok(offSd.text.includes(RTC) && offSd.text.includes(SD),
+    `both notes survive together (${offSd.text})`);
+  // Order is load-bearing, not cosmetic: the line ellipsises from the tail, and the
+  // stand-down half is the one with a title to be recovered from.
+  ok(offSd.text.indexOf(RTC) >= 0 && offSd.text.indexOf(RTC) < offSd.text.indexOf(SD),
+    `and the WebRTC note is the visible prefix, since the tail is what the ellipsis cuts (${offSd.text})`);
+  ok(offSd.warn, 'the line is still amber for the stand-down half');
+  ok(offSd.title.includes(RTC) && offSd.title.includes(SD),
+    'and the title leads with the whole line, so the ellipsised half stays readable');
+  ok(offSd.nowrap,
+    `the line is still nowrap with both notes on it (clipped ${offSd.clipped}) — it cannot wrap the popup taller`);
+  // [FIX the-host-was-printed-twice] Newly assertable. The title has always been the fallback
+  // for the cut half, but a fallback is not a readout: with the hostname leading the line,
+  // this exact pair — the state the WebRTC note exists to communicate — was ellipsised on
+  // screen every time. The hero names the host now, and the notes have the whole width.
+  ok(!offSd.clipped,
+    `and both notes FIT on it rather than relying on the title (clipped ${offSd.clipped})`);
+  ok(offSd.height === resting,
+    `and the pair costs no height (${offSd.height}px vs ${resting}px), which is what keeps it under the ${MAX}px cap`);
 
   // Both switches, through the popup's own code, against what the DOM shows.
   const read = () => popup.evaluate(() => ({
@@ -171,7 +373,15 @@ try {
   await popup.evaluate(async () => { await window.updateWebrtcToggle(); await window.updateSwToggle(); });
   const first = await read();
   console.log('fresh state           ' + JSON.stringify(first));
-  ok(first.host === '127.0.0.1', `the card names the site once (${first.host})`);
+  // [FIX the-host-was-printed-twice] This used to assert the card's line WAS the hostname,
+  // which is how the popup ended up printing it twice — the hero shows it too, and with both
+  // per-site notes appended the line ran past the card and was ellipsised. The invariant the
+  // assertion was reaching for is the one asserted now: the site is named exactly once in the
+  // whole window. That is checked properly in test/popupkeys.mjs, over every leaf node; here
+  // it is enough that this line is no longer one of the two.
+  ok(!first.host.includes('127.0.0.1'),
+    `the per-site line no longer repeats the hostname the hero already shows (${first.host})`);
+  ok(/этого сайта/.test(first.host), `it says what the card decides instead (${first.host})`);
   ok(first.rtcOn === true, 'WebRTC starts protected');
   ok(first.swOn === true, 'a service worker starts allowed');
   ok(first.rtcWarn === false && first.swWarn === false, 'nothing is amber on the defaults');

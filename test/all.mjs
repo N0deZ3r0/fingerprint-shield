@@ -27,6 +27,10 @@ const SUITES = [
   ['node regressions', ['test/node-all.mjs']],
   ['timezones vs ICU', ['test/tz-icu.mjs']],
   ['country/profile tables', ['test/tables.mjs']],
+  // Five rules that used to be a warning box in the popup, over a table no shipped row could
+  // trigger. A coherence check on a const table is a build-time check; here it fails the
+  // suite instead of reaching a user who cannot act on it. Node-only.
+  ['profile coherence', ['test/profilecoherence.mjs']],
   ['background.js functions', ['test/background-fns.mjs']],
   // Static, and it belongs with the cheap set: it opens no browser, it only asks whether
   // the extension SHIPPABLE from this tree is complete. Every path the manifest names,
@@ -45,6 +49,35 @@ if (withBrowser) SUITES.push(['cold start (Chromium)', ['test/coldstart.mjs']]);
 // over plain http. This one launches a second, extension-free browser as its control.
 if (withBrowser) SUITES.push(['error stacks (Chromium)', ['test/stackleak.mjs']]);
 if (withBrowser) SUITES.push(['CSP attribution (Chromium)', ['test/cspattribution.mjs']]);
+// The other class of defect: not "the page can tell" but "the page breaks". A <form> whose
+// controls are named after element properties made isBait read an <input> and throw into the
+// page's own getComputedStyle — reported from github.com. The fixture for it lives in
+// dev-adblockmask.html and CANNOT FAIL there, because test/run.mjs launches a plain browser
+// and there is no wrapper in front of anything. This runs it against the real extension, with
+// a clean control and a live mask as the positive one.
+if (withBrowser) SUITES.push(['page still works (Chromium)', ['test/pagework.mjs']]);
+// The ACCESSOR half of pagework's part 4. Every accessor on Screen/Navigator/NavigatorUAData/
+// NetworkInformation and window's nine [Global] geometry getters, called with twelve
+// receivers — the prototype, a branded-but-slotless object, a proxy, {}, null, undefined,
+// document.all, the wrong platform object and a same-origin iframe's instance — window and
+// worker, against a clean browser. Only THROW-vs-ANSWER is compared; the own instance's value
+// is the spoof and is printed, never asserted. The cross-realm column is what no brand check
+// can express: isPrototypeOf is false across realms while the native accessor answers there,
+// so `_namedGetter`'s check throws where clean returns, and the sites with no check at all
+// answer where clean throws.
+if (withBrowser) SUITES.push(['accessor receivers (Chromium)', ['test/receivers.mjs']]);
+// Sibling axis: what a wrapped function LOOKS like (name/length/toString), enumerated
+// rather than taken from a hand list — see the header there for the two it found.
+if (withBrowser) SUITES.push(['function shape (Chromium)', ['test/fnshape.mjs']]);
+// The two modes defined by a hand-written table in mw-core: host mode substitutes no
+// hardware, stealth turns off what its flag table says. Both checked by enumeration, with
+// the table read out of the source rather than retyped.
+if (withBrowser) SUITES.push(['mode claims (Chromium)', ['test/modeclaims.mjs']]);
+// A smoke alarm on what a patched read costs. Deliberately loose — the header measures four
+// runs of one unchanged build to show why a plain ratio flakes here — so it catches a
+// microsecond added to a hot path and nothing finer. tools/probe-textcost.mjs is what judges
+// a real change.
+if (withBrowser) SUITES.push(['cost budget (Chromium)', ['test/costceiling.mjs']]);
 // Each of the 13 popup switches, on and off, against the real extension and a clean browser
 // beside it. dev-perflag.html asks whether a reference is still patched; this asks whether
 // the value is the profile's — a patched reference returning the host's answer passes that
@@ -84,6 +117,15 @@ if (withBrowser) SUITES.push(['service worker switch (Chromium)', ['test/swswitc
 // switches through the real popup script — a renamed element would otherwise leave the UI
 // silently inert with every other suite green.
 if (withBrowser) SUITES.push(['popup fits (Chromium)', ['test/popupfit.mjs']]);
+// The other half of the same window: can it be USED without a mouse, and do its controls
+// report their own state. Measured before this suite existed: 67 country rows and 7 machine
+// rows, none of them reachable from a keyboard, and aria-checked null on all three switches.
+if (withBrowser) SUITES.push(['popup keyboard (Chromium)', ['test/popupkeys.mjs']]);
+// The invariant the stand-down exists for: the window may not claim more than the page's
+// own workers can be made to claim. Three CSP shapes on three routes — refused, creatable
+// but unpatchable, and patchable — plus the per-site rewrite on the shape that was
+// reported broken from a real github.com tab.
+if (withBrowser) SUITES.push(['worker patch gate (Chromium)', ['test/workerpatchgate.mjs']]);
 // The options page is the only place either per-site list can be READ or cleared, and an
 // invisible list is what made the WebRTC switch look broken for weeks. Drives the real page:
 // what it shows, what Clear does to storage AND to the document_start registration that
@@ -206,6 +248,16 @@ if (withBrowser) SUITES.push(['CreepJS pages (Chromium)', ['test/creepjs.mjs']])
 // getError() say NO_ERROR where every real browser says INVALID_ENUM — a console line no
 // script can read traded for a detector any script can run.
 if (withBrowser) SUITES.push(['WebGL enum refusals (Chromium)', ['test/glenum.mjs']]);
+// Two claims nothing asserted. The Bluetooth one was decided ONCE at install, against the
+// injector's fallback skeleton, so it never fired — and its mechanism deleted
+// navigator.bluetooth while leaving the global constructor standing, a browser that does not
+// exist; the guard therefore pins the whole surface against clean, not just the answer.
+// gl.readPixels was noised in the window and in neither worker, which a page reads with one
+// `new Worker()`. Both need the extension loaded for real with a clean browser beside it, so
+// neither fits a dev page. Its last rows are RED on purpose today — the readback rollback
+// still decides flatness inside the returned buffer, so a 1x1 read and the same pixel inside
+// a block disagree in all three scopes. See the header.
+if (withBrowser) SUITES.push(['Bluetooth + GL readback (Chromium)', ['test/btreadback.mjs']]);
 
 /**
  * The one-line-per-suite summary. Each suite states its own count in its own words, so

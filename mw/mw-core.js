@@ -1553,7 +1553,7 @@
     // timezone, the country and the per-domain canvas seed are the profile's in host mode
     // exactly as in any other. What host mode gives up is the claim to a machine the
     // rasteriser, the audio stack, the text engine and the decoder would contradict —
-    // README "Limits", items 2, 3, 4, 7 and 8 — and what it gains is the crowd of everyone with
+    // README "Limits" items 2, 3, 4, 7 and 8 — and what it gains is the crowd of everyone with
     // this hardware instead of the crowd of this extension's users.
     //
     // The name list matches the objects _def is called on: navigator's hardware trio plus
@@ -1637,21 +1637,69 @@
     // Object.getOwnPropertyDescriptor(obj, prop).get.toString() — not [native code].
     // Wrap once here so all ~20 _def() call sites inherit native-looking getters.
     // isAccessor toString: "function get prop() { [native code] }"
-    // brandProto: native getters throw TypeError("Illegal invocation") if this is not
-    // an instance of the interface. Without this, proto[name] returns a number and
-    // CreepJS records ["failed descriptor.value undefined"] → hash dfd41ab4 (DuckDuckGo pattern).
-    function _namedGetter(prop, fn, brandProto) {
+    // A receiver check is needed at all because native getters throw
+    // TypeError("Illegal invocation") when `this` is not an instance of the interface:
+    // without one, proto[name] returns a number and CreepJS records
+    // ["failed descriptor.value undefined"] → hash dfd41ab4 (DuckDuckGo pattern). What
+    // changed below is not whether the check exists but how it decides.
+    //
+    // [FIX brand-check-refused-valid-cross-realm-receivers]
+    //
+    // It used to be a brand list — `brandProto.isPrototypeOf(Object(this))` — and
+    // isPrototypeOf is FALSE across realms while the native accessor ANSWERS there.
+    // Measured, clean Chromium 151 against this build, one line of page script each:
+    //
+    //   Screen.width.call(otherRealmScreen)                    clean 1280   ours THREW
+    //   Navigator.hardwareConcurrency.call(otherRealmNav)      clean 18     ours THREW
+    //   NetworkInformation.effectiveType.call(otherRealmConn)  clean '4g'   ours THREW
+    //
+    // 129 receiver cases across the audited surface came out different from clean, and the
+    // brand list was wrong in BOTH directions — it refused instances the platform accepts
+    // AND accepted receivers the platform refuses, because isPrototypeOf reads the
+    // prototype CHAIN while the platform reads an internal slot:
+    //
+    //   Object.create(Screen.prototype).width  clean THREW   old ours 1234
+    //   new Proxy(screen, {}).width            clean THREW   old ours 1234
+    //
+    // No brand list can express the rule the platform actually applies — it accepts an
+    // instance from ANY realm and refuses the prototype, a chain-alike, a bare object,
+    // null — so stop restating that rule and ask it: call the CAPTURED NATIVE getter with
+    // the receiver we were handed and let it throw exactly what it throws, for exactly the
+    // receivers it refuses. A cross-origin WindowProxy then comes out right for free (the
+    // platform raises SecurityError there, which the old code raised for nobody), and the
+    // throw travels back out through _mn's apply trap, so _stripOwnFrames takes our frames
+    // off it the way it does for every other wrapper.
+    //
+    // Held against a clean control in the same page — the same C++ accessor read out of an
+    // unpatched same-origin iframe — over 35 (site, receiver) pairs on Screen.width,
+    // Navigator.hardwareConcurrency, NetworkInformation.effectiveType and
+    // window.devicePixelRatio: 9 divergences before, 0 after. Four of the nine were
+    // devicePixelRatio, which went through _def with no brand at all (window is not its own
+    // constructor's prototype) and so answered for {}, document, document.all and
+    // Window.prototype where clean throws.
+    //
+    // The oracle's VALUE is discarded on purpose. Falling through means a valid but
+    // FOREIGN instance, and every realm this extension patches carries the same profile,
+    // so that realm's own accessor answers what we are about to answer; returning the
+    // native there would hand over the host instead of the claim.
+    //
+    // `own` is the instance the accessor was installed for and the identity test comes
+    // FIRST, so the hot reads — navigator.hardwareConcurrency, screen.width,
+    // window.devicePixelRatio, the surface test/costceiling.mjs times — pay one comparison
+    // and never a native call. Counted rather than assumed, on a synthetic accessor that
+    // increments on entry: 0 native calls for a read on the own instance, 1 for a foreign
+    // receiver. Where _def was handed an interface PROTOTYPE there is no
+    // instance to compare against (navigator.connection and BatteryManager both arrive
+    // that way), so `own` is a sentinel no receiver can equal and those reads always
+    // consult the oracle — one native call each, on reads that are not hot. Where the
+    // realm has no native descriptor there is no oracle either and the property answers
+    // for every receiver exactly as it did before this fix: inventing a refusal for a
+    // property Chrome does not have would be its own tell.
+    var _NO_OWN = {};
+    function _namedGetter(prop, fn, oracle, ownInst) {
+        var own = ownInst || _NO_OWN;
         return _mn(({ [prop]: function() {
-            if (brandProto) {
-                try {
-                    if (this == null || !brandProto.isPrototypeOf(Object(this))) {
-                        throw new TypeError('Illegal invocation');
-                    }
-                } catch (eInv) {
-                    if (eInv && eInv.message === 'Illegal invocation') throw eInv;
-                    throw new TypeError('Illegal invocation');
-                }
-            }
+            if (this !== own && oracle) oracle.call(this);
             // `.call(this)` and not `fn()`: the receiver is threaded through so a value
             // function can reach the INSTANCE it is answering for. Every caller that
             // ignores `this` is unaffected — which was all of them until the battery
@@ -1661,56 +1709,80 @@
             return fn.call(this);
         } })[prop], true);
     }
+    // The oracle has to be the PLATFORM's getter and nothing else. Every getter we mint is
+    // an _mn proxy and every _mn proxy is registered in _nativeFns, so a second _def on the
+    // same slot — the dev pages load the mw/ modules themselves on top of the extension's
+    // copy, which is two installs — would otherwise capture the FIRST wrapper as its
+    // oracle. That still refuses the right receivers (the inner layer holds the true native
+    // and its throw propagates out unchanged), but it puts two more of our frames on every
+    // refusal, and the same stale-capture shape is what already breaks the stand-down in
+    // mw-navigator's _defWinProp. Recover the native the inner layer captured instead, and
+    // take no oracle at all when the descriptor's getter is some other module's wrapper —
+    // no check is the behaviour that shipped, a wrapper that answers where the platform
+    // refuses is worse than none. Counted on the same synthetic accessor: after a second
+    // _def on the same slot, a foreign receiver still throws and the true native is reached
+    // exactly once, not twice and not zero times.
+    var _defOracle = new WeakMap();
+    // [FIX the-oracle-trusted-whatever-getter-it-found] The last line used to be a bare
+    // `return d.get`, which trusts ANY getter that is not one of ours to answer "does the
+    // platform refuse this receiver". A native one does. Another extension's shim does not:
+    // the common shape is a closure returning a constant, which answers for every receiver,
+    // and inheriting that turns the whole check off silently — the accessor then answers on
+    // NetworkInformation.prototype where a clean browser throws, which is the exact lie
+    // [FIX ddg-dfd41ab4] removed. Not hypothetical here: AdGuard shims navigator in this
+    // user's own profile and races us at document_start.
+    //
+    // So the capture is PROBED once, at install, on an object no interface accepts. A getter
+    // that throws there is refusing receivers and can be trusted to refuse them later; one
+    // that answers is not an oracle and is dropped, which degrades to the pre-fix behaviour
+    // (no receiver check) rather than to a wrong one. Same contract, same reason and the same
+    // one-line shape as _winOracle in mw/mw-timezone-screen.js, which was written for this.
+    var _oracleProbe = {};
+    function _origOracle(d) {
+        if (!d || typeof d.get !== 'function') return null;
+        try { if (_nativeFns.has(d.get)) return _defOracle.get(d.get) || null; } catch (eO) {}
+        try { d.get.call(_oracleProbe); } catch (eP) { return d.get; }
+        return null;
+    }
     // [FIX privacy-possum-pattern] own on instance → 452924d5; use prototype instead.
     // [FIX ddg-dfd41ab4] getter must Illegal-invocation on prototype this.
     function _def(obj, prop, value, enum_) {
         var isFn = typeof value === 'function';
         try {
             var target = obj;
-            var brandProto = null;
+            var ownInst = null;
             try {
                 if (typeof Navigator !== 'undefined' && obj === navigator) {
                     target = Navigator.prototype;
-                    brandProto = Navigator.prototype;
+                    ownInst = navigator;
                 } else if (typeof Screen !== 'undefined' && obj === screen) {
                     target = Screen.prototype;
-                    brandProto = Screen.prototype;
+                    ownInst = screen;
                 } else if (obj && obj.constructor && obj.constructor.prototype === obj) {
                     // [FIX brand-check-only-covered-navigator-and-screen] The two cases
-                    // above map an INSTANCE onto its prototype and brand the getter, so
-                    // reading the accessor off the prototype itself throws Illegal
-                    // invocation the way native does. Callers that already pass a
-                    // PROTOTYPE got no brand at all, and the difference is one line to
-                    // spot. Measured in dev-objecttypes.html, with navigator.connection
-                    // patched via _def(Object.getPrototypeOf(conn), …):
+                    // above map an INSTANCE onto its prototype, so reading the accessor
+                    // off the prototype itself has to throw Illegal invocation the way
+                    // native does. Callers that already pass a PROTOTYPE got no check at
+                    // all, and the difference is one line to spot. Measured in
+                    // dev-objecttypes.html, with navigator.connection patched via
+                    // _def(Object.getPrototypeOf(conn), …):
                     //   Object.getOwnPropertyDescriptor(NetworkInformation.prototype,
                     //     'effectiveType').get.call(NetworkInformation.prototype)
                     //   native -> TypeError: Illegal invocation
                     //   ours   -> '4g'
                     // Same shape as the CreepJS check that produced the DuckDuckGo hash
-                    // noted at _namedGetter below. BatteryManager.prototype, patched the
+                    // noted at _namedGetter above. BatteryManager.prototype, patched the
                     // same way from mw/mw-misc.js, had it too.
                     // An object that is its own constructor's .prototype IS an interface
-                    // prototype, so it is exactly the right brand to test against.
-                    brandProto = obj;
+                    // prototype, so there is no instance here to give the getter as its
+                    // fast path — the native oracle answers for every receiver instead.
+                    ownInst = null;
+                } else {
+                    // window, and anything else handed over as an instance rather than a
+                    // prototype: it is its own target and its own fast path.
+                    ownInst = obj;
                 }
             } catch (eT) {}
-            // [FIX the-standdown-never-fired] The one branch that makes the stand-down
-            // real. `orig` below is assigned before this ever runs — the getter is only
-            // built here — so the original descriptor is in hand and the accessor can
-            // answer with it instead of with the profile. Nothing is uninstalled: the
-            // property keeps our getter, its name, its brand check and its toString, and
-            // only the VALUE changes. Uninstalling would have meant restoring descriptors
-            // from a script that runs after the page can already hold references.
-            var getter = _namedGetter(prop, function() {
-                if (orig && _sdProp(prop)) {
-                    try {
-                        if (typeof orig.get === 'function') return orig.get.call(this);
-                        if ('value' in orig) return orig.value;
-                    } catch (eOrig) {}
-                }
-                return isFn ? value.call(this) : value;
-            }, brandProto);
             if (target !== obj) {
                 try {
                     var own = Object.getOwnPropertyDescriptor(obj, prop);
@@ -1719,6 +1791,28 @@
             }
             var orig = Object.getOwnPropertyDescriptor(target, prop)
                 || (obj !== target ? Object.getOwnPropertyDescriptor(obj, prop) : null);
+            // Captured once, before the getter exists, and used for two different jobs:
+            // as the receiver oracle in _namedGetter, and as the VALUE below when the
+            // stand-down is on. _origOracle refuses a getter of ours in that first job;
+            // the stand-down keeps reading `orig` directly, because there a wrapper of
+            // ours is still the right thing to call — it ends at the same native.
+            var oracle = _origOracle(orig);
+            // [FIX the-standdown-never-fired] The one branch that makes the stand-down
+            // real: the original descriptor is in hand, so the accessor can answer with it
+            // instead of with the profile. Nothing is uninstalled — the property keeps our
+            // getter, its name, its receiver check and its toString, and only the VALUE
+            // changes. Uninstalling would have meant restoring descriptors from a script
+            // that runs after the page can already hold references.
+            var getter = _namedGetter(prop, function() {
+                if (orig && _sdProp(prop)) {
+                    try {
+                        if (typeof orig.get === 'function') return orig.get.call(this);
+                        if ('value' in orig) return orig.value;
+                    } catch (eOrig) {}
+                }
+                return isFn ? value.call(this) : value;
+            }, oracle, ownInst);
+            try { _defOracle.set(getter, oracle); } catch (eM) {}
             var desc = {
                 get: getter,
                 enumerable: orig ? !!orig.enumerable : (enum_ !== false),

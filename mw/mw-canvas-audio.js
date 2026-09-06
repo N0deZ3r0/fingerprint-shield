@@ -175,6 +175,14 @@
             // Now: a named function expression with a defaulted parameter fixes name,
             // length and toString at once. Same bug and same fix as toDataURL below.
             HTMLCanvasElement.prototype.getContext = _mn(function getContext(type, opts = undefined) {
+                // [FIX the-wrappers-forwarded-arguments-the-page-never-passed] Declared
+                // parameters mean `arguments.length` is always the declared count, so the
+                // native was handed undefined where the page passed NOTHING and complained
+                // about the TYPE where it should complain about the COUNT. Measured, clean
+                // against ours: canvas.getContext() -> clean throws "1 argument required",
+                // ours returned null; measureText() -> clean throws, ours answered a
+                // TextMetrics. Too few arguments is the platform's business, not ours.
+                if (arguments.length < 1) return _origGetContext.apply(this, arguments);
                 var ctx = _origGetContext.call(this, type, opts);
                 try {
                     var tt = type ? String(type).toLowerCase() : '';
@@ -198,10 +206,18 @@
         // forcing it is NOT allowed, see [FIX forced-willReadFrequently] above.
         try {
             if (typeof OffscreenCanvas !== 'undefined' && OffscreenCanvas.prototype && OffscreenCanvas.prototype.getContext) {
+                // Canvases our getContext handed a context to. Read by convertToBlob below,
+                // where "does this canvas have a rendering context" is the whole question and
+                // every direct way to ask it either creates one or destroys the bitmap.
+                var _ocWithContext = new WeakSet();
                 var _origOffscreenGetContext = OffscreenCanvas.prototype.getContext;
                 // [FIX anon-fn-name-length] see HTMLCanvasElement.getContext above
                 OffscreenCanvas.prototype.getContext = _mn(function getContext(type, opts = undefined) {
+                    if (arguments.length < 1) return _origOffscreenGetContext.apply(this, arguments);
                     var ctx = _origOffscreenGetContext.call(this, type, opts);
+                    // Remembered for convertToBlob below — see the note there. Recorded on the
+                    // way OUT, so only a context the platform actually handed over counts.
+                    try { if (ctx) _ocWithContext.add(this); } catch (eW) {}
                     try {
                         var tt = type ? String(type).toLowerCase() : '';
                         if (ctx && tt.indexOf('webgl') !== -1 && _wrapGL) {
@@ -553,6 +569,37 @@
         // (createElement + drawImage) and the original is left untouched —
         // toDataURL/toBlob run on the copy and return a noised result, while the
         // visible canvas stays clean.
+        /**
+         * [FIX the-wrapper-answered-with-its-own-error-for-a-foreign-receiver]
+         *
+         * `toDataURL` and `toBlob` called `_renderNoisedCopy(this)` unguarded, so a call with
+         * a receiver that is not a canvas — `HTMLCanvasElement.prototype.toBlob.call({}, cb)`
+         * — never reached the native method at all: `copyCtx.drawImage(this, 0, 0)` threw
+         * first, and the page got OUR internal error. Measured, clean against ours:
+         *
+         *   clean   TypeError: Illegal invocation
+         *   ours    TypeError: Failed to execute 'drawImage' on 'CanvasRenderingContext2D':
+         *           The provided value is not of type '(CSSImageValue or HTMLCanvasElement …)'
+         *
+         * A different message, script-readable in one line, naming a method the page never
+         * called. And it is read by exactly the probe that turned it up: CreepJS's
+         * `failsTypeError` / `queryLies` walks prototypes calling each method with a foreign
+         * receiver and compares what comes back — reported from the live site.
+         *
+         * So the whole noising path is guarded and falls back to the ORIGINAL receiver, which
+         * is what OffscreenCanvas.convertToBlob's wrapper right below has always done (its
+         * body sits in a try/catch and it hands `target = this` to the native call on any
+         * failure — which is why convertToBlob measured IDENTICAL to clean while these two
+         * did not).
+         *
+         * Returning the original canvas is not a hole. For a real canvas the only way this
+         * path throws is a state the native call refuses as well — a tainted canvas throws
+         * SecurityError on the read whichever object it is handed — and for a receiver that is
+         * not a canvas the native call must throw Illegal invocation, which is the point.
+         */
+        function _noisedOrSelf(canvas) {
+            try { return _renderNoisedCopy(canvas); } catch (e) { return canvas; }
+        }
         function _renderNoisedCopy(canvas) {
             var w = canvas.width, h = canvas.height;
             if (w <= 0 || h <= 0) return canvas;
@@ -629,7 +676,7 @@
         // expression with default parameters fixes .length, .name and toString in one
         // change.
         HTMLCanvasElement.prototype.toDataURL = _mn(function toDataURL(f = undefined, q = undefined) {
-            var noised = _renderNoisedCopy(this);
+            var noised = _noisedOrSelf(this);
             return origTD.call(noised, f, q);
         });
         // The durable mark the parent frame-bridge looks for is __p0 from mw-core, not a
@@ -640,7 +687,8 @@
         // lingered here: an anonymous function → .name '' and .length 3 instead of the
         // native 1 (type/quality are optional).
         if (origTB) HTMLCanvasElement.prototype.toBlob = _mn(function toBlob(cb, f = undefined, q = undefined) {
-            var noised = _renderNoisedCopy(this);
+            if (arguments.length < 1) return origTB.apply(this, arguments);
+            var noised = _noisedOrSelf(this);
             origTB.call(noised, cb, f, q);
         });
         // [FIX readback-warning-on-the-page-context] This read the page's own context:
@@ -659,6 +707,7 @@
         // (dev-drawimagelossless.html: 12 backend combinations, 0 differing bytes).
         // The direct read stays as a fallback for the case where no scratch is available.
         CanvasRenderingContext2D.prototype.getImageData = _mn(function getImageData(x, y, w, h) {
+            if (arguments.length < 4) return origGID.apply(this, arguments);
             var d = _readViaScratch(this, x, y, w, h) || origGID.call(this, x, y, w, h);
             _noiseImageData(d, x, y, this, origGID);
             return d;
@@ -681,6 +730,7 @@
                         // Same scratch read as the HTMLCanvas path above, for the same
                         // reason — see FIX readback-warning-on-the-page-context.
                         OCtx.getImageData = _mn(function getImageData(x, y, w, h) {
+                            if (arguments.length < 4) return origOGID.apply(this, arguments);
                             var d = _readViaScratch(this, x, y, w, h) || origOGID.call(this, x, y, w, h);
                             _noiseImageData(d, x, y, this, origOGID);
                             return d;
@@ -692,6 +742,32 @@
                     // [FIX anon-fn-name-length] .name '' and .length 1 instead of the native 0
                     OC.convertToBlob = _mn(function convertToBlob(opts = undefined) {
                         var target = this;
+                        // [FIX convertToBlob-answered-for-a-canvas-the-platform-refuses]
+                        //
+                        // The noising below works on a COPY, and a copy always has a context —
+                        // so a source the platform will not convert was converted anyway.
+                        // Measured, clean against ours, on `new OffscreenCanvas(64,64)` that was
+                        // never given a context:
+                        //
+                        //   clean  rejects InvalidStateError:
+                        //          "OffscreenCanvas" has no rendering context.
+                        //   ours   resolves a Blob
+                        //
+                        // Not a message difference — a canvas the platform calls unusable
+                        // became usable, and any page can ask. The cheap tell does not exist:
+                        // `drawImage` of a context-less OffscreenCanvas does NOT throw
+                        // (measured), and every other probe for "has a context" either creates
+                        // one (getContext) or destroys the bitmap (transferToImageBitmap).
+                        //
+                        // So the platform is asked, but only when we have no reason to think it
+                        // will say yes: our own getContext wrapper records the canvases it hands
+                        // a context to, and for those the fast path is unchanged. For a canvas
+                        // we never saw get one, the native call on the SOURCE is the gate — it
+                        // rejects immediately and without encoding in the case this is about,
+                        // and in the rare case it resolves (a context obtained somewhere we do
+                        // not reach) it costs one extra encode and the noised copy still wins.
+                        var _gate = null;
+                        try { if (!_ocWithContext.has(this)) _gate = origCTB.apply(this, arguments); } catch (eG) {}
                         try {
                             if (this.width > 0 && this.height > 0) {
                                 // [FIX visible-canvas-mutation] Same logic as for
@@ -719,6 +795,12 @@
                                 }
                             }
                         } catch(e) {}
+                        // The gate's verdict comes first and its rejection is returned verbatim;
+                        // its blob is discarded, because ours is the noised one.
+                        if (_gate && typeof _gate.then === 'function') {
+                            var _t = target, _o = opts;
+                            return _gate.then(function () { return origCTB.call(_t, _o); });
+                        }
                         return origCTB.call(target, opts);
                     });
                 }
@@ -781,18 +863,20 @@
                     var fOrigGID = C2DP.getImageData;
                     if (typeof fOrigTD === 'function') {
                         HCEP.toDataURL = _mn(function toDataURL(f = undefined, q = undefined) {
-                            var noised = _renderNoisedCopy(this);
+                            var noised = _noisedOrSelf(this);
                             return fOrigTD.call(noised, f, q);
                         });
                     }
                     if (typeof fOrigTB === 'function') {
                         HCEP.toBlob = _mn(function toBlob(cb, f = undefined, q = undefined) {
-                            var noised = _renderNoisedCopy(this);
+                            if (arguments.length < 1) return fOrigTB.apply(this, arguments);
+                            var noised = _noisedOrSelf(this);
                             fOrigTB.call(noised, cb, f, q);
                         });
                     }
                     if (typeof fOrigGID === 'function') {
                         C2DP.getImageData = _mn(function getImageData(x, y, w, h) {
+                            if (arguments.length < 4) return fOrigGID.apply(this, arguments);
                             var d = _readViaScratch(this, x, y, w, h) || fOrigGID.call(this, x, y, w, h);
                             _noiseImageData(d, x, y, this, fOrigGID);
                             return d;
@@ -879,7 +963,7 @@
         if (_FEAT.webgl !== false) (function _installReadPixelsNoise() {
             var RGBA = 0x1908, UNSIGNED_BYTE = 0x1401;
             function _clamp8(v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
-            function _noiseReadback(gl, x, y, w, h, format, type, pixels, dstOffset) {
+            function _noiseReadback(gl, x, y, w, h, format, type, pixels, dstOffset, readRaw) {
                 // Same reason as _noiseImageData: the mode may only become known after the
                 // patch is in place, and a WebGL readback is part of the same picture.
                 if (_noiseOff()) return;
@@ -910,7 +994,77 @@
                         pixels[i + 2] = _clamp8(pixels[i + 2] + ((hh >>> 8 & 3) - 1));
                     }
                 }
-                _restoreFlatRegions({ data: pixels, width: w, height: h }, orig);
+                // [FIX the-readback-noise-was-strippable-one-pixel-at-a-time]
+                //
+                // This used to be `_restoreFlatRegions({data: pixels, width: w, height: h}, orig)`
+                // — flatness judged on THE RECTANGLE THAT WAS READ. A 1x1 read is one pixel
+                // with no neighbours inside itself, so it is trivially flat, so every
+                // single-pixel readback had its noise rolled straight back off. Measured on
+                // a shaded 64x64 quad, this build against clean, five pixels:
+                //
+                //     pixel     clean        block read    1x1 read
+                //     10,10     243/42/42    244/43/42     243/42/42
+                //     20,33     214/82/133   215/82/133    214/82/133
+                //     41,7      86/165/30    87/164/31     86/165/30
+                //
+                // Two defects in one line. The readback noise was STRIPPABLE — read the
+                // framebuffer pixel by pixel and the raw GPU output comes back, which is the
+                // whole of what this wrapper exists to hide. And the same pixel answered two
+                // different values depending on the size of the read, which is a
+                // contradiction a detector confirms in two calls; [FIX canvas-noise-skips-hard-edges]
+                // records the same invariant for the 2D path and says a per-read gate breaks it.
+                //
+                // The 2D path solved this long ago and the helper is already here: judge
+                // flatness on the SURROUNDING framebuffer, not on the read. One extra native
+                // readback of the rectangle grown by a pixel on each side, clamped to the
+                // drawing buffer. It is guarded and falls back to the old per-read rule,
+                // exactly as the getImageData path does — the pre-noise snapshot is taken
+                // above, before any of this, so a fallback still has something to restore
+                // from ([FIX worker-lost-flat-restore-when-the-expanded-read-failed]).
+                var d = { data: pixels, width: w, height: h };
+                var done = false;
+                var PACK_ALIGNMENT = 0x0D05, packSaved = null;
+                try {
+                    var dbW = gl.drawingBufferWidth | 0, dbH = gl.drawingBufferHeight | 0;
+                    var exX = x > 0 ? x - 1 : 0, exY = y > 0 ? y - 1 : 0;
+                    var exX2 = (x + w + 1) < dbW ? (x + w + 1) : dbW;
+                    var exY2 = (y + h + 1) < dbH ? (y + h + 1) : dbH;
+                    var exW = exX2 - exX, exH = exY2 - exY;
+                    if (readRaw && exW > 0 && exH > 0) {
+                        // [FIX the-neighbour-read-set-an-error-the-page-could-see] The
+                        // expanded read allocates a TIGHTLY packed buffer, and the driver
+                        // sizes a readback by PACK_ALIGNMENT. A page that has set alignment
+                        // 8 and asks for an odd width makes our buffer one row short, and
+                        // the read raises INVALID_OPERATION — an error the page then finds
+                        // in getError() and a clean browser never produced. Measured, this
+                        // sequence, clean against ours before this guard:
+                        //
+                        //   pixelStorei(PACK_ALIGNMENT, 8); readPixels(5,5,3,3,RGBA,UBYTE)
+                        //     clean  getError() 0
+                        //     ours   getError() 1282
+                        //
+                        // Skipping the expanded read when alignment is awkward would hand a
+                        // detector the switch that turns the noise off — set alignment 8 and
+                        // read pixel by pixel. So the alignment is pinned to 4 for the
+                        // duration of OUR read and put back exactly as it was; pixelStorei
+                        // with a legal value raises nothing, and the page cannot observe the
+                        // window between the two calls because this is all synchronous.
+                        try {
+                            var pa = gl.getParameter(PACK_ALIGNMENT);
+                            if (pa === 1 || pa === 2 || pa === 8) {
+                                gl.pixelStorei(PACK_ALIGNMENT, 4);
+                                packSaved = pa;
+                            }
+                        } catch (ePa) {}
+                        var exBuf = new Uint8Array(exW * exH * 4);
+                        readRaw(exX, exY, exW, exH, format, type, exBuf);
+                        _restoreFlatRegionsExpanded(d, x, y,
+                            { data: exBuf, width: exW, height: exH }, exX, exY);
+                        done = true;
+                    }
+                } catch (eEx) { /* a lost context, a framebuffer that refuses */ }
+                if (packSaved !== null) { try { gl.pixelStorei(PACK_ALIGNMENT, packSaved); } catch (eR) {} }
+                if (!done) _restoreFlatRegions(d, orig);
             }
             function _patch(proto) {
                 if (!proto || typeof proto.readPixels !== 'function') return;
@@ -921,7 +1075,14 @@
                 // a wrapper whose .length disagrees with native is a one-line detection.
                 proto.readPixels = _mn(function readPixels(x, y, width, height, format, type, pixels) {
                     var r = origRP.apply(this, arguments);
-                    try { _noiseReadback(this, x, y, width, height, format, type, pixels, arguments[7]); } catch (e) {}
+                    var self = this;
+                    // The neighbourhood read goes through the NATIVE method, bound to this
+                    // context: routing it through the wrapper would noise the very pixels
+                    // the flatness test is supposed to judge raw, and would recurse.
+                    var readRaw = function (rx, ry, rw, rh, rf, rt, buf) {
+                        return origRP.call(self, rx, ry, rw, rh, rf, rt, buf);
+                    };
+                    try { _noiseReadback(this, x, y, width, height, format, type, pixels, arguments[7], readRaw); } catch (e) {}
                     return r;
                 });
             }
@@ -1079,6 +1240,48 @@ if (!_STEALTH)     (function() {
                 return m ? m[1] : '16px';
             }
 
+            // [FIX the-font-classification-was-recomputed-on-every-call]
+            //
+            // Every measureText, fillText and strokeText ran the same three steps over the
+            // same font string: two regexes to split the CSS shorthand into families, a
+            // lookup of each family in the allowlist, and — for a blocked font — a third
+            // regex to build the normalized string. A page laying out text calls these
+            // thousands of times with ONE font; a font probe calls them thousands of times
+            // with a handful. tools/probe-cost.mjs measured measureText at 5.1x the native
+            // call, and this is the part of that ratio which is pure repetition.
+            //
+            // The answer depends on exactly two things, and the memo is tagged with both
+            // rather than timed out or cleared on a guess: the allowlist ARRAY — it arrives
+            // with the profile, ~300ms after the page's first script, so entries filled
+            // before it lands answer for the wrong list — and host mode, where every family
+            // passes. _prof() memoises on the raw string, so an unchanged profile hands back
+            // the SAME array object and the identity test hits; a new profile parses into a
+            // new array and misses. That is the trick _allowed() above already relies on,
+            // used here for the same reason.
+            var _fiMap = null, _fiRef = 0, _FI_CAP = 512;
+            function _fontInfo(fontStr) {
+                var ref = _hostHwNow() ? 'H' : ((_prof() && _prof().allowedFonts) || 0);
+                if (!_fiMap || _fiRef !== ref) { _fiMap = new Map(); _fiRef = ref; }
+                var hit = _fiMap.get(fontStr);
+                if (hit) return hit;
+                var fams = _families(fontStr);
+                var blocked = fams.some(function (f) { return !_generics[f] && !_allowed(f); });
+                // The normalized string belongs to the same answer — it is what the width is
+                // hashed under ([FIX noise-undid-the-normalisation]) — so it is resolved here
+                // rather than rebuilt at each call site.
+                var info = {
+                    blocked: blocked,
+                    norm: blocked ? (_sizePrefix(fontStr) + ' ' + _lastGeneric(fams)) : ''
+                };
+                // A page that measures endlessly many distinct font strings must not grow
+                // this without bound. The whole map goes rather than an LRU: eviction
+                // bookkeeping would cost more per hit than the parse it saves, and the next
+                // few calls simply re-parse.
+                if (_fiMap.size >= _FI_CAP) _fiMap.clear();
+                _fiMap.set(fontStr, info);
+                return info;
+            }
+
             // Scratch canvas for the normalized measurements (one for the whole page lifetime)
             var _tc = null;
             function _tmpCtx() {
@@ -1142,6 +1345,45 @@ if (!_STEALTH)     (function() {
             function _jsFallbackWidth(real, font, text) {
                 var h = _wasmHashStr(_wasmHashStr(_getSessionSeed() >>> 0, font), text);
                 return real + ((h & 0xFF) / 255 - 0.5) * 0.02;
+            }
+            /**
+             * [FIX the-width-substitution-was-recomputed-for-every-repeat-measurement]
+             *
+             * The substituted width is a pure function of (seed, normalized font, text,
+             * native width) — the hash above, or the same hash inside the WASM export, which
+             * has to encode both strings into linear memory to see them. Pages do not measure
+             * a string once: a layout pass measures the same runs over and over, and a font
+             * probe measures ONE string against a hundred families. Every one of those
+             * repeats paid for the hash again.
+             *
+             * The native measurement is deliberately NOT memoised, only its substitution.
+             * Width depends on context state this wrapper does not read — letterSpacing,
+             * wordSpacing, direction, fontKerning, textRendering — so a cache keyed on
+             * (font, text) alone would hand a page the wrong metrics and break its layout,
+             * which is a far worse defect than the cost being removed. The native width goes
+             * INTO the key instead: whatever the context state made it, the substitution for
+             * that exact number is what comes back.
+             *
+             * Tagged with the seed for the same reason _fontInfo is tagged with the
+             * allowlist: a seed resolved before the profile arrives is provisional and gets
+             * replaced by the authoritative one ([FIX provisional-seed-was-locked-forever]),
+             * and serving a width hashed under the old number after that is exactly the
+             * early-vs-late split this file has been bitten by twice.
+             */
+            var _swMap = null, _swSeed = -1, _SW_CAP = 4096;
+            function _substWidth(W, real, fontKey, text) {
+                var sd = _getSessionSeed() >>> 0;
+                if (!_swMap || _swSeed !== sd) { _swMap = new Map(); _swSeed = sd; }
+                var key = fontKey + ' ' + real + ' ' + text;
+                var hit = _swMap.get(key);
+                if (hit !== undefined) return hit;
+                var w = (W && W.substituteTextWidth)
+                    ? W.substituteTextWidth(real, fontKey, text)
+                    : _jsFallbackWidth(real, fontKey, text);
+                // Bounded the same way and for the same reason as _fiMap above.
+                if (_swMap.size >= _SW_CAP) _swMap.clear();
+                _swMap.set(key, w);
+                return w;
             }
             // [DEAD] _jsFallbackMetric and _metric lived here. Both became unreachable
             // when TextMetrics substitution was narrowed to `width` only
@@ -1238,8 +1480,8 @@ if (!_STEALTH)     (function() {
                 var m;
 
                 // Normalization: fonts outside allowedFonts → the generic fallback
-                var fams = _families(font);
-                var blocked = fams.some(function(f) { return !_generics[f] && !_allowed(f); });
+                var fi = _fontInfo(font);
+                var blocked = fi.blocked;
                 // [FIX noise-undid-the-normalisation] The key for the width substitution
                 // must be the NORMALIZED font string, not the requested one. The noise
                 // is hashed over (seed, font, text); if, after normalizing to a generic,
@@ -1263,7 +1505,7 @@ if (!_STEALTH)     (function() {
                     var s = _scratchFor(ctx);
                     var tc = s.ctx;
                     if (tc) {
-                        var normFont = _sizePrefix(font) + ' ' + _lastGeneric(fams);
+                        var normFont = fi.norm;
                         tc.font = normFont;
                         m = s.off ? origFn.call(tc, text) : _origMT.call(tc, text);
                         fontKey = normFont;
@@ -1272,10 +1514,7 @@ if (!_STEALTH)     (function() {
 
                 // leave zero alone — see [FIX perturbed-exact-zeros]: the native width of
                 // the empty string is exactly 0, a non-zero width there is impossible
-                var w = (m.width === 0) ? 0
-                    : (W && W.substituteTextWidth)
-                        ? W.substituteTextWidth(m.width, fontKey, text)
-                        : _jsFallbackWidth(m.width, fontKey, text);
+                var w = (m.width === 0) ? 0 : _substWidth(W, m.width, fontKey, text);
 
                 // [FIX integer-metrics-turned-into-floats] EVERY numeric field of
                 // TextMetrics used to be noised here. In Chrome the bounding-box metrics
@@ -1329,6 +1568,7 @@ if (!_STEALTH)     (function() {
             }
 
             CanvasRenderingContext2D.prototype.measureText = _mn(function measureText(text) {
+                if (arguments.length < 1) return _origMT.apply(this, arguments);
                 return _measureText(this, text, _origMT);
             });
 
@@ -1345,13 +1585,12 @@ if (!_STEALTH)     (function() {
             // ctx.font from the page sees the original requested value, as it should.
             function _drawWithNormalizedFont(origFn, ctx, text, x, y, maxWidth) {
                 var font = ctx.font || '';
-                var fams = _families(font);
-                var blocked = fams.some(function(f) { return !_generics[f] && !_allowed(f); });
-                if (!blocked) {
+                var fi = _fontInfo(font);
+                if (!fi.blocked) {
                     return (maxWidth !== undefined) ? origFn.call(ctx, text, x, y, maxWidth) : origFn.call(ctx, text, x, y);
                 }
                 var savedFont = ctx.font;
-                ctx.font = _sizePrefix(font) + ' ' + _lastGeneric(fams);
+                ctx.font = fi.norm;
                 try {
                     return (maxWidth !== undefined) ? origFn.call(ctx, text, x, y, maxWidth) : origFn.call(ctx, text, x, y);
                 } finally {
@@ -1361,12 +1600,14 @@ if (!_STEALTH)     (function() {
             var _origFillText = CanvasRenderingContext2D.prototype.fillText;
             if (_origFillText) {
                 CanvasRenderingContext2D.prototype.fillText = _mn(function fillText(text, x, y, maxWidth = undefined) {
+                    if (arguments.length < 3) return _origFillText.apply(this, arguments);
                     return _drawWithNormalizedFont(_origFillText, this, text, x, y, maxWidth);
                 });
             }
             var _origStrokeText = CanvasRenderingContext2D.prototype.strokeText;
             if (_origStrokeText) {
                 CanvasRenderingContext2D.prototype.strokeText = _mn(function strokeText(text, x, y, maxWidth = undefined) {
+                    if (arguments.length < 3) return _origStrokeText.apply(this, arguments);
                     return _drawWithNormalizedFont(_origStrokeText, this, text, x, y, maxWidth);
                 });
             }
@@ -1389,18 +1630,21 @@ if (!_STEALTH)     (function() {
                     var _oMT = OP.measureText;
                     if (_oMT) {
                         OP.measureText = _mn(function measureText(text) {
+                            if (arguments.length < 1) return _oMT.apply(this, arguments);
                             return _measureText(this, text, _oMT);
                         });
                     }
                     var _oFill = OP.fillText;
                     if (_oFill) {
                         OP.fillText = _mn(function fillText(text, x, y, maxWidth = undefined) {
+                            if (arguments.length < 3) return _oFill.apply(this, arguments);
                             return _drawWithNormalizedFont(_oFill, this, text, x, y, maxWidth);
                         });
                     }
                     var _oStroke = OP.strokeText;
                     if (_oStroke) {
                         OP.strokeText = _mn(function strokeText(text, x, y, maxWidth = undefined) {
+                            if (arguments.length < 3) return _oStroke.apply(this, arguments);
                             return _drawWithNormalizedFont(_oStroke, this, text, x, y, maxWidth);
                         });
                     }

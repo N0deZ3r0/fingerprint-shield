@@ -400,22 +400,22 @@ function load(src) {
       (PROFILES ? PROFILES.length + ' profiles' : 'no PROFILES') + ', ec=' + typeof ec);
 
     if (PROFILES && typeof ec === 'function') {
-      // guard against drift: popup must still declare exactly 5 warning rules
-      const ruleCount = (popSrc.match(/msgs\.push\(/g) || []).length;
-      t('popup renderWarnings still has 5 rules (mirror below stays valid)', ruleCount === 5, 'found ' + ruleCount);
-
-      const warnFor = p => {
-        const m = [];
-        if (p.cores >= 12 && p.memory < 16) m.push('cores>=12 with <16GB');
-        if (p.screenW >= 3840 && p.cores < 8) m.push('4K with <8 cores');
-        if (p.memory > 8 && p.memory !== 16 && p.memory !== 32) m.push('deviceMemory not bucketed');
-        if ((p.gpuKey === 'nvidia_3060' || p.gpuKey === 'nvidia_3070') && p.memory < 16) m.push('NVIDIA with <16GB');
-        if (p.gpuKey === 'intel_uhd' && (p.cores >= 12 || p.memory >= 16)) m.push('UHD with high CPU/RAM');
-        return m;
-      };
+      // [CLEANUP] A MIRROR of the popup's five coherence rules stood here, with a drift
+      // guard that counted `msgs.push(` in popup.js to check the copy was still in step.
+      // The original is gone: those rules were a warning box no shipped profile could
+      // trigger (0 on all seven, measured), over a table that is a const — a build-time
+      // check wearing a runtime costume. They live in test/profilecoherence.mjs now, which
+      // checks EVERY row rather than the selected one and carries a negative control for
+      // each rule. Copying them here a third time would be exactly the drift the guard
+      // existed to catch, so the copy goes with the original.
+      //
+      // What stays is the part that is NOT one row against itself: the popup's table
+      // against background.js's enforceCoherence, and the declared memory against what
+      // deviceMemory will actually report. Those are relationships BETWEEN two files,
+      // which is the thing a node suite reading one of them cannot see.
       const bucket = mem => mem <= 2 ? 2 : mem <= 4 ? 4 : mem <= 8 ? 8 : mem <= 16 ? 16 : 32;
 
-      const warned = [], rewritten = [], unbucketed = [];
+      const rewritten = [], unbucketed = [];
       PROFILES.forEach(p => {
         // "This machine" claims nothing — no numbers to bucket, no row for enforceCoherence,
         // which never runs on it (background.js afpIsHostRecord). Shape only.
@@ -425,9 +425,7 @@ function load(src) {
           }
           return;
         }
-        const w = warnFor(p);
-        if (w.length) warned.push(p.id + ': ' + w.join(', '));
-        const before = { gpu: p.gpuKey, cores: p.cores, memory: p.memory, screenW: p.screenW, screenH: p.screenH };
+        const before ={ gpu: p.gpuKey, cores: p.cores, memory: p.memory, screenW: p.screenW, screenH: p.screenH };
         const after = ec({ gpu: p.gpuKey, cores: p.cores, memory: p.memory, screenW: p.screenW, screenH: p.screenH, platform: p.platform });
         if (after.gpu !== before.gpu || after.cores !== before.cores || after.memory !== before.memory ||
             after.screenW !== before.screenW || after.screenH !== before.screenH) {
@@ -438,7 +436,6 @@ function load(src) {
         const specMem = (String(p.spec).match(/(\d+)GB/) || [])[1];
         if (specMem && Number(specMem) !== p.memory) unbucketed.push(p.id + ': spec says ' + specMem + 'GB but memory=' + p.memory);
       });
-      t('no built-in profile trips its own coherence warning', warned.length === 0, warned.join(' | '));
       t('no built-in profile is silently rewritten by enforceCoherence', rewritten.length === 0, rewritten.join(' | '));
       t('declared memory == reported deviceMemory == spec label, for every profile',
         unbucketed.length === 0, unbucketed.join(' | '));

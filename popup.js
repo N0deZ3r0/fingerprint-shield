@@ -40,8 +40,9 @@ const PROFILES = [
   // по спеке — бакетированное значение, и buildProfile в background.js сводит всё
   // выше 16 к 32 (_memChrome), то есть сайт ВСЕГДА видел 32, а не 64. Из-за этого
   // штатный, ничем не изменённый профиль постоянно подсвечивал собственное
-  // предупреждение renderWarnings «deviceMemory is bucketed (2/4/8/16/32)».
-  // Профиль объявляет ровно то, что реально репортится: 32.
+  // предупреждение «deviceMemory is bucketed (2/4/8/16/32)» (правило жило в попапе,
+  // сейчас — в test/profilecoherence.mjs). Профиль объявляет ровно то, что реально
+  // репортится: 32.
   // [FIX pc-power-claimed-an-8k-panel] It carried no explicit dpr, so the width fallback
   // answered 2 — and screen.width is CSS pixels, so "3840 wide at DPR 2" is a claim to a
   // 7680×4320 panel. 8K displays exist as products but do not appear anywhere in Steam's
@@ -68,7 +69,7 @@ const PROFILES = [
   // are left to the browser. The country, the timezone, the locale, the per-domain canvas
   // seed and the rest of the linkability work stay exactly as in the other rows.
   //
-  // Why it exists: README "Limits", items 2, 3, 4, 7 and 8 all describe the same gap — a claimed
+  // Why it exists: README "Limits" items 2, 3, 4, 7 and 8 all describe the same gap — a claimed
   // machine whose rasterisation, audio, text metrics, decoder and window geometry are
   // still this machine's. A profile that IS this machine has none of those contradictions
   // by construction, and puts the user in the crowd of everyone with the same hardware
@@ -141,6 +142,46 @@ function hostGpuLabel() {
   const m = /^ANGLE \([^,]+,\s*(.+?)\s*(?:\(0x[0-9A-Fa-f]+\)|Direct3D|,)/.exec(r);
   return (m ? m[1] : r).trim();
 }
+/**
+ * [FIX the-popup-never-said-the-screen-claim-was-dropped]
+ *
+ * `_screenAtLeastNative` in mw/mw-core.js reports the MACHINE's screen whole whenever the
+ * claimed pair does not CONTAIN it — both dimensions or neither, because raising one alone
+ * would invent a resolution no panel ships. So on an ordinary 1920×1080 host every row
+ * below that size substitutes nothing at all on the screen axis: the user picks 1366×768,
+ * the popup goes green, and pages keep reading 1920×1080. Nothing said so anywhere —
+ * the coherence rules only ever checked a row against ITSELF (cores against memory, GPU
+ * against RAM), never against the machine it has to run on — and they now live in
+ * test/profilecoherence.mjs, which is the right home for a check on a const table.
+ * README "Limits", item 7 described the
+ * consequence and no surface carried it to the person choosing.
+ *
+ * Read straight off `screen`: an extension page is not matched by the content scripts' host
+ * pattern, so these are the host's own numbers — the same reason audit.html can use itself
+ * as a clean control — and the two properties cost nothing, while `measureHost()` builds a
+ * WebGL context and only runs for the host row.
+ * They are CSS pixels under the host's own dpr, which is exactly the pair mw-core compares
+ * against, so the two answers cannot drift apart.
+ */
+function hostScreenPair() {
+  try { return { w: screen.width | 0, h: screen.height | 0 }; } catch (e) { return { w: 0, h: 0 }; }
+}
+/** Does this row's claim contain the machine's screen? The same test mw-core applies. */
+function screenClaimHolds(p) {
+  // The host row claims nothing, so there is nothing to drop.
+  if (!p || p.host) return true;
+  const s = hostScreenPair();
+  if (!s.w || !s.h) return true;   // nothing measured — say nothing
+  return (p.screenW | 0) >= s.w && (p.screenH | 0) >= s.h;
+}
+/** Why the chip is there, with both numbers in it. */
+function screenClaimTitle(p) {
+  const s = hostScreenPair();
+  return `Экран не подменяется: ${p.screenW}×${p.screenH} меньше вашего ${s.w}×${s.h}, ` +
+    'и страницы увидят ваш. Подменяется только строка не меньше вашего экрана по обеим сторонам. ' +
+    'Остальное — ядра, память, GPU — работает как обычно.';
+}
+
 function profileSpecLine(p) {
   if (p.host) {
     if (!HOST.cores) return 'реальное железо этой машины';
@@ -255,9 +296,11 @@ const profileDropdown = $('profileDropdown');
 const profileList = $('profileList');
 const profileName = $('profileName');
 const profileSpec = $('profileSpec');
+const profileScreenTag = $('profileScreenTag');
 const profileIcon = $('profileIcon');
-const warningsEl = $('warnings');
+const countryWarn = $('countryWarn');
 const countrySelect = $('countrySelect');
+const countryBtn = $('countryBtn');
 const dropdown = $('dropdown');
 const countryCode = $('countryCode');
 const countryName = $('countryName');
@@ -279,6 +322,23 @@ const siteHost = $('siteHost');
 const hero = $('hero');
 const heroTitle = $('heroTitle');
 const heroSub = $('heroSub');
+
+/**
+ * [FIX the-switches-never-said-which-way-they-pointed]
+ *
+ * Every one of the three carries role="switch", and not one of them ever wrote
+ * aria-checked — measured null on all three in a loaded popup. A switch whose state is
+ * unreadable is worse than a plain button: the role promises a state and then refuses to
+ * name it, so a screen reader announces "WebRTC, switch" and stops.
+ *
+ * The class is the CSS hook and stays; this is the one writer that keeps the attribute in
+ * step with it, so the two cannot drift the way they did by being set eight places apart.
+ */
+function setSwitch(el, on) {
+  if (!el) return;
+  el.classList.toggle('on', !!on);
+  el.setAttribute('aria-checked', on ? 'true' : 'false');
+}
 
 // [FIX hero-read-its-state-out-of-the-chip-markup] The six per-module chips are gone from
 // the popup — they carried the same answer the hero line already gives, in six pieces.
@@ -329,7 +389,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderProfiles();
   renderCountryHeader();
   renderOptionList();
-  renderWarnings();
   bindEvents();
   // Last, and not awaited: the popup is fully usable before this answers, and on an
   // offline browser it never will.
@@ -349,14 +408,22 @@ async function loadSaved() {
 
 async function updateTabInfo(tab) {
   const empty = document.getElementById('emptyState');
+  // [FIX three-ways-of-saying-there-is-no-site] The card decides things about the current
+  // site; with no site it held three disabled switches under a line repeating what the hero
+  // and the note both already said. The note takes its place instead — which also takes the
+  // tallest reachable state back under Chrome's cap, where the exit-country row had just
+  // pushed it (627px measured, cap 600).
+  const card = document.getElementById('siteCard');
   try {
     if (tab && tab.url && tab.url.startsWith('http')) {
       tabHost.textContent = new URL(tab.url).hostname;
       if (tabBadge) tabBadge.style.display = '';
       if (empty) empty.hidden = true;
+      if (card) card.hidden = false;
     } else {
       tabHost.textContent = 'Нет активной вкладки';
       if (empty) empty.hidden = false;
+      if (card) card.hidden = true;
       // keep mode pill visible
       if (tabBadge) tabBadge.style.display = '';
     }
@@ -414,6 +481,12 @@ function renderProfiles() {
   if (profileName) profileName.textContent = cur.name;
   if (profileSpec) profileSpec.textContent = profileSpecLine(cur);
   if (profileIcon) profileIcon.innerHTML = ICONS[cur.icon] || ICONS.laptop;
+  // The selected row repeats the chip, so the fact is visible without opening the list.
+  if (profileScreenTag) {
+    const holds = screenClaimHolds(cur);
+    profileScreenTag.hidden = holds;
+    profileScreenTag.title = holds ? '' : screenClaimTitle(cur);
+  }
   if (!profileList) return;
   profileList.innerHTML = '';
   PROFILES.forEach(p => {
@@ -422,6 +495,7 @@ function renderProfiles() {
     el.className = 'option' + (selected ? ' selected' : '');
     el.setAttribute('role', 'option');
     el.setAttribute('aria-selected', selected ? 'true' : 'false');
+    el.id = 'profile-opt-' + p.id;   // aria-activedescendant needs a name to point at
     el.dataset.id = p.id;
     // textContent throughout: the host row carries a renderer string read off the GPU.
     const two = document.createElement('span');
@@ -434,34 +508,158 @@ function renderProfiles() {
     two.appendChild(name);
     two.appendChild(sub);
     el.appendChild(two);
+    // One chip per row: "хост" for the machine row, otherwise the screen note when this
+    // row's claim would be dropped on this machine. They cannot both apply — the host row
+    // claims no screen either.
     if (p.host) {
       const tag = document.createElement('span');
       tag.className = 'tag';
       tag.textContent = 'хост';
+      el.appendChild(tag);
+    } else if (!screenClaimHolds(p)) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = 'экран хоста';
+      tag.title = screenClaimTitle(p);
       el.appendChild(tag);
     }
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       selectedProfileId = p.id;
       renderProfiles();
-      renderWarnings();
       closeProfileDropdown();
     });
     profileList.appendChild(el);
   });
 }
+/**
+ * [FIX neither-picker-could-be-reached-from-a-keyboard]
+ *
+ * Measured on a loaded popup: the country list renders 67 rows and the machine list 7, and
+ * the number of them a keyboard can reach is ZERO. They are <div>s with role="option" and
+ * no tabindex, so Tab steps straight from the button over the whole list to the next
+ * control; arrows did nothing, Enter did nothing, and Escape did not close either list.
+ * Picking a country or a machine required a mouse, in a window whose every other control
+ * is a real button.
+ *
+ * The rows stay <div>s and stay OUT of the tab order — 67 tab stops would be its own
+ * defect. This is the listbox pattern instead: focus rests on one element (the search input
+ * for the country list, the list itself for the machine list, which has no input), the
+ * arrows move a cursor class, and `aria-activedescendant` names the cursor row to a screen
+ * reader without moving focus off the thing being typed into.
+ *
+ * Enter dispatches the row's own click. That is deliberate rather than lazy: the click
+ * handler is where selection, re-render and closing already live, so the keyboard cannot
+ * drift from the mouse by having a second copy of that logic.
+ *
+ * One helper, two callers, for the same reason the two pickers share every CSS class: the
+ * country one updated aria-expanded and the machine one did not, which is exactly the kind
+ * of split that appears when identical-looking controls are wired twice.
+ */
+function lbRows(list) { return Array.from(list.querySelectorAll('.option')); }
+
+function lbSetActive(list, holder, el) {
+  lbRows(list).forEach((o) => o.classList.toggle('active', o === el));
+  if (el && el.id) {
+    holder.setAttribute('aria-activedescendant', el.id);
+    // `nearest` and not `center`: the list is scrolled by this call on every arrow press,
+    // and centering would make a two-row nudge jump the whole viewport.
+    try { el.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+  } else {
+    holder.removeAttribute('aria-activedescendant');
+  }
+}
+
+/** The cursor starts on the current choice, not at the top: arrowing away from what is
+ *  already selected is the movement a user expects, and on the country list the selected
+ *  row can be 200 rows down. */
+function lbEnsureActive(list, holder) {
+  const rows = lbRows(list);
+  if (!rows.length) { lbSetActive(list, holder, null); return; }
+  if (rows.some((o) => o.classList.contains('active'))) return;
+  lbSetActive(list, holder, rows.find((o) => o.classList.contains('selected')) || rows[0]);
+}
+
+function lbMove(list, holder, step) {
+  const rows = lbRows(list);
+  if (!rows.length) return;
+  const cur = rows.findIndex((o) => o.classList.contains('active'));
+  let next;
+  if (step === 'first') next = 0;
+  else if (step === 'last') next = rows.length - 1;
+  else next = cur < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, cur + step));
+  lbSetActive(list, holder, rows[next]);
+}
+
+/**
+ * @param {object} cfg select/btn/list/holder plus the open/close pair the caller already has.
+ *   `holder` is the element focus actually sits on while the list is open, and therefore the
+ *   element that carries aria-activedescendant.
+ */
+function wireListbox(cfg) {
+  const { select, btn, list } = cfg;
+  if (!select || !btn || !list) return;
+  const holder = () => cfg.holder() || list;
+  // Bound on the container so one listener serves the button, the search input and the list
+  // — every place focus can be while this picker is in play.
+  select.addEventListener('keydown', (e) => {
+    const open = cfg.isOpen();
+    if (!open) {
+      // A closed combobox opens on Down/Up as well as on Enter/Space, which the button
+      // already does natively.
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        cfg.open();
+        lbEnsureActive(list, holder());
+      }
+      return;
+    }
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); lbMove(list, holder(), 1); break;
+      case 'ArrowUp': e.preventDefault(); lbMove(list, holder(), -1); break;
+      case 'Home': e.preventDefault(); lbMove(list, holder(), 'first'); break;
+      case 'End': e.preventDefault(); lbMove(list, holder(), 'last'); break;
+      case 'Enter': {
+        e.preventDefault();
+        const el = list.querySelector('.option.active');
+        // The row's own handler: one selection path for mouse and keyboard alike.
+        if (el) el.click();
+        break;
+      }
+      case 'Escape':
+        e.preventDefault();
+        // close() restores focus to the button — it has to, because a selection made with
+        // Enter closes the same way and left activeElement on <body> until it did.
+        cfg.close();
+        break;
+      case 'Tab':
+        // Tab leaves the picker; a list left open behind it would float over whatever the
+        // user moved to. Not prevented — the move itself is what they asked for.
+        cfg.close();
+        break;
+      default: break;
+    }
+  });
+}
+
 function openProfileDropdown() {
   if (!profileSelect) return;
   closeDropdown();
   profileDropdown.classList.add('open');
   profileSelect.classList.add('open');
   $('profileBtn').setAttribute('aria-expanded', 'true');
+  // No search input here, so the list itself holds focus and carries the cursor.
+  lbEnsureActive(profileList, profileList);
+  try { profileList.focus({ preventScroll: true }); } catch (e) { profileList.focus(); }
 }
 function closeProfileDropdown() {
   if (!profileSelect) return;
+  const had = profileDropdown.contains(document.activeElement);
   profileDropdown.classList.remove('open');
   profileSelect.classList.remove('open');
   $('profileBtn').setAttribute('aria-expanded', 'false');
+  profileList.removeAttribute('aria-activedescendant');
+  if (had) $('profileBtn').focus();
 }
 
 // The exit country, as background.js read it from Cloudflare's trace endpoint. Null until
@@ -480,19 +678,28 @@ function renderCountryHeader() {
   // stays true while the profile claims Estonia over a Frankfurt exit node, which is the
   // first axis a fingerprinter actually checks.
   //
-  // It is written into the timezone line rather than added as a row, and that is not a
-  // cosmetic choice: the popup rests at 590px against Chrome's 600px cap, and the existing
-  // #warnings box takes it to 628 the moment it holds a single line (measured). A new row
-  // here would have put every mismatch behind a scrollbar. The line under the country name
-  // is already the "detail about this country" slot, it is exactly where the user is
-  // looking when they pick one, and swapping its text costs no height at all.
+  // [FIX the-warning-ate-the-timezone] It used to be written OVER the timezone, and the
+  // justification was arithmetic: the popup rested at 590px against Chrome's 600px cap and a
+  // row would not fit. That arithmetic has moved — the popup rests at 551px, and
+  // test/popupfit.mjs has been printing the headroom on every run since the feature landed.
+  //
+  // Overwriting was never free, whatever the height said. The timezone is what the profile
+  // CLAIMS, the warning is where the address actually is, and a user deciding what to do
+  // about the disagreement needs both at once; showing one by deleting the other left them
+  // reading a country name with no zone under it. So the zone stays put and the warning gets
+  // a line of its own, nowrap, which costs the height of one line and nothing more.
   const mismatch = exitCC && exitCC !== c.code;
-  countryTz.textContent = mismatch ? `IP: ${exitName(exitCC)} — не совпадает` : c.tz;
-  countryTz.classList.toggle('warn', !!mismatch);
-  countryTz.title = mismatch
-    ? `Профиль заявляет ${c.name} (${c.code}), а запросы уходят с адреса в ${exitName(exitCC)} (${exitCC}). ` +
-      `Это расхождение видно любому сайту без единой строчки JS. Смените страну или узел VPN.`
-    : '';
+  countryTz.textContent = c.tz;
+  countryTz.classList.remove('warn');
+  countryTz.title = '';
+  if (countryWarn) {
+    countryWarn.hidden = !mismatch;
+    countryWarn.textContent = mismatch ? `Адрес выхода: ${exitName(exitCC)} — не совпадает` : '';
+    countryWarn.title = mismatch
+      ? `Профиль заявляет ${c.name} (${c.code}), а запросы уходят с адреса в ${exitName(exitCC)} (${exitCC}). ` +
+        `Это расхождение видно любому сайту без единой строчки JS. Смените страну или узел VPN.`
+      : '';
+  }
 }
 
 /** A country name for a code we may not offer — the exit can be anywhere. */
@@ -529,6 +736,7 @@ function renderOptionList(filter = '') {
       el.className = 'option' + (c.code === selectedCountryCode ? ' selected' : '');
       el.setAttribute('role', 'option');
       el.setAttribute('aria-selected', c.code === selectedCountryCode ? 'true' : 'false');
+      el.id = 'country-opt-' + c.code;
       el.innerHTML = `
         <span>${c.name}</span>
         <span class="code">${c.code}</span>`;
@@ -537,46 +745,44 @@ function renderOptionList(filter = '') {
         selectedCountryCode = c.code;
         renderCountryHeader();
         closeDropdown();
-        renderWarnings();
       });
       optionList.appendChild(el);
     });
+  // Re-place the cursor: the list above was just rebuilt, so the row that carried it is
+  // gone. Without this, typing anything would leave Enter with nothing to press.
+  if (countrySelect.classList.contains('open')) lbEnsureActive(optionList, searchInput);
 }
 
 function openDropdown() {
   closeProfileDropdown();
   dropdown.classList.add('open');
   countrySelect.classList.add('open');
+  // [FIX the-country-button-never-said-it-was-open] The profile button below has always
+  // updated this; this one never did, so anything reading the popup aloud was told the menu
+  // stayed shut while it was open on screen. Two pickers that share every class and every
+  // rule behaved differently because they were wired twice.
+  countryBtn.setAttribute('aria-expanded', 'true');
+  lbEnsureActive(optionList, searchInput);
   setTimeout(() => searchInput.focus(), 40);
 }
 function closeDropdown() {
+  const had = dropdown.contains(document.activeElement);
   dropdown.classList.remove('open');
   countrySelect.classList.remove('open');
+  countryBtn.setAttribute('aria-expanded', 'false');
+  searchInput.removeAttribute('aria-activedescendant');
   searchInput.value = '';
   renderOptionList();
+  if (had) countryBtn.focus();
 }
 
-function renderWarnings() {
-  const p = PROFILES.find(x => x.id === selectedProfileId);
-  if (!p) return;
-  const msgs = [];
-  // The host row claims nothing, so nothing about it can be incoherent; its one caveat
-  // (the hardware is not substituted) is on the row itself.
-  if (p.host) {
-    warningsEl.innerHTML = '';
-    warningsEl.hidden = true;
-    return;
-  }
-  if (p.cores >= 12 && p.memory < 16) msgs.push('High core count is typically paired with 16 GB+ RAM');
-  if (p.screenW >= 3840 && p.cores < 8) msgs.push('4K display is unusual with a low-core-count CPU');
-  if (p.memory > 8 && p.memory !== 16 && p.memory !== 32) msgs.push('deviceMemory is bucketed (2/4/8/16/32)');
-  if ((p.gpuKey === 'nvidia_3060' || p.gpuKey === 'nvidia_3070') && p.memory < 16)
-    msgs.push('NVIDIA GPU with low RAM looks incoherent');
-  if (p.gpuKey === 'intel_uhd' && (p.cores >= 12 || p.memory >= 16))
-    msgs.push('UHD 630 rarely pairs with high-end CPU/RAM');
-  warningsEl.innerHTML = msgs.map(m => `<div class="warning">· ${m}</div>`).join('');
-  warningsEl.hidden = msgs.length === 0;
-}
+// [CLEANUP] renderWarnings + #warnings. Five coherence rules over the PROFILES table above,
+// written in English inside a Russian UI, and unreachable: measured 0 warnings on all seven
+// shipped rows. PROFILES is a const in this file, so the box could only ever fire for
+// someone EDITING it — which is a build-time check wearing a runtime box. The rules are
+// asserted over the shipped table in test/profilecoherence.mjs now, where a bad edit fails
+// the suite instead of reaching a user, and the ~38px they reserved paid for the
+// exit-country warning to stop overwriting the timezone.
 
 let _statusTimer = null;
 function showStatus(msg, type, duration = 2500) {
@@ -662,7 +868,6 @@ async function handleApply() {
 }
 
 function bindEvents() {
-  const countryBtn = $('countryBtn');
   if (countryBtn) {
     countryBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -682,22 +887,107 @@ function bindEvents() {
     if (!countrySelect.contains(e.target)) closeDropdown();
     if (profileSelect && !profileSelect.contains(e.target)) closeProfileDropdown();
   });
+  // Both lists become operable without a mouse. One helper, two callers — see wireListbox.
+  wireListbox({
+    select: countrySelect, btn: countryBtn, list: optionList,
+    holder: () => searchInput,
+    isOpen: () => countrySelect.classList.contains('open'),
+    open: openDropdown, close: closeDropdown
+  });
+  wireListbox({
+    select: profileSelect, btn: $('profileBtn'), list: profileList,
+    holder: () => profileList,
+    isOpen: () => profileSelect.classList.contains('open'),
+    open: openProfileDropdown, close: closeProfileDropdown
+  });
   applyBtn.addEventListener('click', handleApply);
   webrtcToggle.addEventListener('click', handleWebrtcToggle);
   swToggle.addEventListener('click', handleSwToggle);
   if (cspToggle) cspToggle.addEventListener('click', handleCspToggle);
-  document.querySelectorAll('#modeGrid .mode').forEach(el => {
+  const modes = Array.from(document.querySelectorAll('#modeGrid .mode'));
+  modes.forEach((el, i) => {
     el.addEventListener('click', () => selectMode(el.getAttribute('data-mode')));
+    el.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
+        : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      const next = modes[(i + d + modes.length) % modes.length];
+      next.focus();
+      selectMode(next.getAttribute('data-mode'));
+    });
   });
+}
+
+/**
+ * [FIX the-stand-down-note-erased-the-webrtc-one]
+ *
+ * Two notes ride in the site card's one line, and they are decided by two different reads at
+ * two different moments: the global WebRTC switch comes back from `getWebrtcStatus`, the
+ * stand-down boolean comes back later from `chrome.scripting` in the tab. Both wrote
+ * `siteHost.textContent` whole, so the later one erased the earlier one. Measured through the
+ * real popup, four combinations:
+ *
+ *   webrtc ON , standDown OFF   "127.0.0.1"
+ *   webrtc ON , standDown ON    "127.0.0.1 · машина не подменяется"
+ *   webrtc OFF, standDown OFF   "127.0.0.1 · WebRTC выключен в настройках"
+ *   webrtc OFF, standDown ON    "127.0.0.1 · машина не подменяется"      <- the note is gone
+ *
+ * The comment on the old line even claimed "showStandDown() only ever ADDS"; it did not, and
+ * the cell it broke is the common one — stand-down fires on github.com and youtube.com, and
+ * the note it dropped is the whole of [FIX the-off-state-was-invisible].
+ *
+ * So the line has ONE writer now and the two notes are held apart as state. Order is not
+ * cosmetic: `.card.site .hint` is nowrap + ellipsis (popup.css), so with both notes present
+ * the tail is what gets cut — and the stand-down half already has a title to be recovered
+ * from, while the WebRTC half's only channel is the visible line. That title now leads with
+ * the whole line, the same way showStatus puts its full message on the bar, so the cut half
+ * is readable rather than merely present. No new row and no wrap: the card is still one
+ * line, which is what keeps the popup under Chrome's 600px cap.
+ */
+const SITE_NOTE_WEBRTC = 'WebRTC выключен в настройках';
+const SITE_NOTE_STANDDOWN = 'машина не подменяется';
+const SITE_NOTE_SD_TITLE =
+  'Этот сайт ограничивает Trusted Types или запрещает blob-воркеры, ' +
+  'поэтому его собственные воркеры читают настоящую машину. Окно отвечает так же — ' +
+  'иначе сайт видит противоречие в две строки. Страна, зона, локаль и шум канваса ' +
+  'работают как обычно. Переключатель «CSP → воркеры» ниже — это рычаг для такого сайта.';
+// [FIX the-host-was-printed-twice] The line used to LEAD with the hostname, which the hero
+// already prints — and with both notes appended it ran past the card and was ellipsised
+// (measured: clipped true with WebRTC off on a standing-down site). `host` stays as the
+// identity, because showStandDown() guards on it, but it is no longer what gets drawn:
+// `lead` is, and the width the duplicate was taking goes to the notes.
+const SITE_NOTE_BASE = 'Только для этого сайта';
+const SITE_NOTE_NOTAB = 'Нет активной вкладки';
+let siteNote = { host: '', lead: SITE_NOTE_BASE, webrtc: false, standDown: false };
+
+function renderSiteHint() {
+  const notes = [];
+  if (siteNote.webrtc) notes.push(SITE_NOTE_WEBRTC);
+  if (siteNote.standDown) notes.push(SITE_NOTE_STANDDOWN);
+  // The label is what the line says when it has nothing else to say. With a note on it the
+  // label is the least useful thing there — the line is nowrap and ellipsises from the tail,
+  // so a fixed prefix spends the width the notes need. Measured with both notes present:
+  // with the prefix the line was still cut, without it it fits.
+  const parts = notes.length ? notes : [siteNote.lead];
+  const txt = parts.join(' · ');
+  siteHost.textContent = txt;
+  // Amber stays the stand-down state alone — the module being off in the options page is a
+  // different statement and gets words, not colour (see updateWebrtcToggle below).
+  siteHost.classList.toggle('warn', siteNote.standDown);
+  // The title is the stand-down channel and clears with it. It leads with the full line so
+  // the ellipsised half is recoverable; the WebRTC note on its own does not reach the edge,
+  // so it gets no title, exactly as before this fix.
+  siteHost.title = siteNote.standDown ? txt + '\n\n' + SITE_NOTE_SD_TITLE : '';
 }
 
 async function updateWebrtcToggle() {
   try {
     const res = await chrome.runtime.sendMessage({ type: 'getWebrtcStatus' });
     if (!res || !res.host) {
-      webrtcToggle.style.opacity = '0.4';
-      webrtcToggle.style.pointerEvents = 'none';
-      siteHost.textContent = 'нет активной вкладки';
+      webrtcToggle.disabled = true;
+      siteNote = { host: '', lead: SITE_NOTE_NOTAB, webrtc: false, standDown: false };
+      renderSiteHint();
       return;
     }
     // The module can be off globally (options page). The switch still records the
@@ -718,19 +1008,70 @@ async function updateWebrtcToggle() {
     // the label's colour. Amber means "this site is off the default", which is the thing
     // worth noticing a week later; the module being off in the options page is a different
     // statement and gets the words.
-    siteHost.textContent = res.enabled === false ? res.host + ' · WebRTC выключен в настройках' : res.host;
+    //
+    // The line is rebuilt from scratch on every update, so the stand-down state it may be
+    // carrying from the previous site goes with it: showStandDown() re-decides it for THIS
+    // host and re-renders, and both notes come back together.
+    webrtcToggle.disabled = false;
+    siteNote = { host: res.host, lead: SITE_NOTE_BASE, webrtc: res.enabled === false, standDown: false };
+    renderSiteHint();
     webrtcLabel.classList.toggle('warn', res.enabled !== false && !res.protected);
     webrtcLabel.classList.toggle('off', res.enabled === false);
-    webrtcToggle.classList.toggle('on', res.protected && res.enabled !== false);
+    setSwitch(webrtcToggle, res.protected && res.enabled !== false);
+    showStandDown(res.host);
   } catch (e) {}
 }
 
+/**
+ * [FIX the-popup-never-said-the-site-had-stood-down]
+ *
+ * On an origin that restricts Trusted-Types policy names or refuses blob: workers, mw-core
+ * stands the window down: the machine answers from the BROWSER, whole, because the site's
+ * own workers read it and a window that claimed otherwise would contradict them in two
+ * lines (README "Limits", item 6). It is the fix working — and it is total, per site, and common
+ * (github.com, youtube.com).
+ *
+ * Nothing in this popup said so. `grep standDown popup.js` was empty: the state lived in
+ * audit.html and in the console checks, while the popup went on showing every module green.
+ * That is the same defect as the screen chip on the profile row, in a bigger place: the
+ * user believes in a substitution that this site has deliberately switched off.
+ *
+ * THE SOURCE IS THE DECISION, NOT A RE-DERIVATION. `_standDownNow()` publishes its frozen
+ * answer on `window.__t0.sd` (that is how child frames inherit it), so the popup reads that
+ * one boolean rather than re-reading `v.ui.tt` / `v.ui.wb` and re-implementing the route and
+ * timeOrigin matching audit.js does — a second implementation of a rule this fiddly would
+ * disagree with the first on some origin, and the popup would be confidently wrong.
+ *
+ * It rides in the hostname line, amber, for the reason the exit-country warning does: a new
+ * row does not fit under Chrome's 600px cap. Only when it is TRUE — an absent `__t0` (a
+ * chrome:// tab, a page our content scripts never reached) says nothing rather than "fine".
+ */
+async function showStandDown(host) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) return;
+    const res = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, world: 'MAIN',
+      func: () => { try { return !!(window.__t0 && window.__t0.sd); } catch (e) { return false; } }
+    });
+    if (!(res && res[0] && res[0].result === true)) return;
+    // [FIX the-stand-down-note-erased-the-webrtc-one] The answer arrives after
+    // updateWebrtcToggle has already rendered, so this sets its own note and re-renders
+    // rather than writing the line — which is what dropped the WebRTC one. The host guard is
+    // for the same asynchrony: a verdict for a tab the popup has since moved off must not
+    // stamp the line that now names a different site.
+    if (siteNote.host !== host) return;
+    siteNote.standDown = true;
+    renderSiteHint();
+  } catch (e) { /* chrome://, an extension page, a tab we cannot script — say nothing */ }
+}
+
 async function handleWebrtcToggle() {
-  webrtcToggle.style.pointerEvents = 'none';
+  webrtcToggle.disabled = true;
   try {
     const res = await chrome.runtime.sendMessage({ type: 'toggleWebrtcForCurrentTab' });
     if (res && res.ok) {
-      webrtcToggle.classList.toggle('on', res.protected);
+      setSwitch(webrtcToggle, res.protected);
       // The label carries the amber "this site is off the default" state, and the click
       // handler has to set it too — updateWebrtcToggle only runs when the popup opens.
       webrtcLabel.classList.toggle('warn', !res.protected);
@@ -768,7 +1109,7 @@ async function handleWebrtcToggle() {
   } catch (e) {
     showStatus('Не удалось переключить WebRTC', 'err');
   } finally {
-    webrtcToggle.style.pointerEvents = '';
+    webrtcToggle.disabled = false;
   }
 }
 
@@ -781,21 +1122,21 @@ async function updateSwToggle() {
   try {
     const res = await chrome.runtime.sendMessage({ type: 'getSwStatus' });
     if (!res || !res.host) {
-      swToggle.style.opacity = '0.4';
-      swToggle.style.pointerEvents = 'none';
+      swToggle.disabled = true;
       return;
     }
+    swToggle.disabled = false;
     swLabel.classList.toggle('warn', !!res.blocked);
-    swToggle.classList.toggle('on', !res.blocked);
+    setSwitch(swToggle, !res.blocked);
   } catch (e) {}
 }
 
 async function handleSwToggle() {
-  swToggle.style.pointerEvents = 'none';
+  swToggle.disabled = true;
   try {
     const res = await chrome.runtime.sendMessage({ type: 'toggleSwForCurrentTab' });
     if (res && res.ok) {
-      swToggle.classList.toggle('on', !res.blocked);
+      setSwitch(swToggle, !res.blocked);
       swLabel.classList.toggle('warn', !!res.blocked);
       // Reloading is not cosmetic here: blocking also unregisters what the site already
       // installed, and allowing it again only matters from the next load on.
@@ -817,7 +1158,7 @@ async function handleSwToggle() {
   } catch (e) {
     showStatus('Не удалось переключить Service Worker', 'err');
   } finally {
-    swToggle.style.pointerEvents = '';
+    swToggle.disabled = false;
   }
 }
 
@@ -830,11 +1171,11 @@ async function updateCspToggle() {
   try {
     const res = await chrome.runtime.sendMessage({ type: 'getCspRewriteStatus' });
     if (!res || !res.host) {
-      cspToggle.style.opacity = '0.4';
-      cspToggle.style.pointerEvents = 'none';
+      cspToggle.disabled = true;
       return;
     }
-    cspToggle.classList.toggle('on', !!res.on);
+    cspToggle.disabled = false;
+    setSwitch(cspToggle, !!res.on);
     cspLabel.classList.toggle('warn', !!res.on);
     cspLabel.classList.toggle('off', !res.on && !res.needed);
     cspLabel.title = res.on
@@ -846,17 +1187,17 @@ async function updateCspToggle() {
 }
 
 async function handleCspToggle() {
-  cspToggle.style.pointerEvents = 'none';
+  cspToggle.disabled = true;
   try {
     const res = await chrome.runtime.sendMessage({ type: 'toggleCspRewriteForCurrentTab' });
     if (res && res.ok && res.unneeded) {
       // Read and found harmless: nothing was rewritten and the switch stays off.
-      cspToggle.classList.remove('on');
+      setSwitch(cspToggle, false);
       cspLabel.classList.remove('warn');
       cspLabel.classList.add('off');
       showStatus('CSP сайта не мешает подмене — ничего не переписано', 'ok');
     } else if (res && res.ok) {
-      cspToggle.classList.toggle('on', !!res.on);
+      setSwitch(cspToggle, !!res.on);
       cspLabel.classList.toggle('warn', !!res.on);
       cspLabel.classList.remove('off');
       let reloaded = false;
@@ -876,13 +1217,17 @@ async function handleCspToggle() {
   } catch (e) {
     showStatus('Не удалось переключить CSP', 'err');
   } finally {
-    cspToggle.style.pointerEvents = '';
+    cspToggle.disabled = false;
   }
 }
 
 function updateModeUI() {
   document.querySelectorAll('#modeGrid .mode').forEach(el => {
-    el.classList.toggle('active', el.getAttribute('data-mode') === currentMode);
+    const on = el.getAttribute('data-mode') === currentMode;
+    el.classList.toggle('active', on);
+    // role="radio" without this says there is a choice and refuses to say which — the same
+    // gap the three switches had. One writer, next to the class it must agree with.
+    el.setAttribute('aria-checked', on ? 'true' : 'false');
   });
   if (tabBadge) {
     const labels = { normal: 'Обычный', hidden: 'Скрытый' };

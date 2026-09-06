@@ -443,8 +443,22 @@ if (!_STEALTH)     (function() {
             // entries/[Symbol.iterator] у document.fonts. Имя берём вычисляемым
             // ключом объекта (единственный способ задать имя динамически).
             var _fsTarget = proto || _inst;
+            // [FIX the-iteration-stubs-reported-no-parameters] The note above fixed the NAME
+            // and stopped there. Native FontFaceSet.prototype.forEach reports .length 1 (the
+            // callback is required, thisArg is not) and this stub reported 0 — measured, and
+            // NOT in dev-vsnative.html's hand-written list, which checks size/check/load on
+            // this very interface and never forEach. The arity is copied from whatever the
+            // platform reports rather than written as a constant: keys/values/entries are 0
+            // in both today, and a browser that changes one of them should not need an edit
+            // here to stay matched.
             ['forEach','keys','values','entries'].forEach(function(m) {
                 var stub = ({ [m]: function() { return m === 'forEach' ? undefined : _emptyIter(); } })[m];
+                try {
+                    var natFn = _fsTarget[m];
+                    if (typeof natFn === 'function') {
+                        Object.defineProperty(stub, 'length', { value: natFn.length, configurable: true });
+                    }
+                } catch (eLen) {}
                 try { Object.defineProperty(_fsTarget, m, { value: _mn(stub), writable: true, configurable: true }); } catch(e) {}
             });
             // [Symbol.iterator] у setlike-интерфейсов — это тот же values()

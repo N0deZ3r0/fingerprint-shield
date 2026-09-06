@@ -2296,10 +2296,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         return true;
     }
-    if (message.type === 'checkConnection') {
-        sendResponse({ connected: true });
-        return false;
-    }
     if (message.type === 'applyToCurrentTab') {
         (async () => {
             try {
@@ -2427,6 +2423,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         })();
         return true;
     }
+    // [FIX the-learned-lists-were-the-invisible-ones] The options page shows and clears three
+    // per-site lists — the CSP rewrite, the service-worker block and the WebRTC exceptions —
+    // and the user CHOSE every entry in all three with a switch. The six lists below are the
+    // opposite: this extension writes them by itself, one entry per host (or route) whose CSP
+    // has a shape worth remembering, as the user browses. They had no screen, no count and no
+    // way to clear, they grow without a cap, and a profile change does not touch them — so a
+    // user who switches identity keeps a record of where the previous one had been.
+    //
+    // That is exactly the defect [FIX the-off-state-was-invisible] named for the WebRTC
+    // exception list ("per-site state whose off position looks like its on position"), and the
+    // treatment there was this: show it, count it, let it be cleared. The learned lists never
+    // got it, and they are the ones that fill up on their own.
+    //
+    // NOT cleared on a profile change, deliberately: what a site's CSP forbids has nothing to
+    // do with which machine we claim, and forgetting it costs one page load per host to relearn
+    // (noblob.js documents that residual). Clearing is the user's call, like the other three.
+    if (message.type === 'getCspLearnedLists') {
+        (async () => {
+            try {
+                const got = await chrome.storage.local.get(CSP_LEARNED_KEYS);
+                const lists = {};
+                CSP_LEARNED_KEYS.forEach(function (k) {
+                    lists[k] = Array.isArray(got[k]) ? got[k] : [];
+                });
+                sendResponse({ ok: true, lists });
+            } catch (e) { sendResponse({ ok: false, lists: {}, reason: e.message }); }
+        })();
+        return true;
+    }
+    if (message.type === 'clearCspLearnedLists') {
+        (async () => {
+            try {
+                const patch = {};
+                CSP_LEARNED_KEYS.forEach(function (k) { patch[k] = []; });
+                await chrome.storage.local.set(patch);
+                // Every memo that answers from these lists, or the worker keeps deciding from
+                // what it read before the clear — the shape [FIX the-csp-observer-judged-from-
+                // a-cache-that-had-not-loaded] is about.
+                _cspNoBlob = null; _cspTt = null; _cspTte = null;
+                _cspNc = null; _cspNs = null; _cspMixed = null;
+                // The two marker scripts are REGISTERED from these lists, so a cleared list
+                // that leaves them registered would keep answering for hosts nobody listed.
+                await updateNoBlobScript();
+                await applyTteScript();
+                sendResponse({ ok: true });
+            } catch (e) { sendResponse({ ok: false, reason: e.message }); }
+        })();
+        return true;
+    }
     if (message.type === 'getSwBlockedList') {
         (async () => {
             try { sendResponse({ ok: true, hosts: await getSwBlockedHosts() }); }
@@ -2520,19 +2565,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             } catch (e) {
                 sendResponse({ ok: false, reason: e.message });
             }
-        })();
-        return true;
-    }
-    if (message.type === 'reinjectAll') {
-        (async () => {
-            const tabs = await chrome.tabs.query({});
-            for (const tab of tabs) {
-                if (isTabInjectable(tab)) {
-                    await injectProfile(tab.id);
-                    setTimeout(() => loadWasmToMain(tab.id), DELAY_ACTIVATED_WASM);
-                }
-            }
-            sendResponse({ ok: true });
         })();
         return true;
     }
@@ -3299,6 +3331,22 @@ function afpJudgeCsp(host, type, headers, raw, rw, rec, name, scope, tabId) {
         // sub-frame: one host can serve different policies per path, and a frame's
         // narrower allowlist rewritten over the main page would block its scripts.
         if (type === 'main_frame') afpRelearnCspRewrite(host, headers, name);
+        // [FIX the-switch-created-the-split-it-was-meant-to-close] Add-only is the right rule
+        // for what a SITE sends, because one loose document must not erase a strict host. It
+        // is the wrong rule for a host we are rewriting: that header is ours, we know what it
+        // permits, and a host switched on before this fix carries entries learned from the
+        // header it no longer gets. Retired once per navigation, not per request.
+        // The marker scripts are REGISTERED from these lists, so emptying the list is only
+        // half of it — noblob.js stayed matched and went on writing v.ui.wb, and the origin
+        // went on standing down against a storage entry that was already gone. Caught by
+        // test/workerpatchgate.mjs section 6, which read both the storage and the scopes.
+        // Refreshed only when something actually retired, so an ordinary navigation on a
+        // rewritten host costs one storage read and no registration churn.
+        if (type === 'main_frame') {
+            afpForgetCspHost(host).then(function (rm) {
+                if (rm && rm.length) return updateNoBlobScript();
+            }).catch(function () {});
+        }
         const eff = afpRewriteCsp(raw, name) || raw.join(', ');
         blocked = false;
         ttRestricted = afpCspRestrictsTrustedTypes(eff, name);
@@ -3307,6 +3355,28 @@ function afpJudgeCsp(host, type, headers, raw, rw, rec, name, scope, tabId) {
         ttEnforced = afpCspEnforcesTrustedTypes(eff);
     }
 
+
+    // [FIX the-third-gate-nobody-watched] A worker that CAN be created and CANNOT be
+    // patched counts as blocked, because the consequence is identical and the stand-down
+    // is what has to follow.
+    //
+    // mw-workers hands back the native constructor down five paths; the stand-down in
+    // mw-core watched two of them (worker-src, the trusted-types name list). The third:
+    // the wrapper reads the original worker source with a synchronous XHR and prepends its
+    // payload, and where that read is refused it falls back to importScripts — and where
+    // THAT is refused too it passes through, deliberately, because a wrapper that cannot
+    // load what it wraps destroys the page's worker (see [FIX
+    // importscripts-fallback-killed-turnstile]). Passing through is right. Going on to
+    // claim a profile the resulting worker contradicts is not.
+    //
+    // Reported from a real github.com tab with the rewrite switch ON: window on the
+    // profile (Tallinn, et-EE, Iris Xe, 8 cores) beside a worker on the machine (Moscow,
+    // ru, Arc, 18 cores) — ten signals, any one of which a site reads twice to see it.
+    //
+    // Judged on the EFFECTIVE header, so it lands after the rewrite branch above: with the
+    // rewrite admitting the read (step 2b of afpRewriteCsp) the worker is patched again and
+    // this term is false, which is the whole point of the switch.
+    if (!blocked && ncBlocked && nsBlocked) blocked = true;
     // This document's own answer, before the host's history below has its say.
     afpSettleCspVerdict(rec, blocked, ttRestricted, ncBlocked, nsBlocked);
     // [FIX csp-restrictions-learned-per-route] The header rule for this tab follows what the
@@ -3475,6 +3545,43 @@ function afpRewriteCsp(values, name) {
             else dirs.push(['worker-src', base.concat(['blob:'])]);
             changed = true;
         }
+        // 2b. [FIX the-switch-created-the-split-it-was-meant-to-close] The wrapper reads the
+        //     ORIGINAL worker source with a synchronous XHR before prepending its payload,
+        //     and that read is governed by connect-src. Admitting blob: WORKERS without
+        //     admitting the READ produces a worker that can be created and cannot be
+        //     patched — which is strictly worse than refusing it, because mw-core's
+        //     stand-down keys on worker-src and therefore lifts, and the window goes on
+        //     claiming a profile its own workers contradict.
+        //
+        //     github.com is exactly that shape, measured from the live header:
+        //
+        //         worker-src   github.githubassets.com …          no blob:
+        //         connect-src  'self' uploads.github.com …        no blob:
+        //         script-src   github.githubassets.com            no blob:
+        //
+        //     so the switch turned a coherent stand-down into a ten-signal split between
+        //     the window and the worker.
+        //
+        //     connect-src and NOT script-src, deliberately. Reading a blob the page itself
+        //     created lets nothing execute; `script-src blob:` would let an injected blob
+        //     run, which is a real weakening of exactly the thing a CSP is for. And with
+        //     the read available the payload goes in INLINE, so the importScripts fallback
+        //     — the one path that needs script-src — is never taken.
+        const conn = find('connect-src') || find('default-src');
+        if (conn && lower(conn[1]).indexOf('blob:') === -1) {
+            const cs = find('connect-src');
+            if (cs) { cs[1] = cs[1].concat(['blob:']); }
+            else {
+                // Inherited from default-src: the same keyword filter step 2 uses, because
+                // 'none' beside a real source is ignored with a console warning.
+                const cbase = conn[1].filter(function (s) {
+                    return !isKeyed(s) && !isDyn(s) &&
+                        !/^'(report-sample|unsafe-inline|unsafe-eval|unsafe-hashes|none)'$/i.test(s);
+                });
+                dirs.push(['connect-src', cbase.concat(['blob:'])]);
+            }
+            changed = true;
+        }
         // 3. A `trusted-types` allowlist that does not name our policy makes the wrapper
         //    stand aside (it cannot mint a TrustedScriptURL without reporting a violation —
         //    see afpCspRestrictsTrustedTypes). One more NAME on the list is the smallest
@@ -3571,7 +3678,12 @@ async function applyCspRewriteRules() {
  * Returns the hosts that were actually on one of the lists.
  */
 async function afpForgetCspHosts(hosts) {
-    const keys = [CSP_NOBLOB_KEY, CSP_TT_KEY];
+    // [FIX the-switch-created-the-split-it-was-meant-to-close] CSP_NC_KEY joined the two:
+    // step 2b of afpRewriteCsp admits the blob: READ, so a host that is being rewritten is no
+    // longer one whose worker source cannot be read — and a stale entry here keeps
+    // storage-bridge writing v.ui.nc, which keeps the wrapper passing workers through
+    // unpatched while the window no longer stands down. That is the reported split.
+    const keys = [CSP_NOBLOB_KEY, CSP_TT_KEY, CSP_NC_KEY];
     const removed = [];
     try {
         const got = await chrome.storage.local.get(keys);
@@ -3590,7 +3702,7 @@ async function afpForgetCspHosts(hosts) {
         });
         if (Object.keys(patch).length) await chrome.storage.local.set(patch);
     } catch (e) {}
-    _cspNoBlob = null; _cspTt = null;
+    _cspNoBlob = null; _cspTt = null; _cspNc = null;
     return removed;
 }
 async function afpForgetCspHost(host) { return afpForgetCspHosts([host]); }
@@ -3609,7 +3721,7 @@ function afpClearTabFlags(host, reload) {
                     chrome.scripting.executeScript({
                         target: { tabId: t.id, allFrames: true },
                         func: function () {
-                            ['v.ui.wb', 'v.ui.tt'].forEach(function (k) {
+                            ['v.ui.wb', 'v.ui.tt', 'v.ui.nc'].forEach(function (k) {
                                 try { sessionStorage.removeItem(k); } catch (e) {}
                             });
                         }
@@ -3682,13 +3794,21 @@ async function afpToggleCspRewrite(tab) {
     await updateDynamicLanguageRule();
     afpRebuildSdTabs().catch(function () {});
     await updateNoBlobScript();
-    // The two per-tab flags the rewrite makes false outlive a reload; without this the
-    // reload keeps standing down. The others (tte, nc, ns) stay true and stay set.
+    // The per-tab flags the rewrite makes false outlive a reload; without this the reload
+    // keeps standing down.
+    //
+    // [FIX the-switch-created-the-split-it-was-meant-to-close] v.ui.nc joined the list when
+    // step 2b of afpRewriteCsp started admitting the blob: READ. Clearing wb and tt while
+    // leaving nc set is the worst of both: the window stops standing down (wb gone) and the
+    // wrapper still refuses to read the worker source (nc), so the tab the switch was
+    // pressed in gets the split the switch was pressed to avoid — until it is closed,
+    // because sessionStorage is per tab. v.ui.ns and v.ui.tte stay: the rewrite leaves
+    // script-src and require-trusted-types-for exactly as the site sent them.
     try {
         await chrome.scripting.executeScript({
             target: { tabId: tab.id, allFrames: true },
             func: function () {
-                ['v.ui.wb', 'v.ui.tt'].forEach(function (k) {
+                ['v.ui.wb', 'v.ui.tt', 'v.ui.nc'].forEach(function (k) {
                     try { sessionStorage.removeItem(k); } catch (e) {}
                 });
             }
@@ -3881,6 +4001,10 @@ async function loadCspNc() {
 }
 
 const CSP_NS_KEY = 'afp_csp_ns';   // hosts whose CSP refuses importScripts of a blob:
+// The six this extension learns by itself, as one list — the options page reads and clears
+// them through it, and a seventh learned key added later belongs here rather than in three
+// separate places.
+const CSP_LEARNED_KEYS = [CSP_NOBLOB_KEY, CSP_TT_KEY, CSP_TTE_KEY, CSP_NC_KEY, CSP_NS_KEY, CSP_MIXED_KEY];
 let _cspNs = null;
 
 async function loadCspNs() {

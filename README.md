@@ -5,9 +5,9 @@
 **One coherent invented machine — the same one in the window, in every frame and in every worker.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-2.5.5-3b5bdb)
+![version](https://img.shields.io/badge/version-2.5.21-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
-![suites](https://img.shields.io/badge/suites-40-2f9e44)
+![suites](https://img.shields.io/badge/suites-49-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
 
 **English** · [Русский](README.ru.md)
@@ -73,11 +73,11 @@ the one that makes CreepJS go red.</sub>
 
 ```bash
 npm ci
-npm test           # the 8 Node suites — seconds, no browser
-npm run test:all   # adds the 32 Playwright suites — six to eight minutes
+npm test           # the 9 Node suites — seconds, no browser
+npm run test:all   # adds the 40 Playwright suites — six to eight minutes
 ```
 
-**40 suites** in total. The Node half runs on every push and every pull request; it includes
+**49 suites** in total. The Node half runs on every push and every pull request; it includes
 `test/parity-static.mjs`, which re-runs both generators in memory and fails if
 `mw-bundle.js` or `dyn/` on disk are stale. The Playwright half loads the extension for real
 in Chromium and is triggered manually, because its assertions are Windows facts — the ANGLE
@@ -136,6 +136,13 @@ from the audit page, so they are not renumbered.
     decoder; `getCapabilities('video')` lists `video/H265` only where the hardware does HEVC.
 16. **A WebGL warning about an unknown constant names us.** Chrome attributes `INVALID_ENUM`
     to the nearest script frame, which is our wrapper.
+
+17. **Two marker names are fixed.** `'__t0' in window` answers yes for this build and no
+    for a clean browser, in the top document and in frames, and `__AFP_PATCH_URL` is the
+    worker’s equivalent. They are non-enumerable, so a name diff against a fresh iframe
+    does not show them — but a constant anyone can guess once needs no diff. Deriving them
+    per site is blocked by the markers being set before the seed exists and by the
+    in-browser checks that read them.
 
 The extension's own audit page carries the same list beside its verdict, because a green
 verdict is only ever as broad as the questions asked.

@@ -420,7 +420,14 @@ function run(tabId) {
  */
 function buildDump(tabId, profile, page) {
   const lines = [];
-  const add = (k, v) => lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+  // Every pair goes into both shapes at once: the prose a person pastes into a report, and
+  // the object under it. Two writers would drift, and the one that drifts is always the one
+  // nobody reads.
+  const data = {};
+  const add = (k, v) => {
+    data[k] = v;
+    lines.push(`${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+  };
   const KEYS = ['afp_csp_noblob', 'afp_csp_tt', 'afp_csp_tte', 'afp_csp_nc', 'afp_csp_ns', 'afp_csp_mixed', 'afp_csp_rewrite',
     'afp_sw_blocked', 'afp_webrtc_exceptions', 'afp_profile_id', 'afp_country_code', 'afp_mode'];
   chrome.tabs.get(tabId, (tab) => {
@@ -468,6 +475,13 @@ function buildDump(tabId, profile, page) {
         if (page.workerWhy) add('worker probe rule', page.workerWhy);
         add('refusal probe', page.ttRefusal);
         lines.push('', $('out').innerText.trim());
+        // [AUDIT the-snapshot-could-only-be-read-by-eye] The machine-readable half, LAST so
+        // the prose above it stays the first thing a reader sees, and fenced by a line that
+        // is easy to split on. `rows` is the claim/page/host table — the three columns this
+        // page exists to produce — and everything else is the state that was true when it
+        // was taken. Held by test/auditpage.mjs, which parses it rather than matching it.
+        data.rows = AUDIT_ROWS;
+        lines.push('', '--- json ---', JSON.stringify(data));
         const dump = $('dump');
         dump.value = lines.join('\n');
         dump.hidden = false;
@@ -502,9 +516,20 @@ const RAISED_TO_HOST = {
   screenH: (claim, hostV) => Number(hostV) > Number(claim),
 };
 
+/**
+ * [AUDIT the-snapshot-could-only-be-read-by-eye] The claim/page/host table as data, filled
+ * by render() and emitted by buildDump(). Module scope because those two are separate calls
+ * on the same result and threading a second return value through render() would touch every
+ * section for the benefit of one.
+ */
+let AUDIT_ROWS = [];
+/** undefined/null stay distinguishable from the strings "undefined" and "null". */
+const str = (v) => (v === undefined || v === null) ? null : String(v);
+
 function render(profile, page, host) {
   let bad = 0, checked = 0;
   const out = [];
+  AUDIT_ROWS = [];
 
   // ---- 1. the page must report the CLAIM, and must not report the HOST ----
   let body = '';
@@ -566,6 +591,12 @@ function render(profile, page, host) {
       state = 'bad'; text = 'neither claim nor host'; bad++; checked++;
     }
     body += `<tr><td>${esc(key)}</td><td class="v">${esc(claim)}</td><td class="v">${esc(seen)}</td><td class="v">${esc(hostV)}</td>${verdictCell(state, text)}</tr>`;
+    // [AUDIT the-snapshot-could-only-be-read-by-eye] The same row, as data. Both reports of
+    // 2026-09-03 arrived as a screenshot of this table, and the three columns had to be
+    // retyped before anything could be compared with them. They are the one measurement no
+    // rig can produce — a branded Chrome refuses --load-extension — so they are worth
+    // handing over in a form a script can read.
+    AUDIT_ROWS.push({ key: key, claim: str(claim), page: str(seen), host: str(hostV), state: state, why: text });
   }
   out.push(section('the page reports the claim, not the host',
     ['', 'claimed (service worker)', 'seen by the page', 'this machine', ''], body));

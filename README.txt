@@ -1,4 +1,4 @@
-Fingerprint Shield 2.5.5 — release package
+Fingerprint Shield 2.5.21 — release package
 ==========================================
 
   This is the document that ships INSIDE the package: structure, CI, and the suites that
@@ -17,7 +17,7 @@ Load in Chrome:
   `npm test`, so a file that stops shipping turns the suite red rather than an install.
 
 Continuous integration (.github/workflows/ci.yml):
-  node      lint + the 8 Node suites + the package check. Seconds, every push and PR.
+  node      lint + the 9 Node suites + the package check. Seconds, every push and PR.
             This is the one worth gating on: it includes test/parity-static.mjs, which
             re-runs both generators in memory, so a module edited without re-running
             tools/gen-bundle.mjs fails here instead of shipping.
@@ -33,7 +33,7 @@ Continuous integration (.github/workflows/ci.yml):
             NOTE: on a PRIVATE repository that URL still needs authentication. It works in
             a browser where you are signed in; curl needs a token; a stranger gets a 404.
             Only making the repository public turns it into a link anyone can follow.
-  browser   the 32 Playwright suites, on a WINDOWS runner because that is what they
+  browser   the 40 Playwright suites, on a WINDOWS runner because that is what they
             measure. MANUAL ONLY (Run workflow): it takes six to eight minutes, private-repo
             Windows minutes bill at 2x, and the runner is a Server SKU whose font set
             differs from a desktop Windows 11 - so a first red run may mean the runner, not
