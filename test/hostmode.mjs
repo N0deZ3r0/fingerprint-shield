@@ -417,9 +417,38 @@ try {
   eq(String(CTRL.win.cores), String(low.cores), `the row's cores are reported (${CTRL.win.cores})`);
   const moved = HW_ALL_SCOPES.concat(HW_WINDOW).filter((k) => String(CTRL.win[k]) !== String(CLEAN.win[k]));
   note(`moved against clean: ${moved.join(', ') || '(none)'}`);
+  // [FIX the-control-cannot-move-what-the-host-already-claims] A key can only serve as
+  // evidence here if the row claims something this machine does NOT already have. On the CI
+  // runner laptop_low's 4 cores are the runner's 4 cores, and `cores moves with a table row`
+  // failed for a reason that says nothing about the extension — the same shape as the
+  // stealth suite's "spoof differs from the host" against a runner reporting 8 GB against a
+  // claim of 8. Where the claim equals the host, the check is UNPROVABLE and says so.
+  // It is not simply skipped: the control as a whole still has to prove something, so at
+  // least one key must have moved.
+  const CLAIM = {
+    cores: String(low.cores),
+    memory: String(low.memory),
+    screen: [low.screenW, low.screenH].join('x')
+  };
+  let proved = 0;
   for (const k of ['cores', 'memory', 'gl', 'screen']) {
+    // `screen` is a six-field join, so the claim is a prefix of it rather than the whole.
+    const claimed = CLAIM[k];
+    const hostAlready = claimed !== undefined &&
+      (k === 'screen' ? String(CLEAN.win[k]).startsWith(claimed) : String(CLEAN.win[k]) === claimed);
+    if (hostAlready && !moved.includes(k)) {
+      note(`${k} unprovable on this host: the row claims ${claimed}, which is what this ` +
+        `machine already reports (${CLEAN.win[k]}) — nothing could move`);
+      continue;
+    }
+    if (moved.includes(k)) proved++;
     assert(moved.includes(k), `${k} moves with a table row — so its equality above was the mode, not the rig`);
   }
+  // Without this, a machine that happened to match the row on all four would print four
+  // "unprovable" notes and assert nothing, and section 6 would pass while proving nothing.
+  assert(proved > 0,
+    'at least one hardware value moved with the table row — otherwise this control is ' +
+    'vacuous and host mode\'s equality above is unexplained');
   // The row's connection is a literal (4g/50/10); the host's rtt may happen to be 50, so
   // the literal downlink is the half that must move.
   eq(String(CTRL.win.downlink), '10', `the row's connection literal is reported (downlink ${CTRL.win.downlink})`);
