@@ -126,6 +126,12 @@ if (withBrowser) SUITES.push(['popup keyboard (Chromium)', ['test/popupkeys.mjs'
 // but unpatchable, and patchable — plus the per-site rewrite on the shape that was
 // reported broken from a real github.com tab.
 if (withBrowser) SUITES.push(['worker patch gate (Chromium)', ['test/workerpatchgate.mjs']]);
+// The realm axis itself: thirteen realms — window, six frame shapes, cross-origin, and five
+// worker kinds — read with ONE signal set and compared against a second browser with no
+// extension loaded. The clean run decides which fields are comparable in which realm, so the
+// exclusions are measured rather than listed, and a frame that redefines a property on itself
+// is carried as the negative control.
+if (withBrowser) SUITES.push(['realm matrix (Chromium)', ['test/realmmatrix.mjs']]);
 // The options page is the only place either per-site list can be READ or cleared, and an
 // invisible list is what made the WebRTC switch look broken for weeks. Drives the real page:
 // what it shows, what Clear does to storage AND to the document_start registration that
