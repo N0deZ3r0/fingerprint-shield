@@ -137,6 +137,12 @@ if (withBrowser) SUITES.push(['realm matrix (Chromium)', ['test/realmmatrix.mjs'
 // the queue asserted empty. Its negative control is a second, --cold sweep that MUST find
 // the install window — a green warm run alone passes on a broken collector just as well.
 if (withBrowser) SUITES.push(['time axis (Chromium)', ['test/timeaxis.mjs']]);
+// The page as an ADVERSARY rather than a reader: assignment, delete, defineProperty on the
+// instance and on the prototype, freeze, setPrototypeOf, and the pristine realm a scriptless
+// same-origin sandbox hands over. Two failures are possible for each — the host comes back,
+// or the attack fails DIFFERENTLY from a clean browser, which leaks nothing and identifies
+// us perfectly. Both were live when this was written.
+if (withBrowser) SUITES.push(['page tampering (Chromium)', ['test/tamper.mjs']]);
 // The options page is the only place either per-site list can be READ or cleared, and an
 // invisible list is what made the WebRTC switch look broken for weeks. Drives the real page:
 // what it shows, what Clear does to storage AND to the document_start registration that

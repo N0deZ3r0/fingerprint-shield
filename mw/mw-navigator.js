@@ -986,19 +986,38 @@
                 // down for this property — the same shape _def gives the window itself.
                 try {
                     var target = proto || obj;
-                    var brand = proto || null;
                     var orig = Object.getOwnPropertyDescriptor(target, prop);
+                    // [FIX the-frame-path-kept-the-brand-check] This was
+                    // `brand.isPrototypeOf(Object(this))`, the rule v2.5.11 replaced
+                    // everywhere else and did not reach here — the parent-side frame patch is
+                    // its own path past _def, which is exactly why the sweep in
+                    // test/receivers.mjs could not see it.
+                    //
+                    // isPrototypeOf is FALSE across realms while the native accessor ANSWERS
+                    // there, so the frame's patched getter refused a receiver the platform
+                    // accepts. Measured, and it is a two-line detector rather than a leak:
+                    //
+                    //   const f = <same-origin sandbox iframe, no allow-scripts>;
+                    //   Object.getOwnPropertyDescriptor(f.contentWindow.Navigator.prototype,
+                    //     'hardwareConcurrency').get.call(navigator);
+                    //
+                    //   clean browser   18
+                    //   ours            TypeError: Illegal invocation
+                    //
+                    // A page learns nothing about the machine and everything about us. The
+                    // native descriptor captured a line above is the oracle: it throws for
+                    // exactly the receivers the platform throws for, and answers for the ones
+                    // it accepts — including a cross-realm instance.
+                    var ownInst = obj;
+                    var oracle = null;
+                    if (orig && typeof orig.get === 'function') {
+                        // Probed once, the way mw-core's _origOracle does: a getter that
+                        // answers for a bare object is a shim rather than the platform, and
+                        // trusting it would install a check that never refuses anything.
+                        try { orig.get.call({}); } catch (eProbe) { oracle = orig.get; }
+                    }
                     var g = ({ [prop]: function () {
-                        if (brand) {
-                            try {
-                                if (this == null || !brand.isPrototypeOf(Object(this))) {
-                                    throw new TypeError('Illegal invocation');
-                                }
-                            } catch (eInv) {
-                                if (eInv && eInv.message === 'Illegal invocation') throw eInv;
-                                throw new TypeError('Illegal invocation');
-                            }
-                        }
+                        if (this !== ownInst && oracle) oracle.call(this);
                         if (_sdProp(prop)) {
                             if (orig && orig.get) return orig.get.call(this);
                             return orig ? orig.value : undefined;
@@ -1341,6 +1360,61 @@
                                     _ghevPatched.add(wrapTls);
                                 } catch (eTls) {}
                             }
+                            // [FIX the-frames-date-answered-in-numbers-from-the-host] The two
+                            // wrappers above cover the STRING side of Date in a frame and
+                            // nothing covered the numeric side, so one Date object contradicted
+                            // itself. Measured in a same-origin sandbox WITHOUT allow-scripts —
+                            // the one shape where our bundle cannot run and the parent can still
+                            // reach the globals, which makes it a pristine realm a page can
+                            // borrow:
+                            //
+                            //   new f.contentWindow.Date(2026, 0, 15).toString()
+                            //        clean "(Москва, стандартное время)"   ours "(Eastern Standard Time)"
+                            //   ...getTimezoneOffset()
+                            //        clean -180                            ours -180   <- the HOST
+                            //
+                            // Zone and locale from the profile, offset from the host, in one
+                            // reading — the exact shape the comment on the Intl wrapper above
+                            // records as a defect and fixes for the stand-down case.
+                            //
+                            // DELEGATED rather than reimplemented. The parent's Date.prototype
+                            // is already the whole tested layer (23 methods over ZONE_DATA), a
+                            // Date carries its instant in an internal slot that crosses realms,
+                            // and calling the parent's method with the frame's receiver gives the
+                            // frame EXACTLY what the top window answers, by construction — which
+                            // is the invariant, not an approximation of it. It follows the
+                            // stand-down for free, because the parent's methods already do.
+                            //
+                            // toString and toLocaleString are left to the two wrappers above:
+                            // they localise the zone label through the FORMATTER's locale, which
+                            // the parent's copies cannot know about from here.
+                            try {
+                                var PDP = Date.prototype;
+                                var NUM = ['getTimezoneOffset', 'getFullYear', 'getMonth', 'getDate',
+                                    'getDay', 'getHours', 'getMinutes', 'getSeconds', 'getYear',
+                                    'setFullYear', 'setMonth', 'setDate', 'setHours', 'setMinutes',
+                                    'setSeconds', 'setMilliseconds', 'setYear',
+                                    'toTimeString', 'toDateString', 'toLocaleDateString', 'toLocaleTimeString'];
+                                for (var _di = 0; _di < NUM.length; _di++) {
+                                    (function (k) {
+                                        try {
+                                            var mine = PDP[k], theirs = DP[k];
+                                            if (typeof mine !== 'function' || typeof theirs !== 'function') return;
+                                            if (mine === theirs || _ghevPatched.has(theirs)) return;
+                                            var w = ({ [k]: function () {
+                                                return mine.apply(this, arguments);
+                                            } })[k];
+                                            // Arity from the frame's own native: a wrapper that
+                                            // declares no parameters reports length 0, and
+                                            // Date.prototype.setHours is length 4.
+                                            try { Object.defineProperty(w, 'length', { value: theirs.length, configurable: true }); } catch (eL) {}
+                                            var wm = _mn(w);
+                                            Object.defineProperty(DP, k, { value: wm, configurable: true, writable: true });
+                                            _ghevPatched.add(wm);
+                                        } catch (eK) {}
+                                    })(NUM[_di]);
+                                }
+                            } catch (eND) {}
                         } catch (eDate) {}
                     }
                     // Speech voices (iframe often keeps full OS list while top is Kaia/et)

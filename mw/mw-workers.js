@@ -3868,14 +3868,23 @@
                         var d = Object.getOwnPropertyDescriptor(proto, k);
                         if (!d || typeof d.get !== 'function') return;
                         var val = u[k];
+                        // [FIX the-frame-path-kept-the-brand-check] The last two
+                        // isPrototypeOf brand checks in the codebase were here. A prototype
+                        // chain test refuses receivers the platform accepts — cross-realm
+                        // instances above all — and accepts ones it refuses. The captured
+                        // native descriptor decides instead, which is the rule every other
+                        // accessor here has used since v2.5.11.
+                        //
+                        // A worker has one WorkerLocation realm and nothing serialises across
+                        // postMessage, so unlike the frame path this one is not reachable as a
+                        // detector today. It is changed anyway: the rule is what is being
+                        // kept, and leaving one site on the old test is how a sweep two months
+                        // from now finds a third.
+                        var wlOracle = null;
+                        try { d.get.call({}); } catch (eWlP) { wlOracle = d.get; }
                         Object.defineProperty(proto, k, {
-                            // Branded like every other accessor we install: reading it off the
-                            // prototype has to raise Illegal invocation the way native does —
-                            // see [FIX worker-getters-had-no-brand-check].
                             get: _M(({ [k]: function () {
-                                if (this == null || !proto.isPrototypeOf(Object(this))) {
-                                    throw new TypeError('Illegal invocation');
-                                }
+                                if (this !== self.location && wlOracle) wlOracle.call(this);
                                 return val;
                             } })[k], true),
                             set: undefined,
@@ -3889,8 +3898,10 @@
                     if (td && typeof td.value === 'function') {
                         Object.defineProperty(proto, 'toString', {
                             value: _M(function toString() {
-                                if (this == null || !proto.isPrototypeOf(Object(this))) {
-                                    throw new TypeError('Illegal invocation');
+                                // Same rule as the accessors above: the captured native
+                                // decides, not a prototype-chain test.
+                                if (this !== self.location && typeof td.value === 'function') {
+                                    td.value.call(this);
                                 }
                                 return u.href;
                             }),
