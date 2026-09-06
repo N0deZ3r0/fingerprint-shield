@@ -83,7 +83,7 @@ header h1 {
 /* clientRects is off by default because CreepJS reddens with it on — the row says so
    rather than leaving the user to find out from the readout. */
 .feat.risky .feat-name::after {
-  content: " · осторожно";
+  content: " · __MSG_optRisky__";
   color: var(--wn); font-weight: 550; font-size: 11px;
 }
 

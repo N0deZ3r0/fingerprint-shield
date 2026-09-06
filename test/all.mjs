@@ -143,6 +143,11 @@ if (withBrowser) SUITES.push(['time axis (Chromium)', ['test/timeaxis.mjs']]);
 // or the attack fails DIFFERENTLY from a clean browser, which leaks nothing and identifies
 // us perfectly. Both were live when this was written.
 if (withBrowser) SUITES.push(['page tampering (Chromium)', ['test/tamper.mjs']]);
+// The one shape no other suite builds: a cross-origin frame on an origin whose CSP the
+// per-site switch has rewritten, where our Trusted-Types policy name has to be on the
+// allowlist for the frame's worker to be patchable at all. A full run is green with the
+// noise seed on either key, which is what makes this file the only cover for that coupling.
+if (withBrowser) SUITES.push(['TT policy in a frame (Chromium)', ['test/ttpolicy.mjs']]);
 // The options page is the only place either per-site list can be READ or cleared, and an
 // invisible list is what made the WebRTC switch look broken for weeks. Drives the real page:
 // what it shows, what Clear does to storage AND to the document_start registration that
@@ -275,6 +280,12 @@ if (withBrowser) SUITES.push(['WebGL enum refusals (Chromium)', ['test/glenum.mj
 // still decides flatness inside the returned buffer, so a 1x1 read and the same pixel inside
 // a block disagree in all three scopes. See the header.
 if (withBrowser) SUITES.push(['Bluetooth + GL readback (Chromium)', ['test/btreadback.mjs']]);
+// Two languages, and the only proof that either reaches the screen: the popup, the options
+// page and Who Am I are opened in a browser launched with --lang=en-US and again with
+// --lang=ru, and the same elements read in both. Nothing about a missing key throws —
+// chrome.i18n answers '' and the control blanks — so the catalogues are diffed against each
+// other and against every key the UI asks for, in both directions.
+if (withBrowser) SUITES.push(['two languages (Chromium)', ['test/i18n.mjs']]);
 
 /**
  * The one-line-per-suite summary. Each suite states its own count in its own words, so

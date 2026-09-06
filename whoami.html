@@ -38,7 +38,7 @@
       </span>
       <span>
         <b>Who Am I</b>
-        <i>Что видят сайты с текущим профилем</i>
+        <i data-i18n="whoTagline">Что видят сайты с текущим профилем</i>
       </span>
     </div>
     <div class="topbar-actions">
@@ -46,7 +46,7 @@
         <span class="status-indicator active"></span>
         <span class="status-text">Active</span>
       </span>
-      <button type="button" class="btn ghost" id="refreshBtn">Обновить</button>
+      <button type="button" class="btn ghost" id="refreshBtn" data-i18n="whoRefresh">Обновить</button>
     </div>
   </div>
 </header>
@@ -62,12 +62,12 @@
     <div class="identity-hash">
       <span class="eyebrow">Fingerprint</span>
       <code class="hash" id="fingerprintHash" data-copy>…</code>
-      <span class="copyhint">нажмите, чтобы скопировать</span>
+      <span class="copyhint" data-i18n="whoCopyHint">нажмите, чтобы скопировать</span>
     </div>
     <dl class="identity-facts">
-      <div><dt>Платформа</dt><dd id="platform">…</dd></div>
-      <div><dt>Язык</dt><dd id="language">…</dd></div>
-      <div><dt>Часовой пояс</dt><dd id="timezone">…</dd></div>
+      <div><dt data-i18n="whoPlatform">Платформа</dt><dd id="platform">…</dd></div>
+      <div><dt data-i18n="whoLanguage">Язык</dt><dd id="language">…</dd></div>
+      <div><dt data-i18n="whoTimezone">Часовой пояс</dt><dd id="timezone">…</dd></div>
     </dl>
     <!-- The UA lives inside the identity block rather than in a card of its own: it is the
          same answer as the three facts above, spelled out, and a separate card spent a
@@ -79,30 +79,30 @@
   </section>
 
   <!-- ── machine ──────────────────────────────────────────────────────── -->
-  <h2 class="section-h">Машина</h2>
+  <h2 class="section-h" data-i18n="whoSectionMachine">Машина</h2>
   <div class="grid">
     <section class="card">
-      <div class="card-head"><h2>Оборудование</h2><span class="badge">spoofed</span></div>
+      <div class="card-head"><h2 data-i18n="whoHardware">Оборудование</h2><span class="badge">spoofed</span></div>
       <div class="stats">
-        <div class="stat"><span class="stat-v" id="cpuCores">—</span><span class="stat-l">ядра CPU</span></div>
-        <div class="stat"><span class="stat-v" id="memory">—</span><span class="stat-l">память, ГБ</span></div>
-        <div class="stat"><span class="stat-v" id="touchPoints">—</span><span class="stat-l">касания</span></div>
+        <div class="stat"><span class="stat-v" id="cpuCores">—</span><span class="stat-l" data-i18n="whoCpuCores">ядра CPU</span></div>
+        <div class="stat"><span class="stat-v" id="memory">—</span><span class="stat-l" data-i18n="whoMemory">память, ГБ</span></div>
+        <div class="stat"><span class="stat-v" id="touchPoints">—</span><span class="stat-l" data-i18n="whoTouch">касания</span></div>
       </div>
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>Экран</h2></div>
+      <div class="card-head"><h2 data-i18n="whoScreen">Экран</h2></div>
       <div class="rows">
-        <div class="row"><span class="k">Разрешение</span><span class="v" id="resolution">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoResolution">Разрешение</span><span class="v" id="resolution">…</span></div>
         <div class="row split">
-          <div><span class="k">Глубина цвета</span><span class="v" id="colorDepth">…</span></div>
+          <div><span class="k" data-i18n="whoColorDepth">Глубина цвета</span><span class="v" id="colorDepth">…</span></div>
           <div><span class="k">Pixel ratio</span><span class="v" id="pixelRatio">…</span></div>
         </div>
       </div>
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>Графика</h2><span class="badge" id="webglStatus">…</span></div>
+      <div class="card-head"><h2 data-i18n="whoGraphics">Графика</h2><span class="badge" id="webglStatus">…</span></div>
       <div class="rows">
         <div class="row"><span class="k">Vendor</span><span class="v" id="gpuVendor">…</span></div>
         <div class="row"><span class="k">Renderer</span><span class="v mono" id="gpuRenderer">…</span></div>
@@ -110,50 +110,50 @@
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>Локаль и место</h2><span class="badge" id="locationStatus">…</span></div>
+      <div class="card-head"><h2 data-i18n="whoLocale">Локаль и место</h2><span class="badge" id="locationStatus">…</span></div>
       <div class="rows">
-        <div class="row"><span class="k">Смещение UTC</span><span class="v" id="timezoneOffset">…</span></div>
-        <div class="row"><span class="k">Геолокация</span><span class="v" id="geolocation">…</span></div>
-        <div class="row"><span class="k">Список языков</span><span class="v" id="languages">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoUtcOffset">Смещение UTC</span><span class="v" id="timezoneOffset">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoGeolocation">Геолокация</span><span class="v" id="geolocation">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoLanguages">Список языков</span><span class="v" id="languages">…</span></div>
       </div>
     </section>
   </div>
 
   <!-- ── fingerprints ─────────────────────────────────────────────────── -->
-  <h2 class="section-h">Отпечатки и сигналы</h2>
+  <h2 class="section-h" data-i18n="whoSectionFp">Отпечатки и сигналы</h2>
   <div class="grid">
     <section class="card">
       <div class="card-head"><h2>Canvas</h2><span class="badge" id="canvasStatus">…</span></div>
       <div class="rows">
-        <div class="row"><span class="k">Режим</span><span class="v" id="canvasProtection">…</span></div>
-        <div class="row"><span class="k">Шум</span><span class="v" id="canvasNoise">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoMode">Режим</span><span class="v" id="canvasProtection">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoNoise">Шум</span><span class="v" id="canvasNoise">…</span></div>
       </div>
     </section>
 
     <section class="card">
       <div class="card-head"><h2>WebRTC</h2><span class="badge" id="webrtcStatus">…</span></div>
       <div class="rows">
-        <div class="row"><span class="k">Режим</span><span class="v" id="webrtcMode">…</span></div>
-        <div class="row"><span class="k">Утечка IP</span><span class="v" id="webrtcLeak">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoMode">Режим</span><span class="v" id="webrtcMode">…</span></div>
+        <div class="row"><span class="k" data-i18n="whoIpLeak">Утечка IP</span><span class="v" id="webrtcLeak">…</span></div>
       </div>
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>Прочие сигналы</h2></div>
+      <div class="card-head"><h2 data-i18n="whoOtherSignals">Прочие сигналы</h2></div>
       <div class="rows">
         <div class="row split">
           <div><span class="k">Do Not Track</span><span class="v" id="dntSignal">…</span></div>
           <div><span class="k">Global Privacy Control</span><span class="v" id="gpcSignal">…</span></div>
         </div>
         <div class="row split">
-          <div><span class="k">Видимость</span><span class="v" id="visibilitySignal">…</span></div>
+          <div><span class="k" data-i18n="whoVisibility">Видимость</span><span class="v" id="visibilitySignal">…</span></div>
           <div><span class="k">window.name</span><span class="v" id="windowNameSignal">…</span></div>
         </div>
       </div>
     </section>
 
     <section class="card">
-      <div class="card-head"><h2>Активные модули</h2></div>
+      <div class="card-head"><h2 data-i18n="whoActiveModules">Активные модули</h2></div>
       <div class="chips" id="protectionsGrid"></div>
     </section>
   </div>
@@ -174,27 +174,28 @@
   -->
   <section class="card parity-card">
     <div class="card-head">
-      <h2>Согласованность областей</h2>
-      <span class="badge" id="parityBadge">не проверено</span>
+      <h2 data-i18n="whoParityH2">Согласованность областей</h2>
+      <span class="badge" id="parityBadge" data-i18n="whoParityUnchecked">не проверено</span>
     </div>
-    <p class="sub" id="parityHint">
+    <p class="sub" id="parityHint" data-i18n="whoParityHint">
       Сравнивает окно, Worker и iframe по ключевым сигналам на выбранной вкладке.
       Расхождение — это то, что сайту достаточно увидеть, чтобы понять, что его обманывают.
     </p>
     <div class="parity-controls">
-      <select id="parityTab" class="sel" aria-label="Вкладка для проверки"></select>
-      <button type="button" class="btn" id="parityBtn">Проверить</button>
+      <select id="parityTab" class="sel" aria-label="Вкладка для проверки" data-i18n-aria-label="whoParityTabAria"></select>
+      <button type="button" class="btn" id="parityBtn" data-i18n="whoParityBtn">Проверить</button>
     </div>
     <div id="parityOut"></div>
   </section>
 
   <footer class="footer">
-    <a href="options.html">Настройки модулей</a>
+    <a href="options.html" data-i18n="whoFooterOptions">Настройки модулей</a>
     <span>·</span>
     <span>Fingerprint Shield</span>
   </footer>
 </main>
 
+<script src="i18n.js"></script>
 <script src="whoami.js"></script>
 </body>
 </html>

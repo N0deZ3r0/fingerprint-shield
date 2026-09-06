@@ -131,12 +131,42 @@
   // ratio against a baseline that close to zero says more about how well the JIT removed
   // the empty loop than about our cost — it swings between runs and can read 85x for a
   // call that takes well under a microsecond. The ratio is kept in the note as context.
-  var BUDGET_US = 5;
+  // [FIX the-budget-was-absolute-on-a-shared-runner] The budget below used to be a flat
+  // 5 microseconds per call, and the comment above explains why a ratio against the NATIVE
+  // call was rejected: V8 removes that loop and the ratio then measures the JIT. Both are
+  // right, and together they left the check measuring the MACHINE — this page is the only
+  // one of thirty-six that failed on the two-core CI runner, where a call that costs 2 us
+  // on a desktop costs more than 5.
+  //
+  // So the budget is scaled by how fast this machine actually is, measured with a loop the
+  // JIT cannot elide (the result is read afterwards) and calibrated against a reference
+  // taken on the author's machine: 2,000,000 integer ops in 1.87 ms. A machine half the
+  // speed gets twice the budget and the check keeps its meaning; a machine as fast as the
+  // reference gets exactly the 5 us it always had.
+  //
+  // The multiplier is PRINTED, because a budget that silently inflates is a budget that
+  // stops failing.
+  var CALIB_N = 2000000, CALIB_REF_MS = 1.87;
+  function calibrate() {
+    var best = Infinity, x = 1;
+    for (var k = 0; k < 5; k++) {
+      var t0 = performance.now();
+      for (var i = 0; i < CALIB_N; i++) x = (Math.imul(x, 1103515245) + 12345) >>> 0;
+      var ms = performance.now() - t0;
+      if (ms < best) best = ms;
+    }
+    // Read x so nothing above can be optimised away as dead.
+    if (x === -1) best = -1;
+    return best;
+  }
+  var CALIB_MS = calibrate();
+  var SLOWNESS = Math.max(1, CALIB_MS / CALIB_REF_MS);
+  var BUDGET_US = 5 * SLOWNESS;
   ['getHours', 'getTimezoneOffset', 'toString'].forEach(function (k) {
     var perCallUs = (PATCHED[k] * 1000) / N2;
     var r = NATIVE[k] > 0 ? (PATCHED[k] / NATIVE[k]) : 0;
     row(k + '() per call', perCallUs.toFixed(2) + ' &micro;s',
-      '&lt; ' + BUDGET_US + ' &micro;s', perCallUs < BUDGET_US,
+      '&lt; ' + BUDGET_US.toFixed(1) + ' &micro;s', perCallUs < BUDGET_US,
       NATIVE[k].toFixed(1) + 'ms &rarr; ' + PATCHED[k].toFixed(1) + 'ms per ' + N2 +
       ' (' + r.toFixed(1) + '&times; native)');
   });

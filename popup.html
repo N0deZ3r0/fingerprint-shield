@@ -23,10 +23,10 @@
           </svg>
         </span>
         <span class="hero-txt">
-          <b class="hero-ttl" id="heroTitle">Защита активна</b>
-          <span class="hero-sub" id="heroSub">проверяем модули…</span>
+          <b class="hero-ttl" id="heroTitle" data-i18n="popupHeroOn">Защита активна</b>
+          <span class="hero-sub" id="heroSub" data-i18n="popupSubChecking">проверяем модули…</span>
         </span>
-        <span class="badge pill" id="tabBadge">Обычный</span>
+        <span class="badge pill" id="tabBadge" data-i18n="popupModeNormal">Обычный</span>
       </div>
       <div class="hero-site">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -60,11 +60,11 @@
           <div class="search-wrap">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                  stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
-            <input class="menu-search" id="searchInput" type="search" placeholder="Поиск страны"
+            <input class="menu-search" id="searchInput" type="search" placeholder="Поиск страны" data-i18n-placeholder="popupCountrySearch"
                    autocomplete="off" role="combobox" aria-controls="optionList" aria-expanded="true"
                    aria-autocomplete="list" />
           </div>
-          <div class="option-list" id="optionList" role="listbox" tabindex="-1" aria-label="Страна"></div>
+          <div class="option-list" id="optionList" role="listbox" tabindex="-1" aria-label="Страна" data-i18n-aria-label="popupAriaCountry"></div>
         </div>
       </div>
       <!-- [FIX the-warning-ate-the-timezone] The exit-country disagreement had no room of
@@ -87,7 +87,7 @@
          said it a third time over three switches that were all disabled. The note stands
          where the card stands and takes its place: one statement, and 84px less popup in
          the state that had grown closest to Chrome's 600px cap. -->
-    <p class="note" id="emptyState" hidden>Откройте http- или https-вкладку, чтобы настроить её отдельно</p>
+    <p class="note" id="emptyState" hidden data-i18n="popupNoHttpTab">Откройте http- или https-вкладку, чтобы настроить её отдельно</p>
 
     <section class="card site" id="siteCard">
       <!-- [FIX the-host-was-printed-twice] This line used to lead with the hostname, which
@@ -95,7 +95,7 @@
            the edge and was ellipsised (measured: clipped true with WebRTC off on a standing
            down site). The hero names the tab; this line says what the card decides about it,
            and the notes now have the width the duplicate was taking. -->
-      <div class="hint" id="siteHost">Только для этого сайта</div>
+      <div class="hint" id="siteHost" data-i18n="popupSiteScope">Только для этого сайта</div>
 
       <div class="row-line">
         <div class="row-t" id="webrtcLabel">
@@ -105,7 +105,7 @@
           </svg>
           WebRTC
         </div>
-        <button type="button" class="switch" id="webrtcToggle" role="switch" aria-checked="false" aria-label="WebRTC защита">
+        <button type="button" class="switch" id="webrtcToggle" role="switch" aria-checked="false" aria-label="WebRTC защита" data-i18n-aria-label="popupAriaWebrtc">
           <i class="knob"></i>
         </button>
       </div>
@@ -118,7 +118,7 @@
           </svg>
           Service Worker
         </div>
-        <button type="button" class="switch" id="swToggle" role="switch" aria-checked="false" aria-label="Service Worker для сайта">
+        <button type="button" class="switch" id="swToggle" role="switch" aria-checked="false" aria-label="Service Worker для сайта" data-i18n-aria-label="popupAriaSw">
           <i class="knob"></i>
         </button>
       </div>
@@ -134,9 +134,9 @@
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 6h16M4 12h10M4 18h7"/><path d="m16 15 2 2 4-4"/>
           </svg>
-          CSP → воркеры
+          <span data-i18n="popupCspLabel">CSP → воркеры</span>
         </div>
-        <button type="button" class="switch" id="cspToggle" role="switch" aria-checked="false" aria-label="Переписать CSP сайта, чтобы подмена работала в его воркерах">
+        <button type="button" class="switch" id="cspToggle" role="switch" aria-checked="false" aria-label="Переписать CSP сайта, чтобы подмена работала в его воркерах" data-i18n-aria-label="popupAriaCsp">
           <i class="knob"></i>
         </button>
       </div>
@@ -148,11 +148,11 @@
            carried aria-selected: measured null on both. Two mutually exclusive settings are a
            radio group, and that role is also where the arrow-key contract in popup.js comes
            from — a radiogroup is expected to move between its radios with the arrows. -->
-      <div class="seg" id="modeGrid" role="radiogroup" aria-label="Режим подмены">
-        <button type="button" class="mode active" data-mode="normal" role="radio" aria-checked="true">Обычный</button>
-        <button type="button" class="mode" data-mode="hidden" role="radio" aria-checked="false">Скрытый</button>
+      <div class="seg" id="modeGrid" role="radiogroup" aria-label="Режим подмены" data-i18n-aria-label="popupAriaMode">
+        <button type="button" class="mode active" data-mode="normal" role="radio" aria-checked="true" data-i18n="popupModeNormal">Обычный</button>
+        <button type="button" class="mode" data-mode="hidden" role="radio" aria-checked="false" data-i18n="popupModeStealth">Скрытый</button>
       </div>
-      <p class="hint" id="modeHint">Полная подмена профиля устройства</p>
+      <p class="hint" id="modeHint" data-i18n="popupHintNormal">Полная подмена профиля устройства</p>
     </section>
 
     <!-- ── device profile ───────────────────────────────────────────────── -->
@@ -177,21 +177,21 @@
                numbers. It rides in the button's existing row rather than a line of its
                own: a chip on the row it describes needs no height at all, and it is read
                where the machine is chosen (test/popupfit.mjs measures both). -->
-          <span class="tag" id="profileScreenTag" hidden>экран хоста</span>
+          <span class="tag" id="profileScreenTag" hidden data-i18n="popupTagHostScreen">экран хоста</span>
           <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         <div class="dropdown" id="profileDropdown">
-          <div class="option-list" id="profileList" role="listbox" tabindex="-1" aria-label="Профиль устройства"></div>
+          <div class="option-list" id="profileList" role="listbox" tabindex="-1" aria-label="Профиль устройства" data-i18n-aria-label="popupAriaProfile"></div>
         </div>
       </div>
     </section>
 
     <!-- ── actions ──────────────────────────────────────────────────────── -->
     <div class="foot">
-      <button type="button" class="cta" id="applyBtn">Применить</button>
+      <button type="button" class="cta" id="applyBtn" data-i18n="popupApply">Применить</button>
       <div class="links">
-        <a id="optionsLink" href="options.html" target="_blank">Настройки</a>
+        <a id="optionsLink" href="options.html" target="_blank" data-i18n="popupSettings">Настройки</a>
         <span class="sep" aria-hidden="true"></span>
         <a id="whoamiLink" href="whoami.html" target="_blank">Who Am I</a>
       </div>
@@ -201,6 +201,7 @@
       <div class="status-bar" id="statusBar" hidden></div>
     </div>
   </div>
+  <script src="i18n.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

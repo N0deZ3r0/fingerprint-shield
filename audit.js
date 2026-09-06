@@ -45,6 +45,10 @@ function pageCollector() {
   t('language', () => navigator.language);
   t('languages', () => (navigator.languages || []).join(','));
   t('timezone', () => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  // The NUMERIC side of the same fact: a realm can carry the right zone LABEL and the wrong
+  // offset in one Date object, which is exactly how the scriptless sandbox frame read the
+  // machine in numbers while reading the profile in words.
+  t('offJan', () => new Date(2026, 0, 15).getTimezoneOffset());
   t('locale', () => Intl.DateTimeFormat().resolvedOptions().locale);
   t('screenW', () => screen.width);
   t('screenH', () => screen.height);
@@ -163,7 +167,9 @@ function pageCollector() {
 
   return new Promise((resolve) => {
     const finish = () => resolve(out);
-    let pending = 2;
+    // [FIX the-audit-compared-two-realms-of-thirteen] Three now: the worker, the plain
+    // same-origin frame, and the scriptless sandbox where both 2026-09-06 defects lived.
+    let pending = 3;
     const done = () => { if (--pending === 0) finish(); };
 
     // A dedicated worker. It reads the machine through a completely separate patch path —
@@ -323,6 +329,60 @@ function pageCollector() {
       // Assigning nothing touches no sink at all, and answers both refusals at once.
       document.body.appendChild(f);
     } catch (e) { out.iframe = 'THREW ' + e.name; done(); }
+
+    // [FIX the-audit-compared-two-realms-of-thirteen] The two rows above were the whole
+    // scope table, and BOTH defects found on 2026-09-06 lived in a realm it never opened:
+    // a same-origin sandbox WITHOUT allow-scripts. That is the one shape where our content
+    // scripts cannot run and the parent can still reach the globals, so the platform hands
+    // any page a pristine set of interface prototypes in one line — and in it the patched
+    // getter refused a receiver the platform accepts, and Date answered its NUMBERS from
+    // the machine while its strings answered from the profile.
+    //
+    // The numeric side of Date is read here for that reason: a zone label and an offset can
+    // disagree inside one object, and the label alone looked right the whole time.
+    const realmRead = (w2) => ({
+      cores: w2.navigator.hardwareConcurrency, memory: w2.navigator.deviceMemory,
+      tz: new w2.Intl.DateTimeFormat().resolvedOptions().timeZone,
+      lang: w2.navigator.language,
+      off: new w2.Date(2026, 0, 15).getTimezoneOffset()
+    });
+    const realmFrame = (key, prep) => {
+      try {
+        const f = document.createElement('iframe');
+        f.style.cssText = 'position:absolute;left:-9999px;width:80px;height:80px';
+        // done() counts collectors, so it must run EXACTLY once for this frame. A frame
+        // with no src fires load on some paths and not on others, so there are three ways
+        // in — onload, a short fallback, and the timeout — and without this guard two of
+        // them fire, pending goes negative and finish() runs before the other collectors
+        // have answered. That is what turned the whole scope table red the first time.
+        let fired = false;
+        const read = () => {
+          if (fired) return;
+          fired = true;
+          clearTimeout(timer);
+          try { out[key] = realmRead(f.contentWindow); } catch (e) { out[key] = 'THREW ' + e.name; }
+          try { f.remove(); } catch (eR) {}
+          done();
+        };
+        const timer = setTimeout(() => {
+          if (fired) return;
+          fired = true;
+          out[key] = 'TIMEOUT';
+          try { f.remove(); } catch (eR) {}
+          done();
+        }, 4000);
+        f.onload = read;
+        try { prep(f); } catch (e) {
+          if (!fired) { fired = true; clearTimeout(timer); out[key] = 'THREW ' + e.name; done(); }
+          return;
+        }
+        document.body.appendChild(f);
+        setTimeout(read, 400);
+      } catch (e) { out[key] = 'THREW ' + e.name; done(); }
+    };
+    // No src and no srcdoc, for the reason the row above gives: both are Trusted-Types
+    // sinks and a document that enforces them refuses a plain string.
+    realmFrame('sandboxFrame', (f) => f.setAttribute('sandbox', 'allow-same-origin'));
 
     // The rejected-promise stack, which needs an await and so cannot sit with the rest.
     navigator.userAgentData.getHighEntropyValues('not-a-sequence')
@@ -606,7 +666,8 @@ function render(profile, page, host) {
 
   // ---- 2. every scope agrees ----
   body = '';
-  const scopes = [['worker', page.worker], ['same-origin iframe', page.iframe]];
+  const scopes = [['worker', page.worker], ['same-origin iframe', page.iframe],
+    ['sandboxed frame (no scripts)', page.sandboxFrame]];
   for (const [name, got] of scopes) {
     if (!got || typeof got !== 'object') {
       // A scope that could not be read used to print grey and leave the total alone. That
@@ -644,13 +705,16 @@ function render(profile, page, host) {
         verdictCell('bad', 'NO READING — this scope went unchecked') + '</tr>';
       continue;
     }
+    // The January offset joins the four: a realm can carry the right zone LABEL and the
+    // wrong offset in the same Date object, which is how the sandbox frame read the machine
+    // in numbers while reading the profile in words.
     const pairs = [['cores', page.cores], ['memory', page.memory], ['tz', page.timezone],
-      ['lang', page.language]];
+      ['lang', page.language], ['off', page.offJan]];
     const off = pairs.filter(([k, v]) => got[k] !== undefined && String(got[k]) !== String(v))
       .map(([k, v]) => `${k}: ${got[k]} vs window ${v}`);
     checked++;
     if (off.length) bad++;
-    body += `<tr><td>${esc(name)}</td><td class="v" colspan="3">${esc(off.length ? off.join(' ; ') : 'cores, memory, timezone and language all match the window')}</td>` +
+    body += `<tr><td>${esc(name)}</td><td class="v" colspan="3">${esc(off.length ? off.join(' ; ') : 'cores, memory, timezone, language and the January offset all match the window')}</td>` +
       verdictCell(off.length ? 'bad' : 'ok', off.length ? 'DISAGREES with the window' : 'agrees');
   }
   // ---- who is named in a refusal (documents that require Trusted Types only) ----

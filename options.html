@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Настройки защиты</title>
+  <title data-i18n="optTitle">Настройки защиты</title>
   <!-- ui.css carries the shared tokens and must come first; the page sheet only
        adds rules. See the header of ui.css for why the three surfaces share one file. -->
   <link rel="stylesheet" href="ui.css" />
@@ -12,16 +12,17 @@
 <body>
   <div class="wrap">
     <header>
-      <h1>Расширенные настройки</h1>
-      <p class="sub">Включение и выключение отдельных патчей. После сохранения обновите вкладки (F5).</p>
+      <h1 data-i18n="optH1">Расширенные настройки</h1>
+      <p class="sub" data-i18n="optSub">Включение и выключение отдельных патчей. После сохранения обновите вкладки (F5).</p>
     </header>
 
     <section class="card">
       <div class="card-head">
-        <h2>Модули защиты</h2>
-        <button type="button" class="btn ghost" id="resetBtn" title="Как при чистой установке">Безопасный сброс</button>
+        <h2 data-i18n="optModulesH2">Модули защиты</h2>
+        <button type="button" class="btn ghost" id="resetBtn" title="Как при чистой установке"
+                data-i18n="optResetBtn" data-i18n-title="optResetBtnTitle">Безопасный сброс</button>
       </div>
-      <p class="hint" id="resetHint">
+      <p class="hint" id="resetHint" data-i18n="optResetHint">
         Сброс = значения из <code>defaults.js</code> (clientRects выкл., остальное вкл.).
       </p>
       <div class="feat-grid" id="featGrid"></div>
@@ -32,28 +33,31 @@
          on that list. See popup.js updateWebrtcToggle for what that cost. -->
     <section class="card">
       <div class="card-head">
-        <h2>WebRTC: сайты без защиты</h2>
-        <button type="button" class="btn ghost" id="rtcClearBtn" title="Вернуть защиту на всех сайтах">Очистить</button>
+        <h2 data-i18n="optRtcH2">WebRTC: сайты без защиты</h2>
+        <button type="button" class="btn ghost" id="rtcClearBtn" title="Вернуть защиту на всех сайтах"
+                data-i18n="optClear" data-i18n-title="optRtcClearTitle">Очистить</button>
       </div>
-      <p class="hint">Список пополняется переключателем WebRTC в попапе. На этих сайтах реальный IP виден — так и задумано, чтобы работали звонки и P2P.</p>
+      <p class="hint" data-i18n="optRtcHint">Список пополняется переключателем WebRTC в попапе. На этих сайтах реальный IP виден — так и задумано, чтобы работали звонки и P2P.</p>
       <div id="rtcList" class="hint">—</div>
     </section>
 
     <section class="card">
       <div class="card-head">
-        <h2>Service Worker: заблокированные сайты</h2>
-        <button type="button" class="btn ghost" id="swClearBtn" title="Разрешить на всех сайтах">Очистить</button>
+        <h2 data-i18n="optSwH2">Service Worker: заблокированные сайты</h2>
+        <button type="button" class="btn ghost" id="swClearBtn" title="Разрешить на всех сайтах"
+                data-i18n="optClear" data-i18n-title="optSwClearTitle">Очистить</button>
       </div>
-      <p class="hint">Список пополняется переключателем Service Worker в попапе. Воркер сайта читает НАСТОЯЩУЮ машину, и подменить его расширение не может — только запретить. Запрет отключает офлайн-режим и push на этих сайтах.</p>
+      <p class="hint" data-i18n="optSwHint">Список пополняется переключателем Service Worker в попапе. Воркер сайта читает НАСТОЯЩУЮ машину, и подменить его расширение не может — только запретить. Запрет отключает офлайн-режим и push на этих сайтах.</p>
       <div id="swList" class="hint">—</div>
     </section>
 
     <section class="card">
       <div class="card-head">
-        <h2>CSP: переписанные сайты</h2>
-        <button type="button" class="btn ghost" id="cspClearBtn" title="Вернуть заголовок сайта везде">Очистить</button>
+        <h2 data-i18n="optCspH2">CSP: переписанные сайты</h2>
+        <button type="button" class="btn ghost" id="cspClearBtn" title="Вернуть заголовок сайта везде"
+                data-i18n="optClear" data-i18n-title="optCspClearTitle">Очистить</button>
       </div>
-      <p class="hint">Список пополняется переключателем «CSP → воркеры» в попапе. На этих сайтах Content-Security-Policy переписан так, чтобы воркеры расширения проходили (youtube.com иначе стоит на паузе целиком — README, «Пределы», пункт 6). Цена: nonce-политика сайта ослаблена, его защита от XSS ниже.</p>
+      <p class="hint" data-i18n="optCspHint">Список пополняется переключателем «CSP → воркеры» в попапе. На этих сайтах Content-Security-Policy переписан так, чтобы воркеры расширения проходили (youtube.com иначе стоит на паузе целиком — см. «Пределы», пункт 6). Цена: nonce-политика сайта ослаблена, его защита от XSS ниже.</p>
       <div id="cspList" class="hint">—</div>
     </section>
 
@@ -64,11 +68,12 @@
          them untouched. Same treatment the WebRTC exception list got for the same reason. -->
     <section class="card">
       <div class="card-head">
-        <h2>Что расширение запомнило само</h2>
+        <h2 data-i18n="optLearnedH2">Что расширение запомнило само</h2>
         <button type="button" class="btn ghost" id="learnedClearBtn"
-                title="Забыть всё, что выучено о CSP сайтов">Очистить</button>
+                title="Забыть всё, что выучено о CSP сайтов"
+                data-i18n="optClear" data-i18n-title="optLearnedClearTitle">Очистить</button>
       </div>
-      <p class="hint">Заполняется без вашего участия: при заходе на сайт расширение запоминает,
+      <p class="hint" data-i18n="optLearnedHint">Заполняется без вашего участия: при заходе на сайт расширение запоминает,
         что его Content-Security-Policy запрещает — чтобы на следующей странице ответить верно
         с первого скрипта, а не со второго. Ничего из этого не видно странице и не уходит
         наружу, но это список посещённых сайтов, и смена профиля его не стирает. Очистка
@@ -78,40 +83,45 @@
 
     <section class="card">
       <div class="card-head">
-        <h2>Проверка страны выхода</h2>
-        <label class="geocheck"><input type="checkbox" id="geoCheck" /> <span>Включена</span></label>
+        <h2 data-i18n="optGeoH2">Проверка страны выхода</h2>
+        <label class="geocheck"><input type="checkbox" id="geoCheck" /> <span data-i18n="optGeoOn">Включена</span></label>
       </div>
-      <p class="hint">Расширение следит за согласованностью браузера с самим собой, но не видит, с какого адреса уходят запросы. Профиль может заявлять Эстонию поверх немецкого узла VPN — и это заметно любому сайту без единой строчки JS. Раз в 30 минут запрашивается <code>cloudflare.com/cdn-cgi/trace</code>, откуда берётся только двухбуквенный код страны; при расхождении попап покажет предупреждение под названием страны. Страна сама не переключается: смена профиля выдаёт новый seed и новый visitor id, это решение за вами.</p>
-      <p class="hint">Это единственный исходящий запрос, который расширение делает по своей инициативе. Cloudflare узнаёт, что с этого адреса был запрос — то же самое он узнаёт при открытии почти любого сайта. Ни профиль, ни история, ни какой-либо идентификатор не отправляются. Выключите, если не нужно.</p>
+      <p class="hint" data-i18n="optGeoHint1">Расширение следит за согласованностью браузера с самим собой, но не видит, с какого адреса уходят запросы. Профиль может заявлять Эстонию поверх немецкого узла VPN — и это заметно любому сайту без единой строчки JS. Раз в 30 минут запрашивается <code>cloudflare.com/cdn-cgi/trace</code>, откуда берётся только двухбуквенный код страны; при расхождении попап покажет предупреждение под названием страны. Страна сама не переключается: смена профиля выдаёт новый seed и новый visitor id, это решение за вами.</p>
+      <p class="hint" data-i18n="optGeoHint2">Это единственный исходящий запрос, который расширение делает по своей инициативе. Cloudflare узнаёт, что с этого адреса был запрос — то же самое он узнаёт при открытии почти любого сайта. Ни профиль, ни история, ни какой-либо идентификатор не отправляются. Выключите, если не нужно.</p>
       <div id="geoState" class="hint">—</div>
     </section>
 
     <section class="card">
       <div class="card-head">
-        <h2>Аудит</h2>
-        <a id="auditLink" href="audit.html" target="_blank" rel="noopener">Открыть</a>
+        <h2 data-i18n="optAuditH2">Аудит</h2>
+        <a id="auditLink" href="audit.html" target="_blank" rel="noopener" data-i18n="optAuditOpen">Открыть</a>
       </div>
-      <p class="hint">Проверяет расширение в том браузере, где оно стоит, — а не в том, который гоняют тесты. Chrome не принимает <code>--load-extension</code> с версии 136, поэтому весь набор сьютов ездит на Chromium, в который расширение никогда не установлено; из шести дефектов, найденных при переходе на Chrome 152, четыре ни один сьют увидеть не мог.</p>
-      <p class="hint">Страница расширения не подпадает под маску адресов из манифеста, то есть контент-скрипты в ней не работают и она видит НАСТОЯЩУЮ машину. Профиль она спрашивает у service worker'а, а значения страницы читает инъекцией в выбранную вкладку. Три источника: что заявлено, что видит сайт, что на самом деле. Сравнение с заявкой — единственное, чего консольные проверки сделать не могут: они сами выполняются внутри пропатченной страницы, и сверять там нечего.</p>
+      <p class="hint" data-i18n="optAuditHint1">Проверяет расширение в том браузере, где оно стоит, — а не в том, который гоняют тесты. Chrome не принимает <code>--load-extension</code> с версии 136, поэтому весь набор сьютов ездит на Chromium, в который расширение никогда не установлено; из шести дефектов, найденных при переходе на Chrome 152, четыре ни один сьют увидеть не мог.</p>
+      <p class="hint" data-i18n="optAuditHint2">Страница расширения не подпадает под маску адресов из манифеста, то есть контент-скрипты в ней не работают и она видит НАСТОЯЩУЮ машину. Профиль она спрашивает у service worker'а, а значения страницы читает инъекцией в выбранную вкладку. Три источника: что заявлено, что видит сайт, что на самом деле. Сравнение с заявкой — единственное, чего консольные проверки сделать не могут: они сами выполняются внутри пропатченной страницы, и сверять там нечего.</p>
     </section>
 
     <section class="card warn-card">
-      <h2>Важно</h2>
+      <h2 data-i18n="optWarnH2">Важно</h2>
       <ul>
-        <li><strong>clientRects</strong> по умолчанию выключен — иначе CreepJS часто краснеет.</li>
-        <li>Скрытый режим (popup) сам отключает часть патчей; эти флаги — базовый набор.</li>
-        <li>«Безопасный сброс» не меняет страну, профиль GPU и seed.</li>
+        <!-- The identifier is the same word in both languages and stays out of the catalogue;
+             only the sentence around it is translated. -->
+        <li><strong>clientRects</strong> <span data-i18n="optWarn1">по умолчанию выключен — иначе CreepJS часто краснеет.</span></li>
+        <li data-i18n="optWarn2">Скрытый режим (popup) сам отключает часть патчей; эти флаги — базовый набор.</li>
+        <li data-i18n="optWarn3">«Безопасный сброс» не меняет страну, профиль GPU и seed.</li>
       </ul>
     </section>
 
     <footer class="actions">
-      <button type="button" class="btn primary" id="saveBtn">Сохранить</button>
+      <button type="button" class="btn primary" id="saveBtn" data-i18n="optSave">Сохранить</button>
       <span class="status" id="status" hidden></span>
     </footer>
   </div>
 
   <!-- Единый источник дефолтов (тот же файл, что background importScripts) -->
   <script src="defaults.js"></script>
+  <!-- Before options.js, so the first paint is already in the right language and the row
+       builder below can reach window.afpMsg. -->
+  <script src="i18n.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

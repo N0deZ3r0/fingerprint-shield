@@ -22,7 +22,7 @@ import { chromium } from 'playwright';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, uiMessages, langArgs } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -30,7 +30,7 @@ const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed
 const dir = mkdtempSync(join(tmpdir(), 'afp-optlists-'));
 const ctx = await chromium.launchPersistentContext(dir, {
   ...BROWSER, headless: !headed,
-  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
+  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`, ...langArgs()]
 });
 try {
   const bg = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
@@ -53,11 +53,14 @@ try {
   let page = await ctx.newPage();
   await page.goto(OPTIONS, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 1200));
+  // The page renders in the browser's own language; the expectations come from the same
+  // catalogue it used, not from Russian literals that only pass on one machine.
+  const M = uiMessages(await page.evaluate(() => chrome.i18n.getUILanguage()));
   const empty = await read(page);
   console.log('empty      ' + JSON.stringify(empty));
-  ok(/Список пуст/.test(empty.sw), `the SW card says the list is empty (${empty.sw})`);
+  ok(empty.sw === M('optSwEmpty'), `the SW card says the list is empty (${empty.sw})`);
   ok(empty.swBtn === true, 'Clear is disabled with nothing to clear (service workers)');
-  ok(/Список пуст/.test(empty.rtc), `the WebRTC card says the list is empty (${empty.rtc})`);
+  ok(empty.rtc === M('optRtcEmpty'), `the WebRTC card says the list is empty (${empty.rtc})`);
   ok(empty.rtcBtn === true, 'Clear is disabled with nothing to clear (WebRTC)');
   await page.close();
 
@@ -88,9 +91,9 @@ try {
   await new Promise((r) => setTimeout(r, 2000));
   const afterSw = await read(page);
   console.log('SW cleared ' + JSON.stringify(afterSw));
-  ok(/Список пуст/.test(afterSw.sw), `Clear empties the SW list on screen (${afterSw.sw})`);
+  ok(afterSw.sw === M('optSwEmpty'), `Clear empties the SW list on screen (${afterSw.sw})`);
   ok(afterSw.swBtn === true, 'and disables its own button again');
-  ok(/разрешён на всех сайтах/i.test(afterSw.status), `and says so (${afterSw.status})`);
+  ok(afterSw.status === M('optSwCleared'), `and says so (${afterSw.status})`);
   ok(afterSw.rtc.includes('meet.example.net'), 'the WebRTC list is untouched by the SW button');
 
   const stored = await bg.evaluate(() => chrome.storage.local.get(['afp_sw_blocked', 'afp_webrtc_exceptions']));
@@ -120,7 +123,7 @@ try {
   await new Promise((r) => setTimeout(r, 2000));
   const afterRtc = await read(page);
   console.log('RTC cleared ' + JSON.stringify(afterRtc));
-  ok(/Список пуст/.test(afterRtc.rtc), `the WebRTC button clears its own list (${afterRtc.rtc})`);
+  ok(afterRtc.rtc === M('optRtcEmpty'), `the WebRTC button clears its own list (${afterRtc.rtc})`);
   const last = await regIds();
   ok(!last.includes('afp-rtc-off'), `and drops its marker (${last.join(',')})`);
 
@@ -146,7 +149,8 @@ try {
     btn: document.getElementById('learnedClearBtn').disabled
   }));
   console.log('learned      ' + JSON.stringify(learned));
-  ok(/4 записей/.test(learned.text), `the learned lists are counted on screen (${learned.text})`);
+  ok(learned.text.startsWith(M('optLearnedRows').replace('$1', '4').split('$2')[0]),
+    `the learned lists are counted on screen (${learned.text})`);
   ok(learned.btn === false, 'and Clear is enabled while there is something to clear');
   // The hosts must NOT be on screen — that is the whole reason this shows a number.
   ok(!/example\.(com|net|org)/.test(learned.text),
@@ -159,7 +163,7 @@ try {
     btn: document.getElementById('learnedClearBtn').disabled
   }));
   console.log('learned clr  ' + JSON.stringify(afterLearned));
-  ok(/Пусто/.test(afterLearned.text), `Clear empties them (${afterLearned.text})`);
+  ok(afterLearned.text === M('optLearnedEmpty'), `Clear empties them (${afterLearned.text})`);
   ok(afterLearned.btn === true, 'and disables its own button');
   // Storage, not just the screen: a button that repaints without writing is the failure this
   // suite exists to catch on the other three lists.

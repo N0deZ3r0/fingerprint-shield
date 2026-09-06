@@ -1,5 +1,16 @@
 // Who Am I — AFP storage (getFullConfig + live navigator)
 (function () {
+  /**
+   * The catalogue, with the Russian original kept as the fallback — a key that is not
+   * there leaves today's text rather than blanking the element. Same rule as i18n.js.
+   */
+  const T = (key, ru, ...subs) => {
+    try {
+      const m = window.afpMsg && window.afpMsg(key, subs.length ? subs.map(String) : undefined);
+      return (typeof m === 'string' && m !== '') ? m : ru;
+    } catch (e) { return ru; }
+  };
+
   const $ = (id) => document.getElementById(id);
   let profile = null;
   let features = null;
@@ -70,7 +81,10 @@
       const ind = status.querySelector('.status-indicator');
       const txt = status.querySelector('.status-text');
       if (ind) ind.classList.add('active');
-      if (txt) txt.textContent = (mode === 'stealth' || mode === 'hidden') ? 'Скрытый' : 'Обычный';
+      if (txt) {
+        txt.textContent = (mode === 'stealth' || mode === 'hidden')
+          ? T('whoModeStealth', 'Скрытый') : T('whoModeNormal', 'Обычный');
+      }
     }
 
     setText('fingerprintHash', seedHash(p.noiseSeed));
@@ -262,7 +276,7 @@
     var out = { window: null, worker: null, iframe: null, notes: [] };
 
     try { out.window = probe(window); }
-    catch (e) { out.notes.push('окно: ' + e.message); }
+    catch (e) { out.notes.push({ c: 'window', d: e.message }); }
 
     // about:blank inherits this origin, and the content scripts declare
     // match_about_blank, so the frame is patched the same way a real subframe is.
@@ -274,7 +288,7 @@
       out.iframe = probe(fr.contentWindow);
       fr.remove();
     } catch (e2) {
-      out.notes.push('iframe недоступен: ' + e2.message);
+      out.notes.push({ c: 'iframe', d: e2.message });
     }
 
     try {
@@ -314,10 +328,10 @@
       });
       URL.revokeObjectURL(url);
       if (res && res.ok) out.worker = res.r;
-      else out.notes.push('Worker недоступен: ' + ((res && res.e) || 'нет ответа'));
+      else out.notes.push({ c: 'worker', d: (res && res.e) || null });
     } catch (e3) {
       // A site whose CSP forbids blob: workers is a real answer, not a failure of ours.
-      out.notes.push('Worker недоступен: ' + e3.message + ' (вероятно CSP страницы)');
+      out.notes.push({ c: 'workerCsp', d: e3.message });
     }
 
     return out;
@@ -337,7 +351,8 @@
     // Most recently looked at first — that is the page the user has in mind.
     usable.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
     if (!usable.length) {
-      parityTab.innerHTML = '<option value="">нет открытых http(s) вкладок</option>';
+      parityTab.innerHTML = '<option value="">' +
+        esc(T('whoNoTabs', 'нет открытых http(s) вкладок')) + '</option>';
       parityTab.disabled = true;
       if (parityBtn) parityBtn.disabled = true;
       return;
@@ -352,18 +367,53 @@
     }).join('');
   }
 
+  /**
+   * One note from the probe, in words. The probe cannot reach a catalogue, so it hands
+   * back {c: which scope, d: the platform's own message} and the sentence is built here.
+   * A plain string is still accepted: an older probe result, or a note added by hand.
+   */
+  function noteText(n) {
+    if (typeof n === 'string') return n;
+    const d = n.d || T('whoNoAnswer', 'нет ответа');
+    if (n.c === 'window') return T('whoNoteWindow', 'окно: ' + d, d);
+    if (n.c === 'iframe') return T('whoNoteIframe', 'iframe недоступен: ' + d, d);
+    if (n.c === 'workerCsp') {
+      return T('whoNoteWorkerCsp', 'Worker недоступен: ' + d + ' (вероятно CSP страницы)', d);
+    }
+    return T('whoNoteWorker', 'Worker недоступен: ' + d, d);
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
 
-  /** Russian declension: 1 расхождение, 2–4 расхождения, 5–20 расхождений, 21 расхождение. */
-  function plural(n, one, few, many) {
-    const mod100 = n % 100;
-    if (mod100 >= 11 && mod100 <= 14) return many;
-    const mod10 = n % 10;
-    if (mod10 === 1) return one;
-    if (mod10 >= 2 && mod10 <= 4) return few;
-    return many;
+  /**
+   * "3 расхождения", "3 divergences" — the count and its noun, in whatever language the
+   * browser is in.
+   *
+   * Russian has three plural forms and English two, and chrome.i18n has no notion of
+   * plurals at all, so the category comes from Intl.PluralRules for the UI language and
+   * is used as a key suffix: whoSplit_one, whoSplit_few, whoSplit_many, whoSplit_other.
+   * Both catalogues carry all four so the pair stays diffable; English simply never
+   * selects few or many. The hand-written Russian rule stays as the fallback for the case
+   * where the catalogue is not there at all.
+   */
+  function plural(n, key, one, few, many) {
+    let cat = null;
+    try {
+      cat = new Intl.PluralRules(chrome.i18n.getUILanguage()).select(n);
+    } catch (e) { cat = null; }
+    if (cat) {
+      const m = T(key + '_' + cat, '', String(n));
+      if (m) return m;
+    }
+    const mod100 = n % 100, mod10 = n % 10;
+    let ru;
+    if (mod100 >= 11 && mod100 <= 14) ru = many;
+    else if (mod10 === 1) ru = one;
+    else if (mod10 >= 2 && mod10 <= 4) ru = few;
+    else ru = many;
+    return n + ' ' + ru;
   }
 
   function renderParity(out) {
@@ -371,8 +421,9 @@
     const present = scopes.filter((s) => out[s]);
     if (!present.length) {
       parityOut.innerHTML = '<p class="parity-note">' +
-        esc(out.notes.join(' · ') || 'ни одна область не ответила') + '</p>';
-      setBadge('parityBadge', 'нет данных', false);
+        esc(out.notes.map(noteText).join(' · ') ||
+          T('whoNoScopes', 'ни одна область не ответила')) + '</p>';
+      setBadge('parityBadge', T('whoNoData', 'нет данных'), false);
       return;
     }
     const signals = Object.keys(out[present[0]]);
@@ -395,45 +446,57 @@
     }).join('');
 
     parityOut.innerHTML =
-      '<table class="parity-table"><tr><th></th><th>сигнал</th><th>окно</th><th>Worker</th><th>iframe</th></tr>' +
+      '<table class="parity-table"><tr><th></th><th>' + esc(T('whoThSignal', 'сигнал')) +
+      '</th><th>' + esc(T('whoThWindow', 'окно')) + '</th><th>Worker</th><th>iframe</th></tr>' +
       rows + '</table>' +
       '<p class="parity-verdict ' + (splits ? 'parity-bad' : 'parity-ok') + '">' +
-      (splits
-        ? splits + ' ' + plural(splits, 'расхождение', 'расхождения', 'расхождений') +
-          ' между областями — сайту достаточно прочитать любой из них дважды'
-        : 'все ' + signals.length + ' ' + plural(signals.length, 'сигнал', 'сигнала', 'сигналов') +
-          ' совпадают в ' + present.length + ' ' +
-          plural(present.length, 'области', 'областях', 'областях')) +
+      esc(splits
+        ? T('whoVerdictSplits',
+          plural(splits, 'whoSplit', 'расхождение', 'расхождения', 'расхождений') +
+            ' между областями — сайту достаточно прочитать любой из них дважды',
+          plural(splits, 'whoSplit', 'расхождение', 'расхождения', 'расхождений'))
+        : T('whoVerdictMatch',
+          'все ' + plural(signals.length, 'whoSignal', 'сигнал', 'сигнала', 'сигналов') +
+            ' совпадают в ' + plural(present.length, 'whoScope', 'области', 'областях', 'областях'),
+          plural(signals.length, 'whoSignal', 'сигнал', 'сигнала', 'сигналов'),
+          plural(present.length, 'whoScope', 'области', 'областях', 'областях'))) +
       '</p>' +
-      (out.notes.length ? '<p class="parity-note">' + esc(out.notes.join(' · ')) + '</p>' : '') +
+      (out.notes.length
+        ? '<p class="parity-note">' + esc(out.notes.map(noteText).join(' · ')) + '</p>' : '') +
       (present.length < 3
-        ? '<p class="parity-note">Проверены не все области: сравнение тем слабее, чем меньше их отвечает.</p>'
+        ? '<p class="parity-note">' + esc(T('whoPartialScopes',
+          'Проверены не все области: сравнение тем слабее, чем меньше их отвечает.')) + '</p>'
         : '');
     setBadge('parityBadge',
-      splits ? splits + ' ' + plural(splits, 'расхождение', 'расхождения', 'расхождений') : 'совпадает',
+      splits
+        ? plural(splits, 'whoSplit', 'расхождение', 'расхождения', 'расхождений')
+        : T('whoParityMatch', 'совпадает'),
       !splits);
   }
 
   async function runParity() {
     const tabId = Number(parityTab && parityTab.value);
-    if (!tabId) { toast('Нет подходящей вкладки'); return; }
+    if (!tabId) { toast(T('whoNoTab', 'Нет подходящей вкладки')); return; }
     parityBtn.disabled = true;
     const label = parityBtn.textContent;
-    parityBtn.textContent = 'Проверяем…';
-    parityOut.innerHTML = '<p class="parity-note">выполняется в выбранной вкладке…</p>';
+    parityBtn.textContent = T('whoChecking', 'Проверяем…');
+    parityOut.innerHTML = '<p class="parity-note">' +
+      esc(T('whoRunningInTab', 'выполняется в выбранной вкладке…')) + '</p>';
     try {
       const [res] = await chrome.scripting.executeScript({
         target: { tabId },
         world: 'MAIN',
         func: afpScopeProbe
       });
-      if (!res || !res.result) throw new Error('вкладка не вернула результат');
+      if (!res || !res.result) throw new Error(T('whoNoResult', 'вкладка не вернула результат'));
       renderParity(res.result);
     } catch (e) {
-      parityOut.innerHTML = '<p class="parity-note">не удалось: ' + esc(e.message || e) +
-        '</p><p class="parity-note">Страницы chrome://, интернет-магазин расширений и ' +
-        'вкладки с ошибкой загрузки скриптовать нельзя — откройте обычный сайт и обновите список.</p>';
-      setBadge('parityBadge', 'ошибка', false);
+      parityOut.innerHTML = '<p class="parity-note">' +
+        esc(T('whoParityFailed', 'не удалось: ' + (e.message || e), String(e.message || e))) +
+        '</p><p class="parity-note">' + esc(T('whoUnscriptable',
+          'Страницы chrome://, интернет-магазин расширений и вкладки с ошибкой загрузки ' +
+          'скриптовать нельзя — откройте обычный сайт и обновите список.')) + '</p>';
+      setBadge('parityBadge', T('whoParityError', 'ошибка'), false);
     } finally {
       parityBtn.disabled = false;
       parityBtn.textContent = label;
@@ -456,12 +519,13 @@
       el.classList.add('copied');
       clearTimeout(el._copyT);
       el._copyT = setTimeout(() => el.classList.remove('copied'), 1400);
-    }).catch(() => toast('Не удалось скопировать'));
+    }).catch(() => toast(T('whoCopyFailed', 'Не удалось скопировать')));
   });
 
   const refreshBtn = $('refreshBtn');
   if (refreshBtn) {
-    refreshBtn.addEventListener('click', () => load().then(fillTabList).then(() => toast('Обновлено')));
+    refreshBtn.addEventListener('click', () =>
+      load().then(fillTabList).then(() => toast(T('whoRefreshed', 'Обновлено'))));
   }
 
   load();

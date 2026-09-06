@@ -34,7 +34,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { harness, root, BROWSER } from './harness.mjs';
+import { harness, root, BROWSER, uiMessages, langArgs } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const { assert, eq, section, note, done } = harness();
@@ -119,7 +119,7 @@ const ctx = await chromium.launchPersistentContext(dir, {
   ...BROWSER,
   headless: !headed,
   ignoreDefaultArgs: ['--disable-extensions', '--disable-field-trial-config'],
-  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
+  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`, ...langArgs()]
 });
 
 const KEYS = ['cores', 'memory', 'lang', 'tz', 'gl'];
@@ -188,7 +188,9 @@ try {
   await new Promise((r) => setTimeout(r, 1700));
   eq(st1.on, true, 'the switch is ON');
   eq(st1.warn, true, 'and amber, because the site is off its default');
-  assert(/CSP переписан/.test(st1.status), `the status says the header was learned and rewritten (${st1.status})`);
+  assert(st1.status.includes(
+    uiMessages(await popup.evaluate(() => chrome.i18n.getUILanguage()))('popupCspRewritten')),
+    `the status says the header was learned and rewritten (${st1.status})`);
   const stored = await sw.evaluate(async () => {
     const st = await chrome.storage.local.get(['afp_csp_rewrite', 'afp_csp_noblob', 'afp_csp_tte', 'afp_csp_tt']);
     const rules = await chrome.declarativeNetRequest.getDynamicRules();

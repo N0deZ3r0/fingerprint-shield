@@ -187,9 +187,27 @@ try {
   const host = { cores: clean['base.cores'], lang: clean['base.lang'], screenW: clean['base.screenW'], tz: clean['base.tz'] };
   console.log(`   host: ${host.cores} cores, ${host.lang}, ${host.screenW}px, ${host.tz}`);
   ok(ours['base.cores'] !== host.cores, `the machine is presented at all (${ours['base.cores']} vs ${host.cores})`);
-  for (const [k, h] of [['frame.navOnTop', host.cores], ['frame.ownNav', host.cores],
-    ['frame.langOnTop', host.lang], ['frame.screenOnTop', host.screenW],
-    ['frame.intl', host.tz], ['setProtoNull', host.lang]]) {
+  // [FIX the-not-the-host-check-collided-on-a-us-english-runner] "the answer is not the
+  // host's" says nothing about a field where the profile and the machine legitimately AGREE.
+  // On this author's machine the host is ru-RU and the check passed; on the CI runner the
+  // host is en-US, the profile claims en-US, and the assertion failed while nothing was
+  // wrong. Same shape as the realm matrix's glVendor, which does not move because host and
+  // profile are both Intel.
+  //
+  // So the comparable set is DERIVED: a field is only worth this assertion where the two
+  // differ in the top window to begin with, and the size of that set is asserted so the
+  // derivation cannot quietly empty it.
+  const differs = { cores: ours['base.cores'] !== host.cores, lang: ours['base.lang'] !== host.lang,
+    screenW: ours['base.screenW'] !== host.screenW, tz: ours['base.tz'] !== host.tz };
+  const moved = Object.values(differs).filter(Boolean).length;
+  console.log('   fields where the profile differs from this machine at all: ' +
+    Object.keys(differs).filter((k) => differs[k]).join(', '));
+  ok(moved >= 2,
+    `the profile differs from this machine on enough fields to test with (${moved} of 4)`);
+  for (const [k, h, axis] of [['frame.navOnTop', host.cores, 'cores'], ['frame.ownNav', host.cores, 'cores'],
+    ['frame.langOnTop', host.lang, 'lang'], ['frame.screenOnTop', host.screenW, 'screenW'],
+    ['frame.intl', host.tz, 'tz'], ['setProtoNull', host.lang, 'lang']]) {
+    if (!differs[axis]) continue;
     ok(ours[k] !== h, `${k} does not hand back the host (${ours[k]}, host ${h})`);
   }
 

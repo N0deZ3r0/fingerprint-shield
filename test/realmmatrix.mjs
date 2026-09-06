@@ -222,6 +222,15 @@ var SB = ${JSON.stringify(SHARED_BODY)};
 var blobUrl = function (s) { return URL.createObjectURL(new Blob([s], { type: 'text/javascript' })); };
 
 window.__run = (async function () {
+  // [FIX the-window-was-the-COLD-read] The window is measured first and every other realm
+  // later, so anything that warms up between them lands on the window alone. On the CI
+  // runner — a Server SKU with a different font set and a cold cache — the window's canvas
+  // hash differed from all twelve other realms while they agreed with each other, and it
+  // reproduces on no local machine and not under software GL. So the first draw is thrown
+  // away, and the window is read AGAIN at the end: two readings of one realm, taken before
+  // and after everything else, and they have to agree. That turns a warm-up into a check
+  // instead of into twelve red rows about the wrong thing.
+  try { ${READ}; } catch (eWarm) {}
   window.__got['window'] = { r: ${READ}, d: ${READ_DOC} };
 
   await frame('iframe same-origin', function (f) { f.src = '/child?l=' + encodeURIComponent('iframe same-origin'); });
@@ -256,6 +265,8 @@ window.__run = (async function () {
   await worker('worker nested', function () { return new Worker(blobUrl(NB)); });
   await worker('shared worker', function () { return new SharedWorker(blobUrl(SB)); });
 
+  // The same realm, read again after everything above. See the note at the first read.
+  window.__got['window (again)'] = { r: ${READ}, d: ${READ_DOC} };
   return window.__got;
 })();
 </` + `script></body></html>`;
@@ -431,6 +442,24 @@ try {
     `the clean browser keeps most of the surface realm-independent (worst realm excludes ` +
     `${worst} of ${KEYS.length + DOC_KEYS.length}) — a larger number would mean this matrix ` +
     'is excusing itself rather than measuring');
+
+  // ── 2b) the window agrees with itself, before and after everything else ────
+  // Without this the rows below can go red for a reason that belongs to the CLOCK rather
+  // than to the realm, and that is exactly what the CI runner produced: the window's canvas
+  // hash differed from all twelve other realms while they agreed with each other, because
+  // the window is measured first and something — a font cache on a Server SKU — warmed up
+  // in between. It reproduces on no local machine and not under software GL.
+  {
+    const again = ours['window (again)'];
+    const drifted = (again && again.r)
+      ? KEYS.filter((k) => String(again.r[k]) !== cell(ours, 'window', k))
+      : ['(no second reading)'];
+    console.log('\n== 2b) the window read twice, before and after the other realms');
+    console.log('   ' + (drifted.length ? 'DRIFTED: ' + drifted.join(', ') : `identical on all ${KEYS.length}`));
+    ok(drifted.length === 0,
+      `the window's own reading does not move while the rest are collected (${drifted.join(', ')}) — ` +
+      'a value that warms up lands on whichever realm happens to be measured first');
+  }
 
   // ── 3) something is actually being spoofed ─────────────────────────────────
   console.log('\n== 3) ours differs from clean in the top window');

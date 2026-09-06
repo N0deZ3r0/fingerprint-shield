@@ -32,7 +32,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, uiMessages, langArgs } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -46,7 +46,7 @@ const port = server.address().port;
 const dir = mkdtempSync(join(tmpdir(), 'afp-popupkeys-'));
 const ctx = await chromium.launchPersistentContext(dir, {
   ...BROWSER, headless: !headed,
-  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
+  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`, ...langArgs()]
 });
 try {
   const bg = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
@@ -125,7 +125,11 @@ try {
   }));
   console.log(`   ArrowRight -> aria-checked ${afterArrow.checked}, badge "${afterArrow.badge}"`);
   ok(afterArrow.checked === 'false,true', `the arrow moved the choice (${afterArrow.checked})`);
-  ok(/Скрыт/.test(afterArrow.badge), `and the mode really changed, not only the attribute (${afterArrow.badge})`);
+  // Not a Russian literal — the popup renders in the browser's own language, which on the
+  // CI runner is English. The expectation comes from the catalogue the page just used.
+  const M = uiMessages(await p.evaluate(() => chrome.i18n.getUILanguage()));
+  ok(afterArrow.badge === M('popupModeStealth'),
+    `and the mode really changed, not only the attribute (${afterArrow.badge})`);
   await p.keyboard.press('ArrowLeft');
   await settle(600);
 

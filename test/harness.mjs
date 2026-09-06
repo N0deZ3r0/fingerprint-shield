@@ -33,6 +33,41 @@ export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 /**
+ * What the UI says, in the language the browser under test is actually in.
+ *
+ * The suites used to compare against Russian string literals, which passed only because the
+ * machine they were written on is Russian. The CI runner is not: on it the popup renders from
+ * _locales/en and every one of those comparisons would have failed — a suite that is green
+ * for a property of the developer's laptop rather than of the code.
+ *
+ * Pass the value the page itself reports (`chrome.i18n.getUILanguage()`), so the expectation
+ * comes from the same catalogue the browser just used.
+ *
+ *     const M = uiMessages(await page.evaluate(() => chrome.i18n.getUILanguage()));
+ *     ok(row.chip === M('popupTagHost'), …);
+ */
+/**
+ * `--lang=…` when FPS_LANG is set, and nothing otherwise.
+ *
+ * Spread into a launch's args by the suites that read what the UI SAYS. Without it those
+ * suites can only ever be run in the language of whatever machine they run on — this
+ * project's own machine is Russian and the CI runner is English, so neither one alone
+ * proves the other works:
+ *
+ *     FPS_LANG=en-US node test/popupfit.mjs
+ */
+export const langArgs = () => (process.env.FPS_LANG ? [`--lang=${process.env.FPS_LANG}`] : []);
+
+export function uiMessages(uiLang) {
+  const lang = String(uiLang || '').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+  const cat = JSON.parse(fs.readFileSync(path.join(root, '_locales', lang, 'messages.json'), 'utf8'));
+  return (key) => {
+    if (!cat[key]) throw new Error(`no message "${key}" in _locales/${lang} — the suite and the catalogue disagree`);
+    return cat[key].message;
+  };
+}
+
+/**
  * Which browser binary the Playwright suites drive. Spread into the launch
  * options: `chromium.launch({ ...BROWSER, headless: !headed })`.
  *

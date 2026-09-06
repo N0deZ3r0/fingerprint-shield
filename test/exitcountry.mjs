@@ -39,7 +39,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, uiMessages, langArgs } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('  FAIL:', m); failed++; } };
@@ -53,7 +53,7 @@ const port = server.address().port;
 const dir = mkdtempSync(join(tmpdir(), 'afp-exitcc-'));
 const ctx = await chromium.launchPersistentContext(dir, {
   ...BROWSER, headless: !headed,
-  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
+  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`, ...langArgs()]
 });
 
 try {
@@ -97,7 +97,18 @@ try {
     await popup.goto(`chrome-extension://${id}/popup.html`, { waitUntil: 'load' });
     await site.bringToFront();
     await popup.reload({ waitUntil: 'load' });
-    await new Promise((r) => setTimeout(r, 1400));
+    // [FIX the-country-was-read-on-a-timer] A flat 1400ms, and the popup fills the country
+    // header from an async read. On the two-core CI runner it had not happened yet and the
+    // row read the DEFAULT country — "the selected country is still shown (US)" against a
+    // build that had stored EE correctly. Wait for the value, not for the clock; the same
+    // correction test/hostmode.mjs needed for its picker.
+    await popup.waitForFunction(
+      () => {
+        const el = document.getElementById('countryCode');
+        return !!(el && el.textContent && el.textContent.trim() === 'EE');
+      },
+      null, { timeout: 15000 }
+    ).catch(() => { /* the assertions below report it properly */ });
     // [FIX the-warning-ate-the-timezone] The warning used to be written OVER the timezone,
     // so `line` and `warn` were the same element and reading one meant losing the other —
     // which is precisely what the popup did to the user. They are two elements now, and
@@ -113,6 +124,11 @@ try {
     }));
   }
 
+  // The popup renders in the browser's own language; the expectations come from the same
+  // catalogue it used. Country NAMES are English in both (they are proper nouns and the
+  // popup has always shown them that way), so only the sentence around them moves.
+  const M = uiMessages(await bg.evaluate(() => chrome.i18n.getUILanguage()));
+
   const NOW = Date.now();
 
   // 1) The case the feature exists for: the profile says EE, the address says DE.
@@ -120,15 +136,17 @@ try {
   console.log('mismatch (EE vs DE) :', JSON.stringify(bad));
   ok(bad.code === 'EE', `the selected country is still shown (${bad.code})`);
   ok(bad.warn === true, 'the warning row is shown');
-  ok(/не совпадает/.test(bad.note), `it says the address disagrees (${bad.note})`);
+  ok(bad.note === M('popupExitMismatch').replace('$1', 'Germany'),
+    `it says the address disagrees (${bad.note})`);
   ok(/Germany|DE/.test(bad.note), `and names where the address actually is (${bad.note})`);
   // The assertion the redesign is FOR. A user deciding what to do about the disagreement
   // needs to see what the profile claims at the same time; the old line showed one by
   // deleting the other, and left them reading a country name with no zone under it.
   ok(bad.line === 'Europe/Tallinn',
     `and the claimed timezone is still on screen beside it (${bad.line})`);
-  ok(/seed|visitor id|Смените/i.test(bad.title),
-    'the tooltip explains the consequence rather than only the fact');
+  ok(bad.title === M('popupExitTitle').replace('$1', 'Estonia').replace('$2', 'EE')
+    .replace('$3', 'Germany').replace('$4', 'DE'),
+    `the tooltip explains the consequence rather than only the fact (${bad.title})`);
 
   // 2) Agreement must be silent. A warning that is always on is a warning nobody reads.
   const good = await withReading({ cc: 'EE', at: NOW });

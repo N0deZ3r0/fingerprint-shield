@@ -5,9 +5,9 @@
 **Одна согласованная выдуманная машина — та же самая в окне, в каждом фрейме и в каждом воркере.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![версия](https://img.shields.io/badge/version-2.5.25-3b5bdb)
+![версия](https://img.shields.io/badge/version-2.5.26-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
-![сьютов](https://img.shields.io/badge/сьютов-52-2f9e44)
+![сьютов](https://img.shields.io/badge/сьютов-54-2f9e44)
 ![зависимостей в рантайме](https://img.shields.io/badge/зависимостей_в_рантайме-0-2f9e44)
 
 [English](README.md) · **Русский**
@@ -25,7 +25,7 @@
 
 <div align="center">
 
-<img src="docs/ui-whoami.png" width="100%" alt="Страница Who Am I: хеш отпечатка, платформа, язык и часовой пояс, затем выдуманное оборудование, экран, видеокарта, состояние canvas и WebRTC и список активных модулей">
+<img src="docs/ui-whoami.ru.png" width="100%" alt="Страница Who Am I: хеш отпечатка, платформа, язык и часовой пояс, затем выдуманное оборудование, экран, видеокарта, состояние canvas и WebRTC и список активных модулей">
 
 <sub><b>Who Am I</b> — машина такой, какой её читает сайт. Каждое значение на этой странице
 — это заявка, а не хозяйская машина; хеш отпечатка наверху — то, за что зацепится трекер.</sub>
@@ -50,14 +50,14 @@
 <tr>
 <td width="38%" valign="top" align="center">
 
-<img src="docs/ui-popup.png" width="100%" alt="Попап расширения: защита активна, шесть из шести модулей, страна выхода, посайтовые переключатели WebRTC, Service Worker и CSP, выбор обычного или скрытого режима и профиль устройства">
+<img src="docs/ui-popup.ru.png" width="100%" alt="Попап расширения: защита активна, шесть из шести модулей, страна выхода, посайтовые переключатели WebRTC, Service Worker и CSP, выбор обычного или скрытого режима и профиль устройства">
 
 <sub>Попап: страна, посайтовые переключатели, профиль устройства.</sub>
 
 </td>
 <td width="62%" valign="top" align="center">
 
-<img src="docs/ui-modules.png" width="100%" alt="Сетка модулей защиты в настройках: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network и Hide AdBlock — каждый галочкой с однострочным описанием">
+<img src="docs/ui-modules.ru.png" width="100%" alt="Сетка модулей защиты в настройках: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network и Hide AdBlock — каждый галочкой с однострочным описанием">
 
 <sub>Тринадцать модулей, включаются по одному. `ClientRects` выключен по
 умолчанию — именно от него краснеет CreepJS.</sub>
@@ -66,15 +66,22 @@
 </tr>
 </table>
 
+Интерфейс идёт на английском и на русском и следует за языком браузера — переключать ничего
+не нужно. Промах по ключу оставляет текст, который уже стоит на месте, и сообщает о себе в
+консоль: `chrome.i18n.getMessage` отвечает на неизвестный ключ пустой строкой, а запись такой
+строки в страницу не падает, а стирает элемент. `test/i18n.mjs` поднимает браузер дважды,
+`--lang=en-US` и `--lang=ru`, и требует, чтобы две отрисовки отличались — без этого сборка,
+игнорирующая локаль, прошла бы все остальные проверки, показав один язык дважды.
+
 ## Чем это проверено
 
 ```bash
 npm ci
 npm test           # 9 узловых сьютов — секунды, без браузера
-npm run test:all   # добавляет 43 браузерных сьютов — шесть-восемь минут
+npm run test:all   # добавляет 45 браузерных сьютов — шесть-восемь минут
 ```
 
-Всего **52 сьютов**. Узловая половина идёт на каждый push и каждый pull request; в неё
+Всего **54 сьютов**. Узловая половина идёт на каждый push и каждый pull request; в неё
 входит `test/parity-static.mjs`, который заново прогоняет оба генератора в памяти и падает,
 если `mw-bundle.js` или `dyn/` на диске устарели. Браузерная половина по-настоящему грузит
 расширение в Chromium и запускается вручную — её утверждения состоят из фактов о Windows:

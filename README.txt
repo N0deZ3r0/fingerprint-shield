@@ -1,4 +1,4 @@
-Fingerprint Shield 2.5.25 — release package
+Fingerprint Shield 2.5.26 — release package
 ==========================================
 
   This is the document that ships INSIDE the package: structure, CI, and the suites that
@@ -33,7 +33,7 @@ Continuous integration (.github/workflows/ci.yml):
             NOTE: on a PRIVATE repository that URL still needs authentication. It works in
             a browser where you are signed in; curl needs a token; a stranger gets a 404.
             Only making the repository public turns it into a link anyone can follow.
-  browser   the 43 Playwright suites, on a WINDOWS runner because that is what they
+  browser   the 45 Playwright suites, on a WINDOWS runner because that is what they
             measure. MANUAL ONLY (Run workflow): it takes six to eight minutes, private-repo
             Windows minutes bill at 2x, and the runner is a Server SKU whose font set
             differs from a desktop Windows 11 - so a first red run may mean the runner, not

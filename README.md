@@ -5,9 +5,9 @@
 **One coherent invented machine — the same one in the window, in every frame and in every worker.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-2.5.25-3b5bdb)
+![version](https://img.shields.io/badge/version-2.5.26-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
-![suites](https://img.shields.io/badge/suites-52-2f9e44)
+![suites](https://img.shields.io/badge/suites-54-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
 
 **English** · [Русский](README.ru.md)
@@ -69,15 +69,23 @@ the one that makes CreepJS go red.</sub>
 </tr>
 </table>
 
+The interface is in English and Russian and follows the browser's own language — there is no
+switch to set. A key missing from a catalogue leaves the text that is already there and says
+so on the console, because `chrome.i18n.getMessage` answers an unknown key with an empty
+string and writing that into the page would blank the control rather than fail.
+`test/i18n.mjs` opens the browser twice, `--lang=en-US` and `--lang=ru`, and requires the two
+renderings to differ — without that, a build ignoring the locale passes every other check by
+showing one language twice.
+
 ## How it is verified
 
 ```bash
 npm ci
 npm test           # the 9 Node suites — seconds, no browser
-npm run test:all   # adds the 43 Playwright suites — six to eight minutes
+npm run test:all   # adds the 45 Playwright suites — six to eight minutes
 ```
 
-**52 suites** in total. The Node half runs on every push and every pull request; it includes
+**54 suites** in total. The Node half runs on every push and every pull request; it includes
 `test/parity-static.mjs`, which re-runs both generators in memory and fails if
 `mw-bundle.js` or `dyn/` on disk are stale. The Playwright half loads the extension for real
 in Chromium and is triggered manually, because its assertions are Windows facts — the ANGLE

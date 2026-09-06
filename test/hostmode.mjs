@@ -44,7 +44,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { harness, root, BROWSER, loadBackground, loadPopup } from './harness.mjs';
+import { harness, root, BROWSER, loadBackground, loadPopup, uiMessages, langArgs } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const { assert, eq, section, note, done } = harness();
@@ -193,7 +193,7 @@ const LAUNCH = (dir, withExt) => chromium.launchPersistentContext(dir, {
   ...BROWSER,
   headless: !headed,
   ignoreDefaultArgs: ['--disable-extensions', '--disable-field-trial-config'],
-  args: withExt ? [`--disable-extensions-except=${root}`, `--load-extension=${root}`] : []
+  args: (withExt ? [`--disable-extensions-except=${root}`, `--load-extension=${root}`] : []).concat(langArgs())
 });
 
 /** One fresh tab: window, worker, frame, and what the document asked with. */
@@ -281,7 +281,15 @@ try {
   await popup.goto(`chrome-extension://${id}/popup.html`, { waitUntil: 'load' });
   await site.bringToFront();
   await popup.reload({ waitUntil: 'load' });
-  await new Promise((r) => setTimeout(r, 1200));
+  // [FIX the-picker-was-read-on-a-timer] A fixed 1200ms, and this list is filled from an
+  // async round trip to the service worker. On the two-core CI runner it is not finished in
+  // time and the read came back with ZERO options — "the picker lists every profile (0)",
+  // seven red assertions that say nothing about the extension. Waiting for the VALUE rather
+  // than for the clock is the rule this project has already learned once; a slow machine is
+  // not a defect, and a suite that calls it one gets ignored.
+  await popup.waitForFunction(
+    () => document.querySelectorAll('#profileList .option').length > 0,
+    null, { timeout: 15000 });
   const picker = await popup.evaluate(() => {
     document.getElementById('profileBtn').click();
     const opts = [...document.querySelectorAll('#profileList .option')];
@@ -299,7 +307,10 @@ try {
   eq(picker.count, PROFILES.length, `the picker lists every profile (${picker.count})`);
   assert(picker.hasHost, 'and one of them is "this machine"');
   eq(picker.open, false, 'choosing a row closes the picker');
-  eq(picker.name, 'Эта машина', `the button names the row (${picker.name})`);
+  // Not a Russian literal: on an English browser the popup renders from _locales/en, and the
+  // expectation has to come from the catalogue the page just used.
+  eq(picker.name, uiMessages(await popup.evaluate(() => chrome.i18n.getUILanguage()))("popupHostRow"),
+    `the button names the row (${picker.name})`);
   assert(/\d+×\d+ · \d+c · \d+GB/.test(picker.spec),
     `and its second line is the measurement, not a placeholder (${picker.spec})`);
   await popup.evaluate(async () => {

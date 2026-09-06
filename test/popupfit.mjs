@@ -18,7 +18,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, uiMessages, langArgs } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -34,7 +34,7 @@ const port = server.address().port;
 const dir = mkdtempSync(join(tmpdir(), 'afp-popupfit-'));
 const ctx = await chromium.launchPersistentContext(dir, {
   ...BROWSER, headless: !headed,
-  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
+  args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`, ...langArgs()]
 });
 try {
   const bg = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
@@ -53,6 +53,16 @@ try {
   await popup.reload({ waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 1500));
 
+  // What the popup SAYS depends on the browser's language, and this file used to compare
+  // against Russian literals — green on a Russian machine, red on an English CI runner, and
+  // in neither case about the popup. The expectations come from the catalogue the page
+  // itself just rendered from.
+  const M = uiMessages(await popup.evaluate(() => chrome.i18n.getUILanguage()));
+  // The longest status the popup can produce, and the longest exit-country warning: both
+  // are height inputs, so both have to be the ones this language actually shows.
+  const LONGEST = M('popupSwBlocked') + M('popupPressF5');
+  const MISMATCH = M('popupExitMismatch').replace('$1', 'United States of America');
+
   const resting = await popup.evaluate(() => document.body.scrollHeight);
   console.log(`resting height        ${resting}px (cap ${MAX})`);
   ok(resting <= MAX, `the popup fits without a scrollbar (${resting}px, cap ${MAX})`);
@@ -69,10 +79,10 @@ try {
   await popup.setViewportSize({ width: 400, height: resting });
   await new Promise((r) => setTimeout(r, 200));
 
-  const msgGeo = await popup.evaluate(() => {
+  const msgGeo = await popup.evaluate((LONGEST) => {
     // The longest message the popup can actually produce, now that the hostname is not
     // repeated into it.
-    window.showStatus('Service Worker заблокирован — обновите страницу (F5)', 'ok', 60000);
+    window.showStatus(LONGEST, 'ok', 60000);
     const R = (el) => { const b = el.getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom) }; };
     const btn = R(document.getElementById('applyBtn'));
     const bar = document.getElementById('statusBar');
@@ -95,7 +105,7 @@ try {
       clipped: bar.scrollWidth > bar.clientWidth + 1,
       title: bar.title
     };
-  });
+  }, LONGEST);
   console.log(`with a status message ${msgGeo.height}px  ` +
     `(button ${msgGeo.btn.top}-${msgGeo.btn.bottom}, bar ${msgGeo.st.top}-${msgGeo.st.bottom})`);
   ok(msgGeo.height === resting,
@@ -131,12 +141,12 @@ try {
   // Two states move it, and they move it in opposite directions:
   //   + the warning row, which is what the redesign spends
   //   − no http tab, where the per-site card is swapped out for the note (84px shorter)
-  const exitHeights = await popup.evaluate(async () => {
+  const exitHeights = await popup.evaluate(async (MISMATCH) => {
     const out = {};
     const w = document.getElementById('countryWarn');
     const hadHidden = w.hidden, before = w.textContent;
     // The longest realistic form: a country name we do not offer, so exitName falls back.
-    w.textContent = 'Адрес выхода: Соединённые Штаты Америки — не совпадает';
+    w.textContent = MISMATCH;
     w.hidden = false;
     out.withMismatch = document.body.scrollHeight;
     out.clipped = w.scrollWidth > w.clientWidth + 1;
@@ -151,7 +161,7 @@ try {
     out.noTabWithMismatch = document.body.scrollHeight;
     w.textContent = before; w.hidden = hadHidden;
     return out;
-  });
+  }, MISMATCH);
   console.log(`heights: quiet ${exitHeights.quiet}px, mismatch ${exitHeights.withMismatch}px, ` +
     `no tab ${exitHeights.noTab}px, no tab + mismatch ${exitHeights.noTabWithMismatch}px (cap ${MAX})`);
   ok(exitHeights.withMismatch > exitHeights.quiet,
@@ -205,7 +215,7 @@ try {
         const tag = el.querySelector('.tag');
         return {
           id: el.dataset.id,
-          claim: p.host ? 'хост' : `${p.screenW}×${p.screenH}`,
+          claim: p.host ? 'host' : `${p.screenW}×${p.screenH}`,
           // The rule, recomputed: both dimensions or neither, as mw-core has it.
           holds: p.host ? true : ((p.screenW | 0) >= s.w && (p.screenH | 0) >= s.h),
           chip: tag ? tag.textContent : '',
@@ -235,10 +245,10 @@ try {
   const agrees = (c) => {
     for (const r of c.rows) {
       if (r.id === 'host') {
-        ok(r.chip === 'хост', `the host row keeps its own chip (${r.chip})`);
+        ok(r.chip === M('popupTagHost'), `the host row keeps its own chip (${r.chip})`);
         continue;
       }
-      ok((r.chip === 'экран хоста') === !r.holds,
+      ok((r.chip === M('popupTagHostScreen')) === !r.holds,
         `${r.id} claims ${r.claim} on a ${c.s.w}×${c.s.h} machine — ` +
         `${r.holds ? 'the claim holds, so no chip' : 'the claim is dropped, so the chip is there'}` +
         ` (chip: "${r.chip}")`);
@@ -260,7 +270,7 @@ try {
   const HOLDS = ['laptop_mid', 'pc_gaming', 'pc_power'];
   for (const id of DROPPED) {
     const r = small.rows.find((x) => x.id === id);
-    ok(r && r.chip === 'экран хоста',
+    ok(r && r.chip === M('popupTagHostScreen'),
       `on a 1920×1080 machine ${id} (${r && r.claim}) is marked — its screen is never substituted`);
   }
   for (const id of HOLDS) {
@@ -324,7 +334,7 @@ try {
   console.log(`stand-down note       "${sdOn.text}" (${sdOn.height}px), off: "${sdOff.text}"`);
   console.log(`with WebRTC off       "${offSd.text}" (${offSd.height}px, clipped ${offSd.clipped}),` +
     ` stand-down off: "${offOnly.text}"`);
-  ok(/машина не подменяется$/.test(sdOn.text),
+  ok(sdOn.text.endsWith(M('popupNoteStandDown')),
     `the site line says the machine is not substituted here (${sdOn.text})`);
   ok(sdOn.warn, 'and it is amber, like the exit-country disagreement');
   ok(!!sdOn.title, 'and the full explanation is on the title attribute');
@@ -332,13 +342,13 @@ try {
     `it costs no height (${sdOn.height}px vs ${resting}px) — it rides in the hostname line`);
   ok(sdOn.nowrap && !sdOn.clipped,
     `and that line is nowrap, so a longer note cannot wrap the popup taller (clipped ${sdOn.clipped})`);
-  ok(!/машина не подменяется/.test(sdOff.text) && !sdOff.warn && sdOff.title === '',
+  ok(!sdOff.text.includes(M('popupNoteStandDown')) && !sdOff.warn && sdOff.title === '',
     `the note, the amber and the title all clear when the site is not standing down (${sdOff.text})`);
 
   // The other three cells of the same pair. The WebRTC note on its own is the state
   // [FIX the-off-state-was-invisible] exists for, and it was being erased on exactly the
   // sites where stand-down is common (github, youtube).
-  const RTC = 'WebRTC выключен в настройках', SD = 'машина не подменяется';
+  const RTC = M('popupNoteWebrtcOff'), SD = M('popupNoteStandDown');
   ok(offOnly.text.includes(RTC) && !offOnly.text.includes(SD) && !offOnly.warn,
     `WebRTC off alone names the setting and nothing else (${offOnly.text})`);
   ok(offOnly.title === '', `and carries no title — the line has room for it (${offOnly.title})`);
@@ -381,7 +391,7 @@ try {
   // it is enough that this line is no longer one of the two.
   ok(!first.host.includes('127.0.0.1'),
     `the per-site line no longer repeats the hostname the hero already shows (${first.host})`);
-  ok(/этого сайта/.test(first.host), `it says what the card decides instead (${first.host})`);
+  ok(first.host === M('popupSiteScope'), `it says what the card decides instead (${first.host})`);
   ok(first.rtcOn === true, 'WebRTC starts protected');
   ok(first.swOn === true, 'a service worker starts allowed');
   ok(first.rtcWarn === false && first.swWarn === false, 'nothing is amber on the defaults');

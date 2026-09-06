@@ -165,9 +165,20 @@ function verdictOf(text) {
   const verdictBad = verdict
     && /\bFAIL\b|<<<|\bSPLIT\b/.test(verdict[0])
     && !/no lie|not the cause|did not|every engine constant|passed through/i.test(verdict[0]);
+  // [FIX a-failing-page-that-said-nothing] A page whose verdict is "FAILURES: 1" and whose
+  // rows are TABLE CELLS rather than lines beginning with FAIL produced no detail at all:
+  // CI printed "dev-datecost.html … FAIL 484ms" and nothing else, on a machine the author
+  // cannot reach, which leaves guessing as the only next step. Any line MENTIONING fail is
+  // taken when the line-start shape found none — it is a last resort and it is better than
+  // silence.
+  const failish = text.split('\n')
+    .filter((l) => /\bFAIL\b/i.test(l) && !/^\s*FAILURES:/i.test(l))
+    .map((s) => s.trim().replace(/\s+/g, ' '))
+    .filter(Boolean);
   return {
     failed: n > 0 || !!verdictBad,
     detail: failLines.slice(0, 2).map((s) => s.trim()).join(' | ')
+      || (n > 0 ? failish.slice(0, 2).join(' | ') : '')
       || (passFail ? passFail[0] : '')
       || (verdict ? verdict[0].trim().slice(0, 100) : ''),
   };

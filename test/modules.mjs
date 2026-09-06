@@ -111,10 +111,25 @@ window.__probe = (async function () {
     o.connection = n ? [n.effectiveType, n.rtt, n.downlink, n.saveData].join('/') : 'absent';
   } catch (e) { o.connection = 'ERR'; }
 
-  // clientRects — a text rect, where sub-pixel noise shows
+  // clientRects — a text rect, where sub-pixel noise shows.
+  //
+  // [FIX the-rect-row-flaked-by-construction] This compared width and height ONLY, and both
+  // are DIFFERENCES: width is n(right) - n(x), each side nudged by up to a thousandth of a
+  // pixel and then snapped to a 1/4096 grid. When the two sides happen to take the same grid
+  // step the difference comes out unchanged and the noise is invisible. Measured over a
+  // million draws: width alone 11.4% of the time, height 11.4%, BOTH 1.33%. So about one run
+  // in seventy-five reported "the switch controls rect — on and off are identical" against a
+  // build where nothing was wrong. It surfaced on CI first because CI runs this more often
+  // than anyone runs it by hand.
+  //
+  // More independent draws is the answer, not a different field: a SINGLE noised value is
+  // unchanged 12.6% of the time, which is worse than the difference. Six draws across two
+  // elements put the coincidence around one run in a hundred million.
   try {
     var r = document.getElementById('txt').getBoundingClientRect();
-    o.rect = r.width.toFixed(6) + ',' + r.height.toFixed(6);
+    var rb = document.body.getBoundingClientRect();
+    o.rect = [r.x, r.y, r.width, r.height, rb.width, rb.height]
+      .map(function (v) { return v.toFixed(6); }).join(',');
   } catch (e) { o.rect = 'ERR'; }
 
   // fonts — the module is an ALLOWLIST: a family the profile claims passes through, one it

@@ -1,24 +1,39 @@
 'use strict';
 
 /**
+ * The catalogue, with the Russian original kept as the fallback.
+ *
+ * chrome.i18n.getMessage answers '' for a key it does not have, and writing that into the
+ * DOM would blank the control rather than fail loudly — so a miss falls back to the text
+ * that used to be hard-coded here. The same rule i18n.js applies to the markup.
+ */
+var T = function (key, ru) {
+  var subs = Array.prototype.slice.call(arguments, 2).map(String);
+  try {
+    var s = window.afpMsg && window.afpMsg(key, subs.length ? subs : undefined);
+    return (typeof s === 'string' && s !== '') ? s : ru;
+  } catch (e) { return ru; }
+};
+
+/**
  * Options UI — features from chrome.storage, reset = AFP_DEFAULT_FEATURES (defaults.js).
  * defaults.js must be loaded before this script.
  */
 
 var FEAT_META = {
-  canvas:       { name: 'Canvas', desc: 'Шум getImageData / toDataURL' },
+  canvas:       { name: 'Canvas', desc: T('optFeatCanvas', 'Шум getImageData / toDataURL') },
   webgl:        { name: 'WebGL', desc: 'Vendor / renderer / params' },
-  webrtc:       { name: 'WebRTC', desc: 'Скрытие локальных IP' },
+  webrtc:       { name: 'WebRTC', desc: T('optFeatWebrtc', 'Скрытие локальных IP') },
   navigator:    { name: 'Navigator', desc: 'UA, cores, memory, langs…' },
-  screen:       { name: 'Screen', desc: 'Разрешение и avail*' },
+  screen:       { name: 'Screen', desc: T('optFeatScreen', 'Разрешение и avail*') },
   timezone:     { name: 'Timezone', desc: 'Date / Intl TZ' },
-  geolocation:  { name: 'Geolocation', desc: 'Подмена или блок geo' },
+  geolocation:  { name: 'Geolocation', desc: T('optFeatGeolocation', 'Подмена или блок geo') },
   battery:      { name: 'Battery', desc: 'getBattery()' },
-  fonts:        { name: 'Fonts', desc: 'Список шрифтов' },
+  fonts:        { name: 'Fonts', desc: T('optFeatFonts', 'Список шрифтов') },
   clientRects:  { name: 'ClientRects', desc: 'DOMRect noise', risky: true },
   plugins:      { name: 'Plugins', desc: 'navigator.plugins / mimeTypes' },
   network:      { name: 'Network', desc: 'navigator.connection' },
-  hideAdBlocker:{ name: 'Hide AdBlock', desc: 'Маскировка ad-bait' }
+  hideAdBlocker:{ name: 'Hide AdBlock', desc: T('optFeatHideAdBlocker', 'Маскировка ad-bait') }
 };
 
 var grid = document.getElementById('featGrid');
@@ -112,21 +127,21 @@ function save() {
   chrome.runtime.sendMessage({ type: 'setFeatures', features: f }, function(res) {
     saveBtn.disabled = false;
     if (chrome.runtime.lastError) {
-      showStatus(chrome.runtime.lastError.message || 'Ошибка', true);
+      showStatus(chrome.runtime.lastError.message || T('optError', 'Ошибка'), true);
       return;
     }
     if (res && res.ok === false) {
-      showStatus(res.reason || 'Ошибка сохранения', true);
+      showStatus(res.reason || T('optSaveFailed', 'Ошибка сохранения'), true);
       return;
     }
-    showStatus('Сохранено. Обновите открытые вкладки.');
+    showStatus(T('optSaved', 'Сохранено. Обновите открытые вкладки.'));
   });
 }
 
 function resetSafe() {
   var f = defaults();
   render(f);
-  showStatus('Выставлены безопасные дефолты — нажмите «Сохранить»');
+  showStatus(T('optDefaultsSet', 'Выставлены безопасные дефолты — нажмите «Сохранить»'));
 }
 
 // ── WebRTC exceptions ────────────────────────────────────────────────────────
@@ -139,7 +154,7 @@ function renderRtcExceptions(hosts) {
   var n = (hosts || []).length;
   rtcClearBtn.disabled = !n;
   if (!n) {
-    rtcList.textContent = 'Список пуст — WebRTC защищён везде.';
+    rtcList.textContent = T('optRtcEmpty', 'Список пуст — WebRTC защищён везде.');
     return;
   }
   rtcList.textContent = hosts.join(', ');
@@ -147,7 +162,7 @@ function renderRtcExceptions(hosts) {
 
 function loadRtcExceptions() {
   chrome.runtime.sendMessage({ type: 'getWebrtcExceptionList' }, function(res) {
-    if (chrome.runtime.lastError) { rtcList.textContent = 'не удалось прочитать список'; return; }
+    if (chrome.runtime.lastError) { rtcList.textContent = T('optListReadFailed', 'не удалось прочитать список'); return; }
     renderRtcExceptions(res && res.hosts);
   });
 }
@@ -156,12 +171,12 @@ rtcClearBtn.addEventListener('click', function() {
   rtcClearBtn.disabled = true;
   chrome.runtime.sendMessage({ type: 'clearWebrtcExceptions' }, function(res) {
     if (chrome.runtime.lastError || !res || res.ok === false) {
-      showStatus((res && res.reason) || 'Не удалось очистить', true);
+      showStatus((res && res.reason) || T('optClearFailed', 'Не удалось очистить'), true);
       rtcClearBtn.disabled = false;
       return;
     }
     renderRtcExceptions([]);
-    showStatus('WebRTC защита включена на всех сайтах. Обновите открытые вкладки.');
+    showStatus(T('optRtcCleared', 'WebRTC защита включена на всех сайтах. Обновите открытые вкладки.'));
   });
 });
 
@@ -172,12 +187,12 @@ var swClearBtn = document.getElementById('swClearBtn');
 function renderSwBlocked(hosts) {
   var n = (hosts || []).length;
   swClearBtn.disabled = !n;
-  swList.textContent = n ? hosts.join(', ') : 'Список пуст — service worker разрешён везде.';
+  swList.textContent = n ? hosts.join(', ') : T('optSwEmpty', 'Список пуст — service worker разрешён везде.');
 }
 
 function loadSwBlocked() {
   chrome.runtime.sendMessage({ type: 'getSwBlockedList' }, function(res) {
-    if (chrome.runtime.lastError) { swList.textContent = 'не удалось прочитать список'; return; }
+    if (chrome.runtime.lastError) { swList.textContent = T('optListReadFailed', 'не удалось прочитать список'); return; }
     renderSwBlocked(res && res.hosts);
   });
 }
@@ -186,12 +201,12 @@ swClearBtn.addEventListener('click', function() {
   swClearBtn.disabled = true;
   chrome.runtime.sendMessage({ type: 'clearSwBlocked' }, function(res) {
     if (chrome.runtime.lastError || !res || res.ok === false) {
-      showStatus((res && res.reason) || 'Не удалось очистить', true);
+      showStatus((res && res.reason) || T('optClearFailed', 'Не удалось очистить'), true);
       swClearBtn.disabled = false;
       return;
     }
     renderSwBlocked([]);
-    showStatus('Service Worker разрешён на всех сайтах. Обновите открытые вкладки.');
+    showStatus(T('optSwCleared', 'Service Worker разрешён на всех сайтах. Обновите открытые вкладки.'));
   });
 });
 
@@ -202,12 +217,12 @@ var cspClearBtn = document.getElementById('cspClearBtn');
 function renderCspRewrite(hosts) {
   var n = (hosts || []).length;
   cspClearBtn.disabled = !n;
-  cspList.textContent = n ? hosts.join(', ') : 'Список пуст — заголовки сайтов не переписаны.';
+  cspList.textContent = n ? hosts.join(', ') : T('optCspEmpty', 'Список пуст — заголовки сайтов не переписаны.');
 }
 
 function loadCspRewrite() {
   chrome.runtime.sendMessage({ type: 'getCspRewriteList' }, function(res) {
-    if (chrome.runtime.lastError) { cspList.textContent = 'не удалось прочитать список'; return; }
+    if (chrome.runtime.lastError) { cspList.textContent = T('optListReadFailed', 'не удалось прочитать список'); return; }
     renderCspRewrite(res && res.hosts);
   });
 }
@@ -216,12 +231,12 @@ cspClearBtn.addEventListener('click', function() {
   cspClearBtn.disabled = true;
   chrome.runtime.sendMessage({ type: 'clearCspRewrite' }, function(res) {
     if (chrome.runtime.lastError || !res || res.ok === false) {
-      showStatus((res && res.reason) || 'Не удалось очистить', true);
+      showStatus((res && res.reason) || T('optClearFailed', 'Не удалось очистить'), true);
       cspClearBtn.disabled = false;
       return;
     }
     renderCspRewrite([]);
-    showStatus('Заголовки сайтов восстановлены везде. Обновите открытые вкладки.');
+    showStatus(T('optCspCleared', 'Заголовки сайтов восстановлены везде. Обновите открытые вкладки.'));
   });
 });
 
@@ -248,10 +263,10 @@ var geoCheck = document.getElementById('geoCheck');
 var geoState = document.getElementById('geoState');
 
 function renderGeoState(cc, at, off) {
-  if (off) { geoState.textContent = 'Проверка выключена.'; return; }
-  if (!cc) { geoState.textContent = 'Страна выхода ещё не определена.'; return; }
+  if (off) { geoState.textContent = T('optGeoOff', 'Проверка выключена.'); return; }
+  if (!cc) { geoState.textContent = T('optGeoUnknown', 'Страна выхода ещё не определена.'); return; }
   var when = at ? new Date(at).toLocaleTimeString() : '—';
-  geoState.textContent = 'Последнее чтение: ' + cc + ' в ' + when + '.';
+  geoState.textContent = T('optGeoLast', 'Последнее чтение: ' + cc + ' в ' + when + '.', cc, when);
 }
 
 function loadGeoCheck() {
@@ -270,11 +285,11 @@ geoCheck.addEventListener('change', function () {
       // let the popup keep asserting a mismatch nothing is refreshing any more.
       chrome.storage.local.remove(['afp_exit_cc', 'afp_exit_at'], function () {
         renderGeoState('', 0, true);
-        showStatus('Проверка страны выключена, сохранённое значение удалено.');
+        showStatus(T('optGeoTurnedOff', 'Проверка страны выключена, сохранённое значение удалено.'));
       });
       return;
     }
-    showStatus('Проверка страны включена.');
+    showStatus(T('optGeoTurnedOn', 'Проверка страны включена.'));
     chrome.runtime.sendMessage({ type: 'getExitCountry', force: true }, function (res) {
       if (chrome.runtime.lastError || !res || !res.ok) { renderGeoState('', 0, false); return; }
       renderGeoState(res.cc, res.at, res.off);
@@ -297,12 +312,12 @@ var learnedClearBtn = document.getElementById('learnedClearBtn');
 // The key names are the extension's, not the reader's: a screen that says afp_csp_ns tells
 // nobody anything, and a screen that says nothing at all is what this fixes.
 var LEARNED_LABEL = {
-  afp_csp_noblob: 'не пускают blob-воркеры',
-  afp_csp_tt: 'ограничивают имена политик Trusted Types',
-  afp_csp_tte: 'требуют TrustedScriptURL у sink',
-  afp_csp_nc: 'не пускают blob: в fetch/XHR',
-  afp_csp_ns: 'не пускают importScripts blob:',
-  afp_csp_mixed: 'ограничивают на одних маршрутах и не на других'
+  afp_csp_noblob: T('optLearnNoblob', 'не пускают blob-воркеры'),
+  afp_csp_tt: T('optLearnTt', 'ограничивают имена политик Trusted Types'),
+  afp_csp_tte: T('optLearnTte', 'требуют TrustedScriptURL у sink'),
+  afp_csp_nc: T('optLearnNc', 'не пускают blob: в fetch/XHR'),
+  afp_csp_ns: T('optLearnNs', 'не пускают importScripts blob:'),
+  afp_csp_mixed: T('optLearnMixed', 'ограничивают на одних маршрутах и не на других')
 };
 
 function renderLearned(lists) {
@@ -317,13 +332,13 @@ function renderLearned(lists) {
   // The COUNT, not the hosts. A page of site names would be the browsing history this entry
   // is about, printed larger; the number is what tells the reader there is something here.
   learnedList.textContent = total
-    ? (total + ' записей: ' + rows.join('; '))
-    : 'Пусто — ничего ещё не выучено.';
+    ? T('optLearnedRows', total + ' записей: ' + rows.join('; '), total, rows.join('; '))
+    : T('optLearnedEmpty', 'Пусто — ничего ещё не выучено.');
 }
 
 function loadLearned() {
   chrome.runtime.sendMessage({ type: 'getCspLearnedLists' }, function (res) {
-    if (chrome.runtime.lastError) { learnedList.textContent = 'не удалось прочитать состояние'; return; }
+    if (chrome.runtime.lastError) { learnedList.textContent = T('optStateReadFailed', 'не удалось прочитать состояние'); return; }
     renderLearned(res && res.lists);
   });
 }
@@ -332,12 +347,12 @@ learnedClearBtn.addEventListener('click', function () {
   learnedClearBtn.disabled = true;
   chrome.runtime.sendMessage({ type: 'clearCspLearnedLists' }, function (res) {
     if (chrome.runtime.lastError || !res || res.ok === false) {
-      showStatus((res && res.reason) || 'Не удалось очистить', true);
+      showStatus((res && res.reason) || T('optClearFailed', 'Не удалось очистить'), true);
       learnedClearBtn.disabled = false;
       return;
     }
     renderLearned({});
-    showStatus('Забыто. Каждый сайт будет выучен заново — ценой одной загрузки страницы.');
+    showStatus(T('optLearnedCleared', 'Забыто. Каждый сайт будет выучен заново — ценой одной загрузки страницы.'));
   });
 });
 

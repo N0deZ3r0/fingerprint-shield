@@ -1,5 +1,19 @@
 'use strict';
 
+/**
+ * The catalogue, with the Russian original kept as the fallback.
+ *
+ * chrome.i18n.getMessage answers '' for a key it does not have, and writing that into the
+ * DOM would blank the control rather than fail loudly — so a miss falls back to the text
+ * that used to be hard-coded here. The same rule i18n.js applies to the markup.
+ */
+const T = (key, ru, ...subs) => {
+    try {
+        const s = window.afpMsg && window.afpMsg(key, subs.length ? subs.map(String) : undefined);
+        return (typeof s === 'string' && s !== '') ? s : ru;
+    } catch (e) { return ru; }
+};
+
 const PROFILES = [
   { id: 'laptop_low', name: 'Laptop Budget', spec: '1366×768 · 4c · 4GB', gpu: 'Intel UHD 630', icon: 'laptop',
     // dpr explicit on every row now: the fallback used to read screenW as a PANEL size and
@@ -100,6 +114,11 @@ const PROFILES = [
   // process and screen), and they serve the audit's "claimed" column and this row's label.
   // The page side never answers from them — it answers from the browser — so a monitor
   // unplugged after Apply costs a stale label, never a wrong value.
+  // The table is DATA and stays data: test/profilecoherence.mjs and dev-runtime.html both
+  // slice it out of this file and evaluate it on their own, where nothing this script
+  // defines exists. A T() call in here is a ReferenceError over there — measured, and it is
+  // why the host row's two words are translated at the point they are drawn (profileTitle
+  // and profileSpecLine) rather than here.
   { id: 'host', name: 'Эта машина', spec: 'реальное железо', gpu: '', icon: 'pc', host: true }
 ];
 
@@ -199,14 +218,28 @@ function screenClaimHolds(p) {
 /** Why the chip is there, with both numbers in it. */
 function screenClaimTitle(p) {
   const s = hostScreenPair();
-  return `Экран не подменяется: ${p.screenW}×${p.screenH} меньше вашего ${s.w}×${s.h}, ` +
-    'и страницы увидят ваш. Подменяется только строка не меньше вашего экрана по обеим сторонам. ' +
-    'Остальное — ядра, память, GPU — работает как обычно.';
+  return T('popupScreenDropped',
+    `Экран не подменяется: ${p.screenW}×${p.screenH} меньше вашего ${s.w}×${s.h}, ` +
+    'и страницы увидят ваш. Подменяется только строка не меньше вашего экрана по обеим сторонам.',
+  p.screenW, p.screenH, s.w, s.h) + ' ' +
+    T('popupScreenRest', 'Остальное — ядра, память, GPU — работает как обычно.');
+}
+
+/**
+ * A row's name, in the browser's language.
+ *
+ * Every row but one is named after the machine it claims — "Laptop Mid" reads the same in
+ * both languages and stays in the table. The host row is the exception: its name is a
+ * sentence about the user's own machine, so it is translated, and translated HERE because
+ * PROFILES has readers that cannot call this file's functions (see the note on the table).
+ */
+function profileTitle(p) {
+  return p.host ? T('popupHostRow', p.name) : p.name;
 }
 
 function profileSpecLine(p) {
   if (p.host) {
-    if (!HOST.cores) return 'реальное железо этой машины';
+    if (!HOST.cores) return T('popupHostSpecLong', 'реальное железо этой машины');
     return `${HOST.screenW}×${HOST.screenH} · ${HOST.cores}c · ${HOST.memory}GB · ${hostGpuLabel() || 'GPU'}`;
   }
   return `${p.spec} · ${p.gpu}`;
@@ -369,7 +402,7 @@ function setSwitch(el, on) {
 // back: renderShield used to derive the whole hero from them, counting how many carried the
 // `on` class. Deleting the markup alone would have left `badges.filter(el => el && …)`
 // filtering out six nulls, so `on` would be 0 forever and the popup would sit permanently
-// on "Защита не активна" with an amber shield — a broken readout on a working extension,
+// on T('popupHeroOff', 'Защита не активна') with an amber shield — a broken readout on a working extension,
 // and one nothing in the test suite would have caught.
 //
 // So the count lives here now, written by checkProtectionsOnce, which is the one place that
@@ -383,15 +416,15 @@ function renderShield() {
   const on = _modulesOn;
   const hidden = currentMode === 'hidden';
   if (heroTitle) {
-    heroTitle.textContent = !_modulesChecked ? 'Защита активна'
-      : on === 0 ? 'Защита не активна'
-      : hidden ? 'Скрытый режим'
-      : 'Защита активна';
+    heroTitle.textContent = !_modulesChecked ? T('popupHeroOn', 'Защита активна')
+      : on === 0 ? T('popupHeroOff', 'Защита не активна')
+      : hidden ? T('popupHeroStealth', 'Скрытый режим')
+      : T('popupHeroOn', 'Защита активна');
   }
   if (heroSub) {
-    heroSub.textContent = !_modulesChecked ? 'проверяем модули…'
-      : on === 0 ? 'обновите страницу — F5'
-      : on + ' из ' + total + ' модулей активно';
+    heroSub.textContent = !_modulesChecked ? T('popupSubChecking', 'проверяем модули…')
+      : on === 0 ? T('popupSubReload', 'обновите страницу — F5')
+      : T('popupSubActive', on + ' из ' + total + ' модулей активно', on, total);
   }
   // Amber hero only when we have actually looked and found nothing running.
   if (hero) hero.classList.toggle('is-off', _modulesChecked && on === 0);
@@ -443,14 +476,14 @@ async function updateTabInfo(tab) {
       if (empty) empty.hidden = true;
       if (card) card.hidden = false;
     } else {
-      tabHost.textContent = 'Нет активной вкладки';
+      tabHost.textContent = T('popupNoTab', 'Нет активной вкладки');
       if (empty) empty.hidden = false;
       if (card) card.hidden = true;
       // keep mode pill visible
       if (tabBadge) tabBadge.style.display = '';
     }
   } catch (e) {
-    tabHost.textContent = 'Нет активной вкладки';
+    tabHost.textContent = T('popupNoTab', 'Нет активной вкладки');
     if (empty) empty.hidden = false;
   }
 }
@@ -500,7 +533,7 @@ async function checkProtectionsOnce(tab) {
 
 function renderProfiles() {
   const cur = PROFILES.find(x => x.id === selectedProfileId) || PROFILES.find(x => x.id === 'laptop_mid');
-  if (profileName) profileName.textContent = cur.name;
+  if (profileName) profileName.textContent = profileTitle(cur);
   if (profileSpec) profileSpec.textContent = profileSpecLine(cur);
   if (profileIcon) profileIcon.innerHTML = ICONS[cur.icon] || ICONS.laptop;
   // The selected row repeats the chip, so the fact is visible without opening the list.
@@ -523,25 +556,25 @@ function renderProfiles() {
     const two = document.createElement('span');
     two.className = 'opt-2';
     const name = document.createElement('span');
-    name.textContent = p.name;
+    name.textContent = profileTitle(p);
     const sub = document.createElement('span');
     sub.className = 'sub';
     sub.textContent = profileSpecLine(p);
     two.appendChild(name);
     two.appendChild(sub);
     el.appendChild(two);
-    // One chip per row: "хост" for the machine row, otherwise the screen note when this
+    // One chip per row: the "host" tag for the machine row, otherwise the screen note when this
     // row's claim would be dropped on this machine. They cannot both apply — the host row
     // claims no screen either.
     if (p.host) {
       const tag = document.createElement('span');
       tag.className = 'tag';
-      tag.textContent = 'хост';
+      tag.textContent = T('popupTagHost', 'хост');
       el.appendChild(tag);
     } else if (!screenClaimHolds(p)) {
       const tag = document.createElement('span');
       tag.className = 'tag';
-      tag.textContent = 'экран хоста';
+      tag.textContent = T('popupTagHostScreen', 'экран хоста');
       tag.title = screenClaimTitle(p);
       el.appendChild(tag);
     }
@@ -716,10 +749,14 @@ function renderCountryHeader() {
   countryTz.title = '';
   if (countryWarn) {
     countryWarn.hidden = !mismatch;
-    countryWarn.textContent = mismatch ? `Адрес выхода: ${exitName(exitCC)} — не совпадает` : '';
+    countryWarn.textContent = mismatch
+      ? T('popupExitMismatch', `Адрес выхода: ${exitName(exitCC)} — не совпадает`, exitName(exitCC))
+      : '';
     countryWarn.title = mismatch
-      ? `Профиль заявляет ${c.name} (${c.code}), а запросы уходят с адреса в ${exitName(exitCC)} (${exitCC}). ` +
-        `Это расхождение видно любому сайту без единой строчки JS. Смените страну или узел VPN.`
+      ? T('popupExitTitle',
+        `Профиль заявляет ${c.name} (${c.code}), а запросы уходят с адреса в ${exitName(exitCC)} (${exitCC}). ` +
+        'Это расхождение видно любому сайту без единой строчки JS. Смените страну или узел VPN.',
+        c.name, c.code, exitName(exitCC), exitCC)
       : '';
   }
 }
@@ -829,12 +866,12 @@ async function handleApply() {
   const profile = PROFILES.find(x => x.id === selectedProfileId);
   const country = COUNTRIES.find(x => x.code === selectedCountryCode);
   if (!profile || !country) {
-    showStatus('Выберите профиль и страну', 'err');
+    showStatus(T('popupPickFirst', 'Выберите профиль и страну'), 'err');
     return;
   }
   applying = true;
   applyBtn.disabled = true;
-  applyBtn.textContent = 'Применяю…';
+  applyBtn.textContent = T('popupApplying', 'Применяю…');
   try {
     // [FIX host-mode] The host row stores the MEASUREMENT taken in this popup, marked
     // `host: true`, plus the GL record background.js would otherwise look up in GPU_DATA
@@ -870,21 +907,21 @@ async function handleApply() {
       reason = (resp && resp.reason) || '';
     } catch (e) {}
     if (injected) {
-      showStatus('Готово: ' + profile.name + ' · ' + country.code, 'ok');
+      showStatus(T('popupApplyDone', 'Готово:') + ' ' + profile.name + ' · ' + country.code, 'ok');
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => [null]);
       if (tab && tab.id && tab.url && tab.url.startsWith('http')) {
         try { await chrome.tabs.reload(tab.id); } catch (e) {}
       }
     } else if (reason === 'no_http_tab') {
-      showStatus('Сохранено — откройте сайт и нажмите F5', 'ok');
+      showStatus(T('popupSavedOpenF5', 'Сохранено — откройте сайт и нажмите F5'), 'ok');
     } else {
-      showStatus('Сохранено — обновите вкладку (F5)', 'ok');
+      showStatus(T('popupSavedReload', 'Сохранено — обновите вкладку (F5)'), 'ok');
     }
   } catch (e) {
-    showStatus('Ошибка: ' + e.message, 'err');
+    showStatus(T('popupError', 'Ошибка:') + ' ' + e.message, 'err');
   } finally {
     applyBtn.disabled = false;
-    applyBtn.textContent = 'Применить';
+    applyBtn.textContent = T('popupApply', 'Применить');
     applying = false;
   }
 }
@@ -967,20 +1004,20 @@ function bindEvents() {
  * is readable rather than merely present. No new row and no wrap: the card is still one
  * line, which is what keeps the popup under Chrome's 600px cap.
  */
-const SITE_NOTE_WEBRTC = 'WebRTC выключен в настройках';
-const SITE_NOTE_STANDDOWN = 'машина не подменяется';
-const SITE_NOTE_SD_TITLE =
+const SITE_NOTE_WEBRTC = T('popupNoteWebrtcOff', 'WebRTC выключен в настройках');
+const SITE_NOTE_STANDDOWN = T('popupNoteStandDown', 'машина не подменяется');
+const SITE_NOTE_SD_TITLE = T('popupStandDownWhy',
   'Этот сайт ограничивает Trusted Types или запрещает blob-воркеры, ' +
   'поэтому его собственные воркеры читают настоящую машину. Окно отвечает так же — ' +
   'иначе сайт видит противоречие в две строки. Страна, зона, локаль и шум канваса ' +
-  'работают как обычно. Переключатель «CSP → воркеры» ниже — это рычаг для такого сайта.';
+  'работают как обычно. Переключатель «CSP → воркеры» ниже — это рычаг для такого сайта.');
 // [FIX the-host-was-printed-twice] The line used to LEAD with the hostname, which the hero
 // already prints — and with both notes appended it ran past the card and was ellipsised
 // (measured: clipped true with WebRTC off on a standing-down site). `host` stays as the
 // identity, because showStandDown() guards on it, but it is no longer what gets drawn:
 // `lead` is, and the width the duplicate was taking goes to the notes.
-const SITE_NOTE_BASE = 'Только для этого сайта';
-const SITE_NOTE_NOTAB = 'Нет активной вкладки';
+const SITE_NOTE_BASE = T('popupSiteScope', 'Только для этого сайта');
+const SITE_NOTE_NOTAB = T('popupNoTab', 'Нет активной вкладки');
 let siteNote = { host: '', lead: SITE_NOTE_BASE, webrtc: false, standDown: false };
 
 function renderSiteHint() {
@@ -1123,13 +1160,13 @@ async function handleWebrtcToggle() {
       // once already. It also made the message long enough to be ellipsised now that the
       // bar is a single line — see showStatus.
       showStatus(
-        (res.protected ? 'WebRTC защита включена' : 'WebRTC защита выключена') +
-          (reloaded ? ' — вкладка обновлена' : ' — обновите страницу (F5)'),
+        (res.protected ? T('popupWebrtcOn', 'WebRTC защита включена') : T('popupWebrtcOff', 'WebRTC защита выключена')) +
+          (reloaded ? T('popupTabReloaded', ' — вкладка обновлена') : T('popupPressF5', ' — обновите страницу (F5)')),
         'ok'
       );
-    } else showStatus('Не удалось переключить WebRTC', 'err');
+    } else showStatus(T('popupWebrtcFailed', 'Не удалось переключить WebRTC'), 'err');
   } catch (e) {
-    showStatus('Не удалось переключить WebRTC', 'err');
+    showStatus(T('popupWebrtcFailed', 'Не удалось переключить WebRTC'), 'err');
   } finally {
     webrtcToggle.disabled = false;
   }
@@ -1172,13 +1209,13 @@ async function handleSwToggle() {
       } catch (e) {}
       // Same reason as the WebRTC message above: the host is already on screen.
       showStatus(
-        (res.blocked ? 'Service Worker заблокирован' : 'Service Worker разрешён') +
-          (reloaded ? ' — вкладка обновлена' : ' — обновите страницу (F5)'),
+        (res.blocked ? T('popupSwBlocked', 'Service Worker заблокирован') : T('popupSwAllowed', 'Service Worker разрешён')) +
+          (reloaded ? T('popupTabReloaded', ' — вкладка обновлена') : T('popupPressF5', ' — обновите страницу (F5)')),
         'ok'
       );
-    } else showStatus('Не удалось переключить Service Worker', 'err');
+    } else showStatus(T('popupSwFailed', 'Не удалось переключить Service Worker'), 'err');
   } catch (e) {
-    showStatus('Не удалось переключить Service Worker', 'err');
+    showStatus(T('popupSwFailed', 'Не удалось переключить Service Worker'), 'err');
   } finally {
     swToggle.disabled = false;
   }
@@ -1201,10 +1238,10 @@ async function updateCspToggle() {
     cspLabel.classList.toggle('warn', !!res.on);
     cspLabel.classList.toggle('off', !res.on && !res.needed);
     cspLabel.title = res.on
-      ? 'CSP этого сайта переписан: наши воркеры проходят, nonce-политика сайта ослаблена. Выключите, чтобы вернуть заголовок сайта.'
+      ? T('popupCspOnTitle', 'CSP этого сайта переписан: наши воркеры проходят, nonce-политика сайта ослаблена. Выключите, чтобы вернуть заголовок сайта.')
       : (res.needed
-        ? 'CSP сайта не пускает наши воркеры, и подмена здесь стоит на паузе (README, «Пределы», пункт 6). Включите, чтобы переписать заголовок — это ослабит защиту сайта от XSS.'
-        : 'CSP сайта не мешает подмене — переключатель не нужен.');
+        ? T('popupCspNeededTitle', 'CSP сайта не пускает наши воркеры, и подмена здесь стоит на паузе (README, «Пределы», пункт 6). Включите, чтобы переписать заголовок — это ослабит защиту сайта от XSS.')
+        : T('popupCspNotNeeded', 'CSP сайта не мешает подмене — переключатель не нужен.'));
   } catch (e) {}
 }
 
@@ -1217,7 +1254,7 @@ async function handleCspToggle() {
       setSwitch(cspToggle, false);
       cspLabel.classList.remove('warn');
       cspLabel.classList.add('off');
-      showStatus('CSP сайта не мешает подмене — ничего не переписано', 'ok');
+      showStatus(T('popupCspUnneeded', 'CSP сайта не мешает подмене — ничего не переписано'), 'ok');
     } else if (res && res.ok) {
       setSwitch(cspToggle, !!res.on);
       cspLabel.classList.toggle('warn', !!res.on);
@@ -1231,13 +1268,13 @@ async function handleCspToggle() {
         }
       } catch (e) {}
       showStatus(
-        (res.on ? (res.rewritten ? 'CSP переписан' : 'CSP: жду заголовок сайта') : 'CSP сайта восстановлен') +
-          (reloaded ? ' — вкладка обновлена' : ' — обновите страницу (F5)'),
+        (res.on ? (res.rewritten ? T('popupCspRewritten', 'CSP переписан') : T('popupCspWaiting', 'CSP: жду заголовок сайта')) : T('popupCspRestored', 'CSP сайта восстановлен')) +
+          (reloaded ? T('popupTabReloaded', ' — вкладка обновлена') : T('popupPressF5', ' — обновите страницу (F5)')),
         'ok'
       );
-    } else showStatus('Не удалось переключить CSP', 'err');
+    } else showStatus(T('popupCspFailed', 'Не удалось переключить CSP'), 'err');
   } catch (e) {
-    showStatus('Не удалось переключить CSP', 'err');
+    showStatus(T('popupCspFailed', 'Не удалось переключить CSP'), 'err');
   } finally {
     cspToggle.disabled = false;
   }
@@ -1252,16 +1289,16 @@ function updateModeUI() {
     el.setAttribute('aria-checked', on ? 'true' : 'false');
   });
   if (tabBadge) {
-    const labels = { normal: 'Обычный', hidden: 'Скрытый' };
-    tabBadge.textContent = labels[currentMode] || 'Обычный';
+    const labels = { normal: T('popupModeNormal', 'Обычный'), hidden: T('popupModeStealth', 'Скрытый') };
+    tabBadge.textContent = labels[currentMode] || T('popupModeNormal', 'Обычный');
     tabBadge.className = 'badge pill' + (currentMode === 'hidden' ? ' warn' : '');
   }
   renderShield();
   const hint = document.getElementById('modeHint');
   if (hint) {
     hint.textContent = currentMode === 'hidden'
-      ? 'Меньше патчей — ниже score на проверках'
-      : 'Полная подмена профиля устройства';
+      ? T('popupHintStealth', 'Меньше патчей — ниже score на проверках')
+      : T('popupHintNormal', 'Полная подмена профиля устройства');
   }
 }
 
@@ -1280,13 +1317,13 @@ async function selectMode(mode) {
         reloaded = true;
       }
     } catch (e) {}
-    const names = { normal: 'Обычный режим', hidden: 'Скрытый режим' };
+    const names = { normal: T('popupModeNormalName', 'Обычный режим'), hidden: T('popupModeStealthName', 'Скрытый режим') };
     showStatus(
-      (names[mode] || mode) + (reloaded ? ' — вкладка обновлена' : ' — откройте http-вкладку и F5'),
+      (names[mode] || mode) + (reloaded ? T('popupTabReloaded', ' — вкладка обновлена') : T('popupOpenHttpF5', ' — откройте http-вкладку и F5')),
       'ok',
       3500
     );
   } catch (e) {
-    showStatus('Не удалось сохранить режим', 'err');
+    showStatus(T('popupModeSaveFailed', 'Не удалось сохранить режим'), 'err');
   }
 }
