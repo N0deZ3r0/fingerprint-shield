@@ -1299,10 +1299,24 @@ const list = (src, re) => {
     `README.txt announces the version in manifest.json (${version})`);
   assert(md.includes(`badge/version-${version}-`),
     `README.md's version badge is the one in manifest.json (${version})`);
-  // Both screenshots are referenced by the front page and both must be there — a broken
-  // image is the first thing a visitor sees.
-  for (const m of md.matchAll(/<img src="([^"]+)"/g)) {
-    assert(fs.existsSync(path.join(root, m[1])), `README.md shows ${m[1]}, which exists`);
+  // Every screenshot the front pages reference must be there — a broken image is the first
+  // thing a visitor sees. Both READMEs, because they carry DIFFERENT pictures: the English
+  // page shows the English interface and the Russian page the Russian one.
+  //
+  // [FIX the-new-screenshot-showed-the-old-picture] And each carries ?v=<version>. GitHub
+  // caches a README image by its URL, so replacing the bytes at the same path shows the OLD
+  // picture to anyone whose browser or GitHub's own proxy still holds it — measured: the
+  // blob on the remote was byte-for-byte the new one while the page kept drawing the
+  // previous release's popup. The query moves with the version, so the URL does too, and it
+  // is asserted rather than merely tolerated: a screenshot silently one release behind is
+  // exactly the failure it exists to prevent.
+  for (const [file, src] of [['README.md', md], ['README.ru.md', ru]]) {
+    for (const m of src.matchAll(/<img src="([^"]+)"/g)) {
+      const [img, query] = m[1].split('?');
+      assert(fs.existsSync(path.join(root, img)), `${file} shows ${img}, which exists`);
+      assert(query === `v=${version}`,
+        `${file}'s ${img} is cache-busted with the current version (?${query || 'nothing'})`);
+    }
   }
   assert(txt.includes(`the ${nodeSuites} Node suites`),
     `README.txt: the Node suite count is ${nodeSuites}`);
