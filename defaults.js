@@ -165,6 +165,7 @@ var AFP_PROFILE_DPR = {
   pc_power: 1,
   laptop_125: 1.25,
   laptop_150: 1.5,
+  laptop_1610: 2,
   host: 1
 };
 

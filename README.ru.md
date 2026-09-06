@@ -5,7 +5,7 @@
 **Одна согласованная выдуманная машина — та же самая в окне, в каждом фрейме и в каждом воркере.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![версия](https://img.shields.io/badge/version-2.5.24-3b5bdb)
+![версия](https://img.shields.io/badge/version-2.5.25-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
 ![сьютов](https://img.shields.io/badge/сьютов-52-2f9e44)
 ![зависимостей в рантайме](https://img.shields.io/badge/зависимостей_в_рантайме-0-2f9e44)

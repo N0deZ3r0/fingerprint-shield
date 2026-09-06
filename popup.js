@@ -63,6 +63,28 @@ const PROFILES = [
     screenW: 1536, screenH: 864, dpr: 1.25, cores: 8, memory: 8, gpuKey: 'intel_iris', platform: 'Win32' },
   { id: 'laptop_150', name: 'Laptop 1080p · 150%', spec: '1280×720 · 8c · 8GB', gpu: 'Intel Iris Xe', icon: 'laptop',
     screenW: 1280, screenH: 720, dpr: 1.5, cores: 8, memory: 8, gpuKey: 'intel_iris', platform: 'Win32' },
+  // [FIX the-crowd-had-no-16-10-laptop] tools/probe-crowd.mjs named three rows of the
+  // reference that no profile reached, and this is the one of the three worth claiming.
+  //
+  //   panel 2560x1600   5.10% on Steam    <- this row
+  //   screen 1280x1200  3.71% StatCounter  NOT claimed: it sits directly under the 384x832
+  //                                        row the reference itself flags as "plainly not a
+  //                                        desktop panel", 16:15 is not a shape anyone
+  //                                        manufactures, and claiming it would be inventing
+  //                                        a machine out of misfiled mobile traffic
+  //   RAM 12 GB         2.51% on Steam     NOT claimable at all: navigator.deviceMemory is
+  //                                        bucketed to 2/4/8/16/32 by the spec and
+  //                                        background.js clamps to it, so a 12 GB machine
+  //                                        reports 8. The population row exists and the API
+  //                                        cannot express it.
+  //
+  // 16:10 Windows laptops (XPS 13/14, Zenbook, Surface Laptop Studio) ship a 2560x1600 panel
+  // and Windows offers 200% for it, which is screen 1280x800 at devicePixelRatio 2 — the
+  // same units lesson the whole table turns on: screen.width is CSS pixels, the panel is
+  // screenW * dpr. RAM is 16, the modal bucket (40.97% on Steam) and the one this set was
+  // short of between laptop_mid's 8 and pc_power's 32.
+  { id: 'laptop_1610', name: 'Laptop 16:10 · 200%', spec: '1280×800 · 8c · 16GB', gpu: 'Intel Iris Xe', icon: 'laptop',
+    screenW: 1280, screenH: 800, dpr: 2, cores: 8, memory: 16, gpuKey: 'intel_iris', platform: 'Win32' },
   // [FIX host-mode] THIS MACHINE. No hardware is substituted: screen, ratio, cores,
   // memory, the GPU and its limits, battery, network and the font list all answer natively,
   // in the window, in every frame and in every worker — and the outgoing hardware hints

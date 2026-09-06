@@ -1707,7 +1707,7 @@ const BOOT_SCRIPT_ID = 'afp-boot';
 // Единственное место, где список id профилей продублирован из popup.js PROFILES:
 // background.js не загружает popup.js, а регистрировать несуществующий файл нельзя —
 // registerContentScripts на это бросает. Совпадение проверяет test/parity-static.mjs.
-const BOOT_DEVICE_IDS = ['laptop_low', 'laptop_mid', 'pc_gaming', 'pc_power', 'laptop_125', 'laptop_150', 'host'];
+const BOOT_DEVICE_IDS = ['laptop_low', 'laptop_mid', 'pc_gaming', 'pc_power', 'laptop_125', 'laptop_150', 'laptop_1610', 'host'];
 
 // Вызовов четыре — верхний уровень, onInstalled/onStartup, storage.onChanged и
 // applyToCurrentTab — и первые два стартуют одновременно на свежей установке. Оба

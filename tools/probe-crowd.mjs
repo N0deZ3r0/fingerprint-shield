@@ -59,9 +59,19 @@ const { GPU_DATA } = loadBackground(['GPU_DATA']);
 // One row per combination the popup can produce: what a site reads, flattened. Only fields
 // a page can actually observe — the id and the internal keys are not claims about a machine.
 const rows = [];
+// [FIX the-per-machine-table-joined-on-the-GPU-STRING] The table at the bottom used to
+// find a device's row with rows.find(x => x['webgl.renderer'] === d.glRenderer), and three
+// of the six laptops ship the SAME renderer — so .find() returned the first of them three
+// times and the report showed one machine where the data holds three. Measured against
+// popup.js and dyn/dev, which agree with each other: laptop_mid 1920x1080@1, laptop_125
+// 1536x864@1.25, laptop_150 1280x720@1.5, printed as 1536x864@1.25 for all three. The join
+// key has to be the id, and rows carry no id, so it is kept beside them rather than added
+// to them — a device.id FIELD would have joined the entropy analysis as a sixth 6-value
+// column and inflated every number in it.
+const firstRowOf = new Map();
 for (const d of devices) {
   for (const [cc, c] of Object.entries(countries)) {
-    rows.push({
+    const _row = {
       'screen.width': d.screenW,
       'screen.height': d.screenH,
       'screen (pair)': `${d.screenW}x${d.screenH}`,
@@ -83,7 +93,9 @@ for (const d of devices) {
       'accept-language': c.lang,
       'geolocation (lat,lon)': `${c.lat},${c.lon}`,
       'country': cc,
-    });
+    };
+    rows.push(_row);
+    if (!firstRowOf.has(d.id)) firstRowOf.set(d.id, _row);
   }
 }
 
@@ -143,7 +155,7 @@ const w = Math.max(...MACHINE.map((f) => f.length));
 console.log('   ' + ''.padEnd(w) + '  ' + devices.map((d) => String(d.id).padEnd(16)).join(''));
 for (const f of MACHINE) {
   const cells = devices.map((d) => {
-    const r = rows.find((x) => x['webgl.renderer'] === d.glRenderer);
+    const r = firstRowOf.get(d.id);
     return String(r[f]).slice(0, 15).padEnd(16);
   });
   console.log('   ' + f.padEnd(w) + '  ' + cells.join(''));

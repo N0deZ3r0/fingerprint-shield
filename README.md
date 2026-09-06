@@ -5,7 +5,7 @@
 **One coherent invented machine — the same one in the window, in every frame and in every worker.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-2.5.24-3b5bdb)
+![version](https://img.shields.io/badge/version-2.5.25-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
 ![suites](https://img.shields.io/badge/suites-52-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
