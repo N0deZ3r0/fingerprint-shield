@@ -44,7 +44,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { harness, root, BROWSER, loadBackground, loadPopup, uiMessages, langArgs } from './harness.mjs';
+import { harness, root, BROWSER, loadBackground, loadPopup, uiMessages, langArgs, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const { assert, eq, section, note, done } = harness();
@@ -270,7 +270,7 @@ const ctx = await LAUNCH(dir, true);
 let HOST, CTRL, stored, registered;
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   const id = new URL(sw.url()).host;
 
   // The popup, driven as a user drives it: a site is the active tab, "Эта машина" is

@@ -57,7 +57,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root, read as readFile, balanced } from './harness.mjs';
+import { BROWSER, root, read as readFile, balanced, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
@@ -264,7 +264,7 @@ async function run(profile) {
     if (profile) {
       const sw = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
         await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-      await new Promise((r) => setTimeout(r, 2000));
+      await bootSettled(ctx);
       await sw.evaluate(async (d) => { await chrome.storage.local.set(d); }, profile);
       await new Promise((r) => setTimeout(r, 1500));
       // Restart so the boot script is registered before the page loads — the same settle the
@@ -273,7 +273,7 @@ async function run(profile) {
       await new Promise((r) => setTimeout(r, 1200));
       ctx = await launch();
       ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-      await new Promise((r) => setTimeout(r, 2500));
+      await bootSettled(ctx);
     }
     const p = await ctx.newPage();
     await p.goto(url, { waitUntil: 'load' });
@@ -380,7 +380,7 @@ console.log('\n4) stand-down origin: the window claims nothing the worker contra
   const seen = {};
   try {
     ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-    await new Promise((r) => setTimeout(r, 2500));
+    await bootSettled(ctx);
     for (const route of ['/wb/', '/ok/']) {
       // Twice, reading the second: the first visit to a host is the documented residual of
       // every per-site flag here, and a comparison made in that window measures the residual.

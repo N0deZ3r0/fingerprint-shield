@@ -35,7 +35,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { harness, root, BROWSER } from './harness.mjs';
+import { harness, root, BROWSER, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const { assert, eq, section, note, done } = harness();
@@ -208,7 +208,7 @@ function compare(label, zone, got) {
 
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   // Warm the origin once so the measured load runs under the settled profile.
   const warm = await ctx.newPage(); await warm.goto(`${BASE}/?warm=1`, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 500)); await warm.close();

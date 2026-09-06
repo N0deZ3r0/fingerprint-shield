@@ -39,7 +39,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root, uiMessages, langArgs } from './harness.mjs';
+import { BROWSER, root, uiMessages, langArgs, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('  FAIL:', m); failed++; } };
@@ -59,7 +59,7 @@ const ctx = await chromium.launchPersistentContext(dir, {
 try {
   const bg = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
     await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 3000));
+  await bootSettled(ctx);
   const id = new URL(bg.url()).host;
 
   // The popup must load with a site as the active tab — see the note in test/popupfit.mjs.

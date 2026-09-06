@@ -38,7 +38,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { harness, root, BROWSER } from './harness.mjs';
+import { harness, root, BROWSER, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const { assert, eq, section, note, done } = harness();
@@ -178,7 +178,7 @@ try {
   await (ctx.serviceWorkers()[0] || ctx.waitForEvent('serviceworker', { timeout: 20000 }));
   // The CSP observer has to be listening before the visit it is meant to observe — the same
   // race test/blobcsp.mjs documents, one layer down.
-  await new Promise((r) => setTimeout(r, 2000));
+  await bootSettled(ctx);
 
   const visit = async (key, n) => {
     const p = await ctx.newPage();          // FRESH TAB: empty sessionStorage, every time

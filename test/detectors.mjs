@@ -52,7 +52,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 // The negative control, and it is not decoration: a suite that only ever reports "not a
 // bot" cannot be told apart from one that is not asking. `--clean` runs the SAME page and
@@ -128,7 +128,7 @@ const read = async (host) => {
 try {
   if (!clean) {
     try { ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 }); } catch { /* already up */ }
-    await new Promise((r) => setTimeout(r, 3000));
+    await bootSettled(ctx);
   }
 
   const first = await read('127.0.0.1');

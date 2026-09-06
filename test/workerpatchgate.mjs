@@ -60,7 +60,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { harness, root, BROWSER } from './harness.mjs';
+import { harness, root, BROWSER, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const { assert, eq, section, note, done } = harness();
@@ -151,7 +151,7 @@ const show = (tag, r) => note(`${tag.padEnd(7)} window ${JSON.stringify(r.win)}\
 
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   const hostCores = await sw.evaluate(() => navigator.hardwareConcurrency);
   note(`the machine reports ${hostCores} cores`);
 

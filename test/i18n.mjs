@@ -22,11 +22,24 @@
  * ignores the locale completely.
  */
 import { chromium } from 'playwright';
+import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
+
+// [FIX the-suite-read-a-state-it-did-not-control] The popup's per-site line says one thing
+// with a site under it and another with no http tab, and this file used to read whichever it
+// happened to get. On this machine both browsers got "no active tab" and it passed; on the CI
+// runner one got a site and the other did not, and the suite reported the two LANGUAGES
+// disagreeing when what disagreed was the two STATES. A site is opened first now, in both,
+// so the line is the same state in each and the only variable left is the language.
+const server = createServer((q, r) =>
+  r.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' })
+    .end('<!doctype html><title>site</title>hi'));
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const port = server.address().port;
 
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
@@ -95,13 +108,24 @@ async function popupText(lang) {
   try {
     const sw = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
       await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-    await new Promise((r) => setTimeout(r, 2500));
+    await bootSettled(ctx);
     const id = new URL(sw.url()).host;
+    // The site has to be the ACTIVE tab when the popup loads, which is the state a user is
+    // in — and the state the per-site line below is read in. Same dance as popupfit.mjs:
+    // open the popup, front the site, reload.
+    const site = await ctx.newPage();
+    await site.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load' });
     const p = await ctx.newPage();
     await p.goto(`chrome-extension://${id}/popup.html`, { waitUntil: 'load' });
+    await site.bringToFront();
+    await p.reload({ waitUntil: 'load' });
     await p.waitForFunction(() => {
       const el = document.getElementById('applyBtn');
-      return !!(el && el.textContent && el.textContent.trim());
+      const site = document.getElementById('siteHost');
+      // Wait for the VALUE, not the clock: the per-site line is filled asynchronously, and
+      // reading it early is reading the markup's fallback rather than what popup.js decided.
+      return !!(el && el.textContent.trim() && site && site.textContent.trim() &&
+        document.getElementById('siteCard') && !document.getElementById('siteCard').hidden);
     }, null, { timeout: 15000 });
     // `return p.evaluate(…)` would hand the promise back and let the finally below close the
     // browser out from under it — await here, inside the try.
@@ -181,9 +205,10 @@ ok(gotRu.apply === ru.popupApply.message,
   `the Russian one says "${ru.popupApply.message}" (${gotRu.apply})`);
 ok(gotEn.settings === en.popupSettings.message && gotRu.settings === ru.popupSettings.message,
   `and the footer link follows too (${gotEn.settings} / ${gotRu.settings})`);
-// The per-site line is written by popup.js, not by the markup — so this is the JS path, and
-// with no http tab open it is the "no active tab" branch of it.
-ok(gotEn.site === en.popupNoTab.message && gotRu.site === ru.popupNoTab.message,
+// The per-site line is written by popup.js, not by the markup — so this is the JS path, read
+// with a site as the active tab so both browsers are in the same state (see the note at the
+// top: they were not, and the suite blamed the languages for it).
+ok(gotEn.site === en.popupSiteScope.message && gotRu.site === ru.popupSiteScope.message,
   `so does the per-site line, which popup.js writes (${gotEn.site} / ${gotRu.site})`);
 // And the substituted one: "$1 of $2 modules active" goes through afpMsg with arguments, a
 // path that silently yields '' if the two catalogues disagree about $1/$2.
@@ -268,5 +293,6 @@ console.log(`   en ${gotEn.warns.length} warning(s), ru ${gotRu.warns.length}`);
 ok(gotEn.warns.length === 0, `no key was missing on any English page (${gotEn.warns.join(' | ') || 'none'})`);
 ok(gotRu.warns.length === 0, `nor on any Russian page (${gotRu.warns.join(' | ') || 'none'})`);
 
+server.close();
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

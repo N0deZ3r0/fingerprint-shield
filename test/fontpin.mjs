@@ -31,7 +31,7 @@ import { chromium } from 'playwright';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -43,7 +43,7 @@ const ctx = await chromium.launchPersistentContext(dir, {
 });
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 1500));
+  await bootSettled(sw);
 
   const api = await sw.evaluate(async () => {
     const r = { hasApi: !!(globalThis.chrome && chrome.fontSettings) };

@@ -41,7 +41,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { harness, root, BROWSER } from './harness.mjs';
+import { harness, root, BROWSER, bootSettled } from './harness.mjs';
 import { EXPR } from '../tools/probe-collect.mjs';
 
 const headed = process.argv.includes('--headed');
@@ -117,7 +117,7 @@ async function read({ extension, stealth, bundledBuild }) {
     if (stealth) {
       const sw = ctx.serviceWorkers()[0]
         || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-      await new Promise((r) => setTimeout(r, 3000));
+      await bootSettled(ctx);
       await sw.evaluate(async () => { await chrome.storage.local.set({ afp_mode: 'stealth' }); });
       await new Promise((r) => setTimeout(r, 2000));
     }

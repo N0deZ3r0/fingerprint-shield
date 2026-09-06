@@ -57,7 +57,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -228,7 +228,7 @@ async function measure(withExt, host = '127.0.0.1', path = '/', visitFirst = nul
   try {
     if (withExt) {
       try { ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 }); } catch (e) {}
-      await new Promise((r) => setTimeout(r, 1500));   // onInstalled → initDefaults
+      await bootSettled(ctx);   // onInstalled → initDefaults
     }
     const page = await ctx.newPage();
     // Permissions-Policy violations reach nobody but the console, so they are collected

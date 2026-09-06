@@ -34,7 +34,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root, loadBackground, loadPopup } from './harness.mjs';
+import { BROWSER, root, loadBackground, loadPopup, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 const { COUNTRY_DATA, afpPackFeatures, afpCloneFeatures, AFP_DEFAULT_FEATURES } =
   loadBackground(['COUNTRY_DATA', 'afpPackFeatures', 'afpCloneFeatures', 'AFP_DEFAULT_FEATURES']);
@@ -146,7 +146,7 @@ const ctx = await chromium.launchPersistentContext(userDataDir, {
 let DEF, CR;
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 1500));
+  await bootSettled(sw);
   const p = PROFILES.find((x) => x.id === SEL.id);
   const c = COUNTRY_DATA[SEL.cc];
 

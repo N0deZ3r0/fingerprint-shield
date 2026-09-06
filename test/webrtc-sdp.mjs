@@ -44,7 +44,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -133,7 +133,7 @@ async function run({ extension, storage, stealth }) {
     if (extension) {
       let sw = ctx.serviceWorkers()[0];
       try { sw = sw || await ctx.waitForEvent('serviceworker', { timeout: 20000 }); } catch { /* up */ }
-      await new Promise((r) => setTimeout(r, 3000));
+      await bootSettled(ctx);
       if (storage && sw) {
         await sw.evaluate(async (v) => { await chrome.storage.local.set(v); }, storage);
         await new Promise((r) => setTimeout(r, 1500));

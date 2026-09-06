@@ -28,7 +28,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root, loadBackground, loadPopup } from './harness.mjs';
+import { BROWSER, root, loadBackground, loadPopup, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 const { COUNTRY_DATA, afpPackFeatures } = loadBackground(['COUNTRY_DATA', 'afpPackFeatures']);
 const { PROFILES } = loadPopup(['PROFILES']);
@@ -93,7 +93,7 @@ const ctx = await chromium.launchPersistentContext(userDataDir, {
 const out = {};
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 1500));
+  await bootSettled(sw);
 
   const p = PROFILES.find((x) => x.id === SEL.id);
   const c = COUNTRY_DATA[SEL.cc];
@@ -180,7 +180,7 @@ window.__m = (function () {
   });
   try {
     const sw2 = ctx2.serviceWorkers()[0] || await ctx2.waitForEvent('serviceworker', { timeout: 20000 });
-    await new Promise((r) => setTimeout(r, 3000));
+    await bootSettled(sw2);
     await sw2.evaluate(async () => { await chrome.storage.local.set({ afp_mode: 'stealth' }); });
     await new Promise((r) => setTimeout(r, 2000));
     const page2 = await ctx2.newPage();

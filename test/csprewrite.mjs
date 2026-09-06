@@ -34,7 +34,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { harness, root, BROWSER, uiMessages, langArgs } from './harness.mjs';
+import { harness, root, BROWSER, uiMessages, langArgs, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const { assert, eq, section, note, done } = harness();
@@ -138,7 +138,7 @@ async function visit(n) {
 
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   const id = new URL(sw.url()).host;
   const hostCores = await sw.evaluate(() => navigator.hardwareConcurrency);
 

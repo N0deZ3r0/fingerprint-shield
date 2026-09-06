@@ -25,7 +25,7 @@ browser rather than against an assumption.
 
 <div align="center">
 
-<img src="docs/ui-whoami.png" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
+<img src="docs/ui-whoami.png?v=2.5.26" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
 
 <sub><b>Who Am I</b> — the machine as a site reads it. Every value on this page is the
 claim, not the host, and the fingerprint hash at the top is what a tracker would key on.</sub>
@@ -44,8 +44,8 @@ Not in the Chrome Web Store — load it unpacked.
 
 To run from source instead, point **Load unpacked** at a clone of this repository.
 
-> The extension's own interface is in Russian. The audit page, this README and the code
-> comments are in English.
+> The extension's interface follows your browser's language, in English or Russian. The
+> audit page, this README and the code comments are in English only.
 
 ## What it looks like
 
@@ -53,14 +53,14 @@ To run from source instead, point **Load unpacked** at a clone of this repositor
 <tr>
 <td width="38%" valign="top" align="center">
 
-<img src="docs/ui-popup.png" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
+<img src="docs/ui-popup.png?v=2.5.26" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
 
 <sub>The popup: country, per-site switches, device profile.</sub>
 
 </td>
 <td width="62%" valign="top" align="center">
 
-<img src="docs/ui-modules.png" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
+<img src="docs/ui-modules.png?v=2.5.26" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
 
 <sub>Thirteen modules, switched one by one. `ClientRects` ships off — it is
 the one that makes CreepJS go red.</sub>

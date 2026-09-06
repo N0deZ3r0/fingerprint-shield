@@ -23,7 +23,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -54,7 +54,7 @@ async function run(withExt) {
   try {
     if (withExt) {
       try { ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 }); } catch { /* up */ }
-      await new Promise((r) => setTimeout(r, 3000));
+      await bootSettled(ctx);
     }
     const p = await ctx.newPage();
     await p.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load' });

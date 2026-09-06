@@ -38,7 +38,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
@@ -88,7 +88,7 @@ const res = {};
 const seq = [];
 try {
   const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 1500));
+  await bootSettled(sw);
   // Germany: de-DE in JS and on the wire, against the rig's en-US.
   await sw.evaluate(() => chrome.storage.local.set({ afp_country_code: 'DE' }));
   await new Promise((r) => setTimeout(r, 2500));

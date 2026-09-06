@@ -47,6 +47,67 @@ export const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
  *     ok(row.chip === M('popupTagHost'), …);
  */
 /**
+ * WAIT FOR THE BACKGROUND TO STOP WRITING, not for a number of milliseconds.
+ *
+ * A suite that plants a fixture — a profile, a country, a mode — has to plant it AFTER
+ * `initDefaults` has finished, or the background's own write lands on top of it and the
+ * suite measures the default while believing it measures its fixture. Ten suites did that
+ * with `setTimeout(r, 1500)` right after the service worker appeared; one of them even
+ * carried the comment `// onInstalled → initDefaults`, which names exactly the event it was
+ * approximating with a clock.
+ *
+ * [FIX ten-suites-bet-on-a-clock] Measured on this machine: the background's last startup
+ * write lands at +174..218ms without the localisation catalogue and +228..267ms with it —
+ * Chrome loads _locales before the extension starts. Fifty milliseconds is nothing here and
+ * is not nothing on the two-core runner, where those same ten suites went red together on a
+ * commit that changed no extension logic at all. A fixture written at a fixed 1500ms was
+ * always going to lose that race eventually; it just took a slower start to make it lose.
+ *
+ * So: poll what the background writes at startup until it has been still for `quiet` ms,
+ * and return how long that took, so a suite can print it and a regression here is visible
+ * rather than silent.
+ */
+export async function bootSettled(swOrCtx, { quiet = 400, timeout = 20000 } = {}) {
+  // Takes either the worker or the context, because half the call sites never kept a handle
+  // — they wrote `ctx.serviceWorkers()[0] || await ctx.waitForEvent(...)` for the side
+  // effect and threw the worker away.
+  let sw = swOrCtx;
+  if (typeof swOrCtx.serviceWorkers === 'function') {
+    sw = swOrCtx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
+      swOrCtx.serviceWorkers()[0] ||
+      await swOrCtx.waitForEvent('serviceworker', { timeout });
+  }
+  // All three things the background does before it is ready, not just the storage writes:
+  // a fixed sleep was covering the content-script registration and the dynamic DNR rules
+  // too, and replacing it with a storage-only check would shorten the wait past them.
+  const probe = async () => sw.evaluate(async (keys) => {
+    const st = await chrome.storage.local.get(keys);
+    let scripts = 'n/a', rules = 'n/a';
+    try { scripts = (await chrome.scripting.getRegisteredContentScripts()).map((s) => s.id).sort().join(','); }
+    catch (e) { /* not granted here */ }
+    try { rules = String((await chrome.declarativeNetRequest.getDynamicRules()).length); }
+    catch (e) { /* not granted here */ }
+    return JSON.stringify(st) + '|' + scripts + '|' + rules;
+  }, ['afp_country_code', 'afp_resolved_timezone', 'afp_resolved_locale', 'afp_profile_id',
+    'afp_profile_data', 'afp_noise_seed', 'afp_mode', 'afp_features']);
+
+  const t0 = Date.now();
+  let last = null, lastChange = Date.now();
+  for (;;) {
+    let now;
+    try { now = await probe(); }
+    catch (e) { now = null; }   // the worker was asleep or restarting; ask again
+    if (now !== last) { last = now; lastChange = Date.now(); }
+    else if (now !== null && Date.now() - lastChange >= quiet) return Date.now() - t0;
+    if (Date.now() - t0 > timeout) {
+      throw new Error(`the background never went quiet within ${timeout}ms — ` +
+        'a fixture planted now would be overwritten and the suite would measure the default');
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/**
  * `--lang=…` when FPS_LANG is set, and nothing otherwise.
  *
  * Spread into a launch's args by the suites that read what the UI SAYS. Without it those

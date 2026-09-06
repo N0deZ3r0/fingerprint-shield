@@ -51,7 +51,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 const onlyArg = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7);
@@ -318,7 +318,7 @@ async function collect(withExtension) {
   try {
     if (withExtension) {
       ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-      await new Promise((r) => setTimeout(r, 2500));
+      await bootSettled(ctx);
     }
     const p = await ctx.newPage();
     // A page error is fatal to this file and silent without this: the builder page is one

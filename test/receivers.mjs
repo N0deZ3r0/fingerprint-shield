@@ -154,7 +154,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root } from './harness.mjs';
+import { BROWSER, root, bootSettled } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 // Part 5 (wrapped METHODS) runs by default; --no-methods skips it. See the note above it.
@@ -610,7 +610,7 @@ async function read(clean, winSpec, workerSpec) {
   try {
     if (!clean) {
       try { ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 }); } catch { /* already up */ }
-      await new Promise((r) => setTimeout(r, 2500));
+      await bootSettled(ctx);
     }
     const winOpts = { receivers: RECV_NAMES, frameUrl: '/frame.html', methods: METHODS };
     // ONE PAGE PER GROUP, not one page for the spec. Each factory group builds four live

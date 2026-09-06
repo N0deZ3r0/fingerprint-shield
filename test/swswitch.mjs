@@ -26,7 +26,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root as ROOT } from './harness.mjs';
+import { BROWSER, root as ROOT, bootSettled } from './harness.mjs';
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
 
@@ -68,7 +68,7 @@ const ctx = await chromium.launchPersistentContext(dir, {
 });
 const bg = ctx.serviceWorkers().find((w) => w.url().includes('background.js')) ||
   await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-await new Promise((r) => setTimeout(r, 4000));
+await bootSettled(ctx);
 
 const setBlocked = async (list) => {
   await bg.evaluate(async (l) => { await chrome.storage.local.set({ afp_sw_blocked: l }); }, list);
