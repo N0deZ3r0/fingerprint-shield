@@ -226,7 +226,11 @@ jobs:
     # wiring this to every PUSH; none of them argues for letting a published release skip
     # it. The cost is six to eight Windows minutes per RELEASE rather than per push.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    timeout-minutes: 30
+    # [FIX the-ledger-would-have-died-at-thirty-minutes] One run of this set takes 15-19
+    # minutes on the runner, so a five-run ledger needs an hour and a half and the flat 30
+    # would have killed it halfway with nothing to show. Caught before the first ledger ran,
+    # by reading the number rather than by watching it die.
+    timeout-minutes: ${{ (github.event.inputs.repeat != '' && github.event.inputs.repeat != '1') && 240 || 30 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
