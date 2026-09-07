@@ -21,11 +21,16 @@
  *   - whether the stand-down's two halves really diverge past the first visit, which one
  *     observation could not settle and 20x CPU throttling did not reproduce.
  *
- * A suite that fails every run is not flake — it is a defect, and the table says so with a
- * different word, because those two need opposite responses and get confused constantly.
+ * THE TABLE DOES NOT NAME DEFECTS, and the first version did. It said "BROKEN — fails every
+ * run, this is a defect" at N/N, which was wrong the first time it mattered: CSP attribution
+ * failed 5/5 in the full set and 1/8 run alone, three runs green locally. The difference is
+ * LOAD — fifty-four suites back to back leave the machine slower than one suite with it to
+ * itself — so N/N means "fails in this context", never "the code is broken". Naming a defect
+ * is the expensive kind of wrong: it sends someone into the extension after something that
+ * is not there. The row names the one command that separates the two readings instead.
  */
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -82,6 +87,23 @@ function once(n) {
   return { finished, failed, why };
 }
 
+/**
+ * The bare suite name behind a display name.
+ *
+ * The set's summary line reports what test/all.mjs CALLS a suite — "CSP attribution
+ * (Chromium)" — and --suite= wants the file. Guessing from the words gives `CSP`, which is
+ * not a suite; the mapping is written down in the runner, so it is read from there.
+ */
+function fileOf(display) {
+  try {
+    const all = readFileSync(join(root, 'test', 'all.mjs'), 'utf8');
+    const esc = display.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = all.match(new RegExp(`'${esc}',\\s*\\['test/([\\w.-]+)\\.mjs'`));
+    if (m) return m[1];
+  } catch (e) { /* fall through */ }
+  return display.replace(/^test\//, '').replace(/\.mjs$/, '').replace(/\s*\(.*$/, '');
+}
+
 const runs = [];
 for (let i = 1; i <= RUNS; i++) runs.push(once(i));
 
@@ -95,10 +117,18 @@ if (!rows.length) {
   console.log('(nothing failed in any run)');
 } else {
   for (const [suite, n] of rows) {
-    // A suite that fails EVERY run is broken; one that fails some is flaky. The two need
-    // opposite responses — fix the code, or fix the measurement — and calling both "failing"
-    // is what turned one unlucky run into a wrong conclusion.
-    const verdict = n === RUNS ? 'BROKEN — fails every run, this is a defect'
+    // [FIX the-ledger-called-a-context-a-defect] This said "BROKEN — fails every run, this
+    // is a defect" at N/N, and it was wrong the first time it mattered: CSP attribution
+    // failed 5/5 in the full set and 1/8 when run alone. The difference is LOAD — fifty-four
+    // suites back to back leave the machine slower than one suite with it to itself — so
+    // N/N says the suite fails in THIS context, which is not the same claim.
+    //
+    // Naming a defect is the expensive kind of wrong: it sends someone into the extension
+    // looking for something that is not there. So the row says what was measured and names
+    // the one command that separates the two readings.
+    const verdict = n === RUNS
+      ? 'fails every run OF THIS SET — run it alone to tell a defect from load: ' +
+        `node tools/flake-ledger.mjs 8 --suite=${fileOf(suite)}`
       : n > RUNS / 2 ? 'flaky, badly'
         : 'flaky';
     console.log(`${suite.padEnd(40)} ${String(n).padStart(2)}/${RUNS}   ${verdict}`);
