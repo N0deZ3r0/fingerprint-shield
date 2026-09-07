@@ -77,6 +77,16 @@
   "optSave":            { "message": "Сохранить" },
   "optClear":           { "message": "Очистить" },
 
+  "optPresetH2":        { "message": "Режим защиты" },
+  "optPresetHint":      { "message": "Пресет ставит галки модулей ниже. Выбор ничего не сохраняет сам — нажмите «Сохранить»." },
+  "optPresetFullName":  { "message": "Полная защита" },
+  "optPresetFullDesc":  { "message": "Заводской набор: всё, кроме ClientRects. Больше всего подменяется — и Fingerprint Pro помечает такой браузер (измерено: bot bad, anti_detect true)." },
+  "optPresetQuietName": { "message": "Тихий" },
+  "optPresetQuietDesc": { "message": "Без Navigator, Fonts и ClientRects. Измерено: все вердикты чистые. Шум канваса работает, поэтому связываемость между сайтами по-прежнему сломана; выдуманная машина — нет, железо становится настоящим." },
+  "optPresetPicked":    { "message": "Набор выставлен — нажмите «Сохранить»" },
+  "optHostLangName":    { "message": "Язык — как у этого браузера" },
+  "optHostLangDesc":    { "message": "Не подменять язык страны: и navigator.language, и заголовок отдают настоящий. Единственная измеренная конфигурация, при которой Fingerprint не пишет бота." },
+
   "optModulesH2":       { "message": "Модули защиты" },
   "optResetBtn":        { "message": "Безопасный сброс" },
   "optResetBtnTitle":   { "message": "Как при чистой установке" },

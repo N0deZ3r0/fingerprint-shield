@@ -77,6 +77,16 @@
   "optSave":            { "message": "Save" },
   "optClear":           { "message": "Clear" },
 
+  "optPresetH2":        { "message": "Protection preset" },
+  "optPresetHint":      { "message": "A preset ticks the module boxes below. Choosing one saves nothing by itself — press Save." },
+  "optPresetFullName":  { "message": "Full protection" },
+  "optPresetFullDesc":  { "message": "The factory set: everything except ClientRects. It substitutes the most, and Fingerprint Pro flags a browser like this (measured: bot bad, anti_detect true)." },
+  "optPresetQuietName": { "message": "Quiet" },
+  "optPresetQuietDesc": { "message": "Without Navigator, Fonts and ClientRects. Measured: every verdict clean. The canvas noise still runs, so cross-site linkability stays broken; the invented machine does not, and the hardware becomes this one." },
+  "optPresetPicked":    { "message": "Set applied — press Save" },
+  "optHostLangName":    { "message": "Language — this browser’s own" },
+  "optHostLangDesc":    { "message": "Do not substitute the country’s language: navigator.language and the header both answer with the real one. The only configuration measured in which Fingerprint does not report a bot." },
+
   "optModulesH2":       { "message": "Protection modules" },
   "optResetBtn":        { "message": "Safe reset" },
   "optResetBtnTitle":   { "message": "The same values as a clean install" },

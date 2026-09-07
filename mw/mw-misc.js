@@ -10,6 +10,7 @@
     var _FEAT = MW.FEAT;
     var ID = MW.ID;
     var _mn = MW.mn;
+    var _mnCtor = MW.mnCtor;
     var _getSessionSeed = MW.getSessionSeed;
     var _BASE_FONTS = MW.BASE_FONTS;
     // [FIX status-was-a-page-readable-key] The module list used to be written into
@@ -451,8 +452,30 @@ if (!_STEALTH)     (function() {
             // platform reports rather than written as a constant: keys/values/entries are 0
             // in both today, and a browser that changes one of them should not need an edit
             // here to stay matched.
+            // [FIX the-stubs-answered-every-receiver] These replacements had no brand check,
+            // so reading them off the PROTOTYPE — the classic way to ask "is this patched" —
+            // answered where the platform refuses. Found by walking Chrome's whole readable
+            // tree against a clean browser (tools/probe-engine.mjs), one row out of 8942:
+            //
+            //   document.fonts.__proto__.size    clean REFUSED:TypeError   ours 0
+            //
+            // Same class as NetworkInformation.prototype and BatteryManager.prototype before
+            // it, and the same cure: let the platform answer first. The native `size` getter is
+            // the oracle because it is free of side effects — calling native forEach to test
+            // the receiver would run the page's callback over the real font list, which is
+            // the leak this whole block exists to prevent.
+            var _dSize = Object.getOwnPropertyDescriptor(_fsTarget, 'size');
+            var _natSizeGet = (_dSize && typeof _dSize.get === 'function') ? _dSize.get : null;
+            function _fsBrand(self) {
+                // Throws exactly what the platform throws for a receiver that is not a
+                // FontFaceSet; returns quietly for one that is.
+                if (_natSizeGet) _natSizeGet.call(self);
+            }
             ['forEach','keys','values','entries'].forEach(function(m) {
-                var stub = ({ [m]: function() { return m === 'forEach' ? undefined : _emptyIter(); } })[m];
+                var stub = ({ [m]: function() {
+                    _fsBrand(this);
+                    return m === 'forEach' ? undefined : _emptyIter();
+                } })[m];
                 try {
                     var natFn = _fsTarget[m];
                     if (typeof natFn === 'function') {
@@ -462,8 +485,153 @@ if (!_STEALTH)     (function() {
                 try { Object.defineProperty(_fsTarget, m, { value: _mn(stub), writable: true, configurable: true }); } catch(e) {}
             });
             // [Symbol.iterator] у setlike-интерфейсов — это тот же values()
-            try { Object.defineProperty(_fsTarget, Symbol.iterator, { value: _mn(function values() { return _emptyIter(); }), writable: true, configurable: true }); } catch(e) {}
-            try { Object.defineProperty(_fsTarget, 'size', { get: _mn(function size() { return 0; }, true), configurable: true }); } catch(e) {}
+            try {
+                Object.defineProperty(_fsTarget, Symbol.iterator, {
+                    value: _mn(function values() { _fsBrand(this); return _emptyIter(); }),
+                    writable: true, configurable: true
+                });
+            } catch(e) {}
+            try {
+                Object.defineProperty(_fsTarget, 'size', {
+                    get: _mn(function size() { _fsBrand(this); return 0; }, true),
+                    enumerable: _dSize ? _dSize.enumerable : true,
+                    configurable: true
+                });
+            } catch(e) {}
+
+            // ===== THE queryLocalFonts DOOR =====
+            // [FIX querylocalfonts-handed-over-every-font] Local Font Access returns the
+            // machine's whole font book -- family, fullName, postscriptName, style -- and
+            // nothing here filtered it, so the allowlist that shortens every other answer
+            // was bypassed wholesale through one call. The patched-Chromium series closed
+            // the same door as its patch 0060.
+            //
+            // Not a silent channel: it needs a secure context and a granted `local-fonts`
+            // permission, which is a prompt the user sees. That is why it is closed rather
+            // than faked -- the answer stays a real FontData list, only shortened to the
+            // families every other door already admits.
+            //
+            // The native promise is awaited rather than replaced: its rejections are the
+            // page's to see (no permission, insecure context, a bad options object), and
+            // swallowing them would invent a browser where the call always succeeds.
+            try {
+                if (typeof window.queryLocalFonts === 'function') {
+                    var _origQLF = window.queryLocalFonts;
+                    var _qlf = _mn(function queryLocalFonts() {
+                        var r;
+                        try { r = _origQLF.apply(window, arguments); } catch (eQ) { throw eQ; }
+                        if (!r || typeof r.then !== 'function') return r;
+                        return r.then(function (list) {
+                            try {
+                                if (!list || typeof list.filter !== 'function') return list;
+                                return list.filter(function (f) {
+                                    try {
+                                        var fam = String((f && f.family) || '').toLowerCase();
+                                        return !!sf[fam];
+                                    } catch (eF) { return false; }
+                                });
+                            } catch (eL) { return list; }
+                        });
+                    });
+                    try {
+                        Object.defineProperty(_qlf, 'length',
+                            { value: _origQLF.length, configurable: true });
+                    } catch (eQLen) {}
+                    window.queryLocalFonts = _qlf;
+                }
+            } catch (eQLF) {}
+
+            // ===== THE local() DOOR =====
+            // [FIX fontface-local-walked-past-the-allowlist] measureText and
+            // document.fonts.check both refuse a family outside the allowlist. The FontFace
+            // CONSTRUCTOR did not, so `new FontFace('x','local("Agency FB")').load()`
+            // RESOLVED for a family the other two hide, and a page enumerated every font on
+            // the machine through that one door while the list it read stayed short.
+            // Measured against a clean browser, three doors, one family
+            // (tools/probe-fontdoors.mjs):
+            //
+            //   ours  Agency FB   measureText false  check true  local() TRUE   <- the hole
+            //   ours  Arial       measureText true   check true  local() true   <- control
+            //
+            // The refusal below is the one a clean browser gives for a family that is not
+            // installed at all, read off it rather than invented:
+            //
+            //   DOMException / name NetworkError / code 19 / "A network error occurred."
+            //
+            // `status` and `loaded` are carried with it. A rejected promise alone would
+            // leave status 'unloaded' and `loaded` pending forever, and both are readable —
+            // which is the same mistake in a smaller room.
+            //
+            // A source with no local() at all is not ours to judge: url() fetches a file, it
+            // does not ask what this machine has installed.
+            try {
+                var OrigFF = window.FontFace;
+                if (typeof OrigFF === 'function' && OrigFF.prototype &&
+                    typeof OrigFF.prototype.load === 'function' && typeof Reflect !== 'undefined') {
+                    var _ffSrc = new WeakMap();       // instance -> the source string it was built with
+                    var _ffRejected = new WeakMap();  // instance -> the refusal, reused by `loaded`
+                    var _origFFLoad = OrigFF.prototype.load;
+                    function _localFamilies(src) {
+                        var out = [], re = /local\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/g, m;
+                        while ((m = re.exec(String(src)))) {
+                            var n = (m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : (m[3] || ''))).trim();
+                            if (n) out.push(n.toLowerCase());
+                        }
+                        return out;
+                    }
+                    // Blocked only when EVERY local() family is outside the list: a source
+                    // that also names an allowed family would load in a clean browser too.
+                    function _localBlocked(src) {
+                        var f = _localFamilies(src);
+                        if (!f.length) return false;
+                        for (var i = 0; i < f.length; i++) if (sf[f[i]]) return false;
+                        return true;
+                    }
+                    var _FF = _mnCtor(function FontFace(family, source, descriptors) {
+                        var inst = Reflect.construct(OrigFF, arguments, new.target || _FF);
+                        try { if (typeof source === 'string') _ffSrc.set(inst, source); } catch (eS) {}
+                        return inst;
+                    }, 'FontFace', OrigFF.length);
+                    _FF.prototype = OrigFF.prototype;
+                    try {
+                        Object.defineProperty(OrigFF.prototype, 'constructor',
+                            { value: _FF, writable: true, configurable: true });
+                    } catch (eC) {}
+                    window.FontFace = _FF;
+
+                    OrigFF.prototype.load = _mn(function load() {
+                        var self = this, src = null;
+                        try { src = _ffSrc.get(self); } catch (eG) {}
+                        if (src && _localBlocked(src)) {
+                            var p = Promise.reject(new DOMException('A network error occurred.', 'NetworkError'));
+                            try { _ffRejected.set(self, p); } catch (eR) {}
+                            return p;
+                        }
+                        return _origFFLoad.apply(self, arguments);
+                    });
+
+                    var _dStatus = Object.getOwnPropertyDescriptor(OrigFF.prototype, 'status');
+                    if (_dStatus && typeof _dStatus.get === 'function') {
+                        Object.defineProperty(OrigFF.prototype, 'status', {
+                            get: _mn(function status() {
+                                try { if (_ffRejected.has(this)) return 'error'; } catch (eH) {}
+                                return _dStatus.get.call(this);
+                            }, true),
+                            enumerable: _dStatus.enumerable, configurable: true
+                        });
+                    }
+                    var _dLoaded = Object.getOwnPropertyDescriptor(OrigFF.prototype, 'loaded');
+                    if (_dLoaded && typeof _dLoaded.get === 'function') {
+                        Object.defineProperty(OrigFF.prototype, 'loaded', {
+                            get: _mn(function loaded() {
+                                try { var r = _ffRejected.get(this); if (r) return r; } catch (eL) {}
+                                return _dLoaded.get.call(this);
+                            }, true),
+                            enumerable: _dLoaded.enumerable, configurable: true
+                        });
+                    }
+                }
+            } catch (eFF) {}
 
             if (proto) _fontProtoPatched.add(proto);
         } catch(e) {}

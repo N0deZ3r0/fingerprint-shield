@@ -24,6 +24,10 @@
     // below do not go through _def, so they ask this directly. See mw-core.
     var _hostHwNow = (MW && MW.hostHwNow) ? MW.hostHwNow : function () { return false; };
     var _hostResolved = (MW && MW.hostResolved) ? MW.hostResolved : function () { return {}; };
+    // [FIX intl-locale-contradicted-navigator-language] Read LIVE, not at install: the
+    // Intl locale has to follow whatever navigator.language ends up being, and that is
+    // decided by a checkbox the user can move after this file has loaded. See _dtfLocale.
+    var _featNow = (MW && MW.featNow) ? MW.featNow : function () { return true; };
     var _RawDate = MW.RawDate;
     // [FIX status-was-a-page-readable-key] The module list used to be written into
     // sessionStorage['v.ui.t'] as self-describing JSON — {"canvas":true,"webgl":true,…} —
@@ -990,7 +994,47 @@
                         if (hl) return hl;
                     }
                 } catch (eSd) {}
-                return (_prof() && (_prof().locale || _prof().language)) || ID.locale || ID.language || null;
+                // [FIX intl-locale-contradicted-navigator-language] The Intl locale must
+                // equal navigator.language. A clean browser never disagrees there, and
+                // this file used to answer with the profile's locale no matter what the
+                // NAVIGATOR module was doing -- while navigator.language is set by that
+                // module and by nothing else. Turn navigator off and the page reads the
+                // host's language beside the profile's locale.
+                //
+                // Measured on live Fingerprint Pro events from the user's own Chrome,
+                // both directions, same session:
+                //
+                //   navigator OFF, timezone ON   languages ru-RU   date_time_locale et-EE
+                //   navigator ON,  timezone OFF  languages et-EE   date_time_locale ru
+                //
+                // The first is the half this can close: yield the host locale whenever the
+                // module that owns the language claim is not running, so the two agree by
+                // construction. The second half is NOT closed here -- with the timezone
+                // module off no Intl wrapper is installed at all, so there is nothing to
+                // answer with; closing it means installing the locale override under the
+                // navigator flag, which is a bigger change than this one.
+                //
+                // Live via MW.featNow rather than the _FEAT snapshot: the flag is a
+                // checkbox and the profile can land after this file loads.
+                try {
+                    if (!_featNow('navigator')) {
+                        var hn = _hostResolved().locale;
+                        if (hn) return hn;
+                    }
+                } catch (eNav) {}
+                // [FIX intl-reported-the-tag-instead-of-the-default] This used to answer
+                // with the profile's locale TAG, so `new Intl.DateTimeFormat()
+                // .resolvedOptions().locale` said `et-EE` — a value no browser produces.
+                // Measured on a clean browser forced to that language, one launch per
+                // locale: it reports `et`, and 57 of the 67 countries differ from their tag
+                // the same way (en-IE -> en-GB, es-CL -> es-MX). The rule is not derivable —
+                // `Intl.Locale.minimize()` is right 7 times in 10 and wrong for en-US,
+                // pt-BR and zh-CN — so the value is measured by tools/gen-locales.mjs and
+                // stored per country. `locale` stays the fallback for the two locales that
+                // generator could not switch this browser to.
+                var p = _prof();
+                return (p && (p.intlLocale || p.locale || p.language)) ||
+                    ID.intlLocale || ID.locale || ID.language || null;
             };
             // [FIX resolvedOptions-stomped-explicit-locale] Every wrapper below used to
             // overwrite resolvedOptions().locale with the profile locale
@@ -1219,6 +1263,66 @@
                 Intl.Collator.prototype = OrigCL.prototype;
                 Intl.Collator.prototype.resolvedOptions = _intlRO(_roCL);
             } catch(e) {}
+            // [FIX localecompare-sorted-by-the-host] Intl.Collator above carries the claim;
+            // String.prototype.localeCompare was wrapped nowhere and went to ICU's DEFAULT
+            // locale, which is the machine's and which JS cannot move. The patched-Chromium
+            // project sets that default in RendererMain "before the render thread exists,
+            // because V8 caches the default locale in the isolate the first time Intl asks"
+            // -- a moment an extension does not get, so the two doors have to be brought
+            // together here instead.
+            //
+            // It is a contradiction a page finds on its own, with no reference machine and
+            // no corpus: ask both APIs to order the same two letters. Measured claiming
+            // et-EE on a ru host (tools/probe-predict.mjs), Estonian sorting o-tilde AFTER
+            // z where ru and en sort it with o:
+            //
+            //   clean   localeCompare -1   Intl.Collator() -1     agree
+            //   ours    localeCompare -1   Intl.Collator()  1     4 of 5 pairs disagreed
+            //
+            // NOT the cause of Fingerprint's bot verdict, and it must not be sold as one:
+            // ru and en collate Latin identically, so a claim of en-US produces no split at
+            // all, and that run was still graded bad.
+            //
+            // Same _intlLoc as every constructor above, so an explicit locale still wins and
+            // the claim comes from one place. That also means it inherits README "Limits", item 18:
+            // the locale lives under the timezone flag while navigator.language lives under
+            // its own, and closing that is the same move for both.
+            try {
+                var _origLC = String.prototype.localeCompare;
+                if (typeof _origLC === 'function') {
+                    var _lcWrap = _mn(function localeCompare(that) {
+                        var a = _intlLoc(arguments.length > 1 ? arguments[1] : undefined);
+                        return _origLC.call(this, that, a.arg,
+                            arguments.length > 2 ? arguments[2] : undefined);
+                    });
+                    // Arity from the native: a wrapper declaring one parameter would still
+                    // report 1 here, but pinning it means a later edit cannot drift.
+                    try {
+                        Object.defineProperty(_lcWrap, 'length',
+                            { value: _origLC.length, configurable: true });
+                    } catch (eLcLen) {}
+                    String.prototype.localeCompare = _lcWrap;
+                }
+            } catch (eLc) {}
+            // The same default locale answers these two, and Turkish is the classic probe:
+            // a tr-TR claim on any other host would upper-case 'i' to 'I' instead of the
+            // dotted capital. No split on the ru/et pair measured today -- both give 'I' --
+            // so this is closing the door rather than fixing an observed leak, and it is
+            // written down that way.
+            try {
+                ['toLocaleUpperCase', 'toLocaleLowerCase'].forEach(function (m) {
+                    var orig = String.prototype[m];
+                    if (typeof orig !== 'function') return;
+                    var w = ({ [m]: function () {
+                        var a = _intlLoc(arguments.length > 0 ? arguments[0] : undefined);
+                        return orig.call(this, a.arg);
+                    } })[m];
+                    try {
+                        Object.defineProperty(w, 'length', { value: orig.length, configurable: true });
+                    } catch (eTlLen) {}
+                    String.prototype[m] = _mn(w);
+                });
+            } catch (eTl) {}
             try {
                 var OrigPR = Intl.PluralRules, _roPR = Intl.PluralRules.prototype.resolvedOptions;
                 var _RealPRCtor = function PluralRules(loc, opts) {
@@ -1311,7 +1415,41 @@
             // newer than the rest of Intl, which is the whole lesson here: a hand-listed
             // set of constructors goes stale every time the platform grows one, so the
             // loop below takes names rather than repeating the block twice more.
-            ['Segmenter', 'DurationFormat'].forEach(function (nm) {
+            // [FIX the-loop-still-took-a-hand-LIST] The note above says a hand-listed set
+            // goes stale every time the platform grows a constructor — and then listed two
+            // names. It went stale exactly as predicted: `tools/probe-engine.mjs`, walking
+            // Chrome's own value tree instead of ours, found `Intl.v8BreakIterator`
+            // answering with the host locale while all nine of its siblings answered with
+            // the claim:
+            //
+            //   Intl.Collator        resolvedOptions().locale   et-EE   the claim
+            //   Intl.v8BreakIterator resolvedOptions().locale   ru      the machine
+            //
+            // The names come from the browser now. Anything with a `resolvedOptions` on its
+            // prototype reads the default locale and therefore has to follow the claim;
+            // that test excludes `Intl.Locale` (no resolvedOptions, and it carries the tag
+            // the caller handed it) and the plain functions (`getCanonicalLocales`,
+            // `supportedValuesOf`) without naming any of them. The seven wrapped by hand
+            // above are already replaced, so `_intlWrapped` skips them rather than
+            // double-wrapping — order matters here and this loop stays last.
+            //
+            // This is the structural half of the difference with an engine patch: a patched
+            // Chromium moves the renderer's ICU default locale once and every reader
+            // follows, including readers written after the patch. An extension wraps
+            // readers, so the only way not to fall behind is to stop naming them.
+            var _intlWrapped = ['DateTimeFormat', 'NumberFormat', 'Collator', 'PluralRules',
+                'RelativeTimeFormat', 'DisplayNames', 'ListFormat'];
+            var _intlNames = [];
+            try {
+                Object.getOwnPropertyNames(Intl).forEach(function (nm) {
+                    if (_intlWrapped.indexOf(nm) !== -1) return;
+                    var C = Intl[nm];
+                    if (typeof C !== 'function' || !C.prototype) return;
+                    if (typeof C.prototype.resolvedOptions !== 'function') return;
+                    _intlNames.push(nm);
+                });
+            } catch (eEnum) { _intlNames = ['Segmenter', 'DurationFormat']; }
+            _intlNames.forEach(function (nm) {
                 try {
                     var Orig = Intl[nm];
                     if (!Orig) return;

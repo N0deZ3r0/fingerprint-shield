@@ -52,7 +52,13 @@ function blocks(data) {
     'background.js': {
       COUNTRY_DATA: codes.map((c) => {
         const d = data[c];
-        return `    ${q(c)}: { tz: ${q(d.tz)}, loc: ${q(d.loc)}, lang: ${q(d.lang)} },`;
+        // `intlLocale` is the DEFAULT Intl locale a browser on this language reports, which
+        // is not the same string as the locale tag: measured, 57 of 67 differ (et-EE -> et,
+        // en-IE -> en-GB, es-CL -> es-MX). Emitted only where tools/gen-locales.mjs could
+        // actually measure it — two locales this Chromium cannot switch to are deliberately
+        // absent so the runtime falls back instead of inheriting a refusal.
+        const il = d.intlLocale ? `, intlLocale: ${q(d.intlLocale)}` : '';
+        return `    ${q(c)}: { tz: ${q(d.tz)}, loc: ${q(d.loc)}, lang: ${q(d.lang)}${il} },`;
       }).join('\n')
     },
     'popup.js': {

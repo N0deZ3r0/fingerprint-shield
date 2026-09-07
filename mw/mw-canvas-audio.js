@@ -847,13 +847,18 @@
                     // has none at all — one attribute is as good a detector as seven.
                     //
                     // The question it answers is "did our code already run in this frame?",
-                    // and __p0 answers it just as durably: mw-core defines it
-                    // non-enumerable on every window it bootstraps and mw-cleanup, unlike
-                    // for __AFP_MW__, deliberately does not remove it. Same-origin, so the
+                    // and mw-core's bootstrap flag answers it just as durably: it is set on
+                    // every window mw-core bootstraps and mw-cleanup, unlike for
+                    // __AFP_MW__, deliberately does not remove it. Same-origin, so the
                     // parent can read it; invisible to Object.keys, and measured not to
-                    // register in CreepJS's clientCode (its value is a boolean and the name
-                    // has no trailing underscore — see the getClientCode note there).
-                    try { if (win.__p0) return; } catch (eP0) {}
+                    // register in CreepJS's clientCode.
+                    //
+                    // [FIX two-marker-names-where-one-would-do] It used to be a global of
+                    // its own, `__p0`, so the window carried two names a page could test
+                    // for instead of one. It is a FIELD of __t0 now — see the long note at
+                    // its definition in mw-core.js for why hiding either name was measured
+                    // as worse than owning one fewer.
+                    try { if (win.__t0 && win.__t0.p) return; } catch (eP0) {}
                     try { if (win.__AFP_MW__) return; } catch (eMw) {}
                     var HCEP = win.HTMLCanvasElement && win.HTMLCanvasElement.prototype;
                     var C2DP = win.CanvasRenderingContext2D && win.CanvasRenderingContext2D.prototype;

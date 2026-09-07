@@ -222,6 +222,14 @@ if (withBrowser) SUITES.push(['own properties (Chromium)', ['test/ownprops.mjs']
 // suite above was green. Window and worker, two profiles: a half-hour zone (Kolkata) shows
 // arithmetic a whole-hour one hides.
 if (withBrowser) SUITES.push(['date layer vs zone oracle (Chromium)', ['test/tz-oracle.mjs']]);
+// Which FLAG owns the locale. navigator.language is the navigator module's and nothing
+// else's, while the Intl locale was answered under the timezone flag — so either checkbox
+// alone made the page contradict itself, and split the window from the worker, which had
+// the ownership right all along. Found in live Fingerprint Pro events, both directions in
+// one session, not by reading the code. The suite also refuted its own first invariant: a
+// clean browser answers navigator.language ru-RU beside an Intl locale of ru, so what is
+// pinned is the shared primary subtag, not equality.
+if (withBrowser) SUITES.push(['which flag owns the locale (Chromium)', ['test/localeflag.mjs']]);
 // The layout against the viewport APIs. A window cannot be wider than its monitor and CSS
 // is not ours to fake, so clamping innerWidth/innerHeight to a claimed screen SMALLER than
 // the real window produced a refutable lie: every API said 1920 while the page laid out at

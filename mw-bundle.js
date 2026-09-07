@@ -170,15 +170,20 @@
     // until the full profile landed.
     //
     // The first `if` already covers every correct case, so the branch is simply gone.
+    // [FIX languages-had-three-writers] The list is the configured tag and nothing else.
+    // The base tag and the English pair used to be appended here because the header
+    // carries them — but the header is not this list. Measured on a clean browser with
+    // the field-trial config left ON (ReduceAcceptLanguage is live for real users), five
+    // languages, 5 of 5:
+    //
+    //   pref et-EE   header 'et-EE,et;q=0.9'   navigator.languages ['et-EE']
+    //   pref en-GB   header 'en-GB,en;q=0.9'   navigator.languages ['en-GB']
+    //
+    // So the expansion belongs to the header alone. background.js and tools/gen-dyn.mjs
+    // say the same; a live browser showed what happens when they do not — window and
+    // worker on ['et-EE'], srcdoc and sandboxed frames on ['et-EE','et'].
     function buildBootstrapLangs(locale) {
-        var base = locale.split('-')[0];
-        var langs = [locale];
-        if (base && base !== locale) langs.push(base);
-        if (base !== 'en') {
-            langs.push('en-US');
-            langs.push('en');
-        }
-        return langs;
+        return [locale];
     }
 
     function applyBridge(p, detail) {
@@ -188,6 +193,7 @@
             // bridge already domain-scoped
             p.noiseSeed = detail.noiseSeed >>> 0;
         }
+        if (detail.intlLocale) p.intlLocale = detail.intlLocale;
         if (detail.locale) {
             p.language = detail.locale;
             p.locale = detail.locale;
@@ -409,6 +415,7 @@
             platform: platform, hwConcurrency: cores, deviceMemory: memory,
             webdriver: false, vendor: 'Google Inc.',
             language: locale, languages: langs, locale: locale,
+            intlLocale: detail.intlLocale || locale,
             countryCode: earlyCc,
             doNotTrack: null, maxTouchPoints: 0, pdfViewerEnabled: true,
             // [FIX early-bluetooth] laptop_mid has Bluetooth. Desktop pc_* will
@@ -871,16 +878,35 @@
     // [FIX clientCode-p0-enumerable] Bare window.__p0 = true is enumerable →
     // CreepJS getClientCode() (Object.keys(window).slice(-50)) picks it up as
     // client litter → non-empty code hash. Keep the flag, hide from Object.keys.
+    //
+    // [FIX two-marker-names-where-one-would-do] This used to be a global of its own.
+    // README "Limits" 17 records `__t0` AND `__p0` as names a page can test for, and hiding
+    // either was MEASURED as worse than leaving it: a clean window has zero own symbols,
+    // so a symbol key makes the count anomalous by itself and `Symbol.keyFor` hands the
+    // name straight back; hiding from enumeration alone makes reachable / listed / `in`
+    // disagree, which no browser does for any name. What was left to do was stop paying
+    // twice. This flag marks a different STAGE from __t0 — "the bundle ran in this realm",
+    // against profile-injector's status object merely existing — but a stage is a field,
+    // not a global. One own name where there were two, same behaviour, and __t0 is
+    // already defined non-enumerable in all six places that define it, so the Object.keys
+    // hiding the note above is about is inherited rather than re-earned.
+    //
+    // The parent-side reader is the frame bridge in mw-canvas-audio; it moved with this.
     try {
-        if (window.__p0) return;
+        if (window.__t0 && window.__t0.p) return;
     } catch (eP0) {}
     try {
-        Object.defineProperty(window, '__p0', {
-            value: true, writable: true, configurable: true, enumerable: false
-        });
-    } catch (eDef) {
-        try { window.__p0 = true; } catch (e2) {}
-    }
+        var _st0p = window.__t0;
+        if (!_st0p) {
+            _st0p = {};
+            try {
+                Object.defineProperty(window, '__t0', {
+                    value: _st0p, writable: true, configurable: true, enumerable: false
+                });
+            } catch (eD0) { window.__t0 = _st0p; }
+        }
+        _st0p.p = true;
+    } catch (eDef) {}
 
     // STEALTH MODE: fewer patches → lower anti_detect / puppeteer_stealth score.
     // Applied per page load (toggle + Apply + reload). Live switch mid-page is not reliable.
@@ -2676,6 +2702,10 @@
     // below do not go through _def, so they ask this directly. See mw-core.
     var _hostHwNow = (MW && MW.hostHwNow) ? MW.hostHwNow : function () { return false; };
     var _hostResolved = (MW && MW.hostResolved) ? MW.hostResolved : function () { return {}; };
+    // [FIX intl-locale-contradicted-navigator-language] Read LIVE, not at install: the
+    // Intl locale has to follow whatever navigator.language ends up being, and that is
+    // decided by a checkbox the user can move after this file has loaded. See _dtfLocale.
+    var _featNow = (MW && MW.featNow) ? MW.featNow : function () { return true; };
     var _RawDate = MW.RawDate;
     // [FIX status-was-a-page-readable-key] The module list used to be written into
     // sessionStorage['v.ui.t'] as self-describing JSON — {"canvas":true,"webgl":true,…} —
@@ -3642,7 +3672,47 @@
                         if (hl) return hl;
                     }
                 } catch (eSd) {}
-                return (_prof() && (_prof().locale || _prof().language)) || ID.locale || ID.language || null;
+                // [FIX intl-locale-contradicted-navigator-language] The Intl locale must
+                // equal navigator.language. A clean browser never disagrees there, and
+                // this file used to answer with the profile's locale no matter what the
+                // NAVIGATOR module was doing -- while navigator.language is set by that
+                // module and by nothing else. Turn navigator off and the page reads the
+                // host's language beside the profile's locale.
+                //
+                // Measured on live Fingerprint Pro events from the user's own Chrome,
+                // both directions, same session:
+                //
+                //   navigator OFF, timezone ON   languages ru-RU   date_time_locale et-EE
+                //   navigator ON,  timezone OFF  languages et-EE   date_time_locale ru
+                //
+                // The first is the half this can close: yield the host locale whenever the
+                // module that owns the language claim is not running, so the two agree by
+                // construction. The second half is NOT closed here -- with the timezone
+                // module off no Intl wrapper is installed at all, so there is nothing to
+                // answer with; closing it means installing the locale override under the
+                // navigator flag, which is a bigger change than this one.
+                //
+                // Live via MW.featNow rather than the _FEAT snapshot: the flag is a
+                // checkbox and the profile can land after this file loads.
+                try {
+                    if (!_featNow('navigator')) {
+                        var hn = _hostResolved().locale;
+                        if (hn) return hn;
+                    }
+                } catch (eNav) {}
+                // [FIX intl-reported-the-tag-instead-of-the-default] This used to answer
+                // with the profile's locale TAG, so `new Intl.DateTimeFormat()
+                // .resolvedOptions().locale` said `et-EE` — a value no browser produces.
+                // Measured on a clean browser forced to that language, one launch per
+                // locale: it reports `et`, and 57 of the 67 countries differ from their tag
+                // the same way (en-IE -> en-GB, es-CL -> es-MX). The rule is not derivable —
+                // `Intl.Locale.minimize()` is right 7 times in 10 and wrong for en-US,
+                // pt-BR and zh-CN — so the value is measured by tools/gen-locales.mjs and
+                // stored per country. `locale` stays the fallback for the two locales that
+                // generator could not switch this browser to.
+                var p = _prof();
+                return (p && (p.intlLocale || p.locale || p.language)) ||
+                    ID.intlLocale || ID.locale || ID.language || null;
             };
             // [FIX resolvedOptions-stomped-explicit-locale] Every wrapper below used to
             // overwrite resolvedOptions().locale with the profile locale
@@ -3871,6 +3941,66 @@
                 Intl.Collator.prototype = OrigCL.prototype;
                 Intl.Collator.prototype.resolvedOptions = _intlRO(_roCL);
             } catch(e) {}
+            // [FIX localecompare-sorted-by-the-host] Intl.Collator above carries the claim;
+            // String.prototype.localeCompare was wrapped nowhere and went to ICU's DEFAULT
+            // locale, which is the machine's and which JS cannot move. The patched-Chromium
+            // project sets that default in RendererMain "before the render thread exists,
+            // because V8 caches the default locale in the isolate the first time Intl asks"
+            // -- a moment an extension does not get, so the two doors have to be brought
+            // together here instead.
+            //
+            // It is a contradiction a page finds on its own, with no reference machine and
+            // no corpus: ask both APIs to order the same two letters. Measured claiming
+            // et-EE on a ru host (tools/probe-predict.mjs), Estonian sorting o-tilde AFTER
+            // z where ru and en sort it with o:
+            //
+            //   clean   localeCompare -1   Intl.Collator() -1     agree
+            //   ours    localeCompare -1   Intl.Collator()  1     4 of 5 pairs disagreed
+            //
+            // NOT the cause of Fingerprint's bot verdict, and it must not be sold as one:
+            // ru and en collate Latin identically, so a claim of en-US produces no split at
+            // all, and that run was still graded bad.
+            //
+            // Same _intlLoc as every constructor above, so an explicit locale still wins and
+            // the claim comes from one place. That also means it inherits README "Limits", item 18:
+            // the locale lives under the timezone flag while navigator.language lives under
+            // its own, and closing that is the same move for both.
+            try {
+                var _origLC = String.prototype.localeCompare;
+                if (typeof _origLC === 'function') {
+                    var _lcWrap = _mn(function localeCompare(that) {
+                        var a = _intlLoc(arguments.length > 1 ? arguments[1] : undefined);
+                        return _origLC.call(this, that, a.arg,
+                            arguments.length > 2 ? arguments[2] : undefined);
+                    });
+                    // Arity from the native: a wrapper declaring one parameter would still
+                    // report 1 here, but pinning it means a later edit cannot drift.
+                    try {
+                        Object.defineProperty(_lcWrap, 'length',
+                            { value: _origLC.length, configurable: true });
+                    } catch (eLcLen) {}
+                    String.prototype.localeCompare = _lcWrap;
+                }
+            } catch (eLc) {}
+            // The same default locale answers these two, and Turkish is the classic probe:
+            // a tr-TR claim on any other host would upper-case 'i' to 'I' instead of the
+            // dotted capital. No split on the ru/et pair measured today -- both give 'I' --
+            // so this is closing the door rather than fixing an observed leak, and it is
+            // written down that way.
+            try {
+                ['toLocaleUpperCase', 'toLocaleLowerCase'].forEach(function (m) {
+                    var orig = String.prototype[m];
+                    if (typeof orig !== 'function') return;
+                    var w = ({ [m]: function () {
+                        var a = _intlLoc(arguments.length > 0 ? arguments[0] : undefined);
+                        return orig.call(this, a.arg);
+                    } })[m];
+                    try {
+                        Object.defineProperty(w, 'length', { value: orig.length, configurable: true });
+                    } catch (eTlLen) {}
+                    String.prototype[m] = _mn(w);
+                });
+            } catch (eTl) {}
             try {
                 var OrigPR = Intl.PluralRules, _roPR = Intl.PluralRules.prototype.resolvedOptions;
                 var _RealPRCtor = function PluralRules(loc, opts) {
@@ -3963,7 +4093,41 @@
             // newer than the rest of Intl, which is the whole lesson here: a hand-listed
             // set of constructors goes stale every time the platform grows one, so the
             // loop below takes names rather than repeating the block twice more.
-            ['Segmenter', 'DurationFormat'].forEach(function (nm) {
+            // [FIX the-loop-still-took-a-hand-LIST] The note above says a hand-listed set
+            // goes stale every time the platform grows a constructor — and then listed two
+            // names. It went stale exactly as predicted: `tools/probe-engine.mjs`, walking
+            // Chrome's own value tree instead of ours, found `Intl.v8BreakIterator`
+            // answering with the host locale while all nine of its siblings answered with
+            // the claim:
+            //
+            //   Intl.Collator        resolvedOptions().locale   et-EE   the claim
+            //   Intl.v8BreakIterator resolvedOptions().locale   ru      the machine
+            //
+            // The names come from the browser now. Anything with a `resolvedOptions` on its
+            // prototype reads the default locale and therefore has to follow the claim;
+            // that test excludes `Intl.Locale` (no resolvedOptions, and it carries the tag
+            // the caller handed it) and the plain functions (`getCanonicalLocales`,
+            // `supportedValuesOf`) without naming any of them. The seven wrapped by hand
+            // above are already replaced, so `_intlWrapped` skips them rather than
+            // double-wrapping — order matters here and this loop stays last.
+            //
+            // This is the structural half of the difference with an engine patch: a patched
+            // Chromium moves the renderer's ICU default locale once and every reader
+            // follows, including readers written after the patch. An extension wraps
+            // readers, so the only way not to fall behind is to stop naming them.
+            var _intlWrapped = ['DateTimeFormat', 'NumberFormat', 'Collator', 'PluralRules',
+                'RelativeTimeFormat', 'DisplayNames', 'ListFormat'];
+            var _intlNames = [];
+            try {
+                Object.getOwnPropertyNames(Intl).forEach(function (nm) {
+                    if (_intlWrapped.indexOf(nm) !== -1) return;
+                    var C = Intl[nm];
+                    if (typeof C !== 'function' || !C.prototype) return;
+                    if (typeof C.prototype.resolvedOptions !== 'function') return;
+                    _intlNames.push(nm);
+                });
+            } catch (eEnum) { _intlNames = ['Segmenter', 'DurationFormat']; }
+            _intlNames.forEach(function (nm) {
                 try {
                     var Orig = Intl[nm];
                     if (!Orig) return;
@@ -7635,13 +7799,18 @@
                     // has none at all — one attribute is as good a detector as seven.
                     //
                     // The question it answers is "did our code already run in this frame?",
-                    // and __p0 answers it just as durably: mw-core defines it
-                    // non-enumerable on every window it bootstraps and mw-cleanup, unlike
-                    // for __AFP_MW__, deliberately does not remove it. Same-origin, so the
+                    // and mw-core's bootstrap flag answers it just as durably: it is set on
+                    // every window mw-core bootstraps and mw-cleanup, unlike for
+                    // __AFP_MW__, deliberately does not remove it. Same-origin, so the
                     // parent can read it; invisible to Object.keys, and measured not to
-                    // register in CreepJS's clientCode (its value is a boolean and the name
-                    // has no trailing underscore — see the getClientCode note there).
-                    try { if (win.__p0) return; } catch (eP0) {}
+                    // register in CreepJS's clientCode.
+                    //
+                    // [FIX two-marker-names-where-one-would-do] It used to be a global of
+                    // its own, `__p0`, so the window carried two names a page could test
+                    // for instead of one. It is a FIELD of __t0 now — see the long note at
+                    // its definition in mw-core.js for why hiding either name was measured
+                    // as worse than owning one fewer.
+                    try { if (win.__t0 && win.__t0.p) return; } catch (eP0) {}
                     try { if (win.__AFP_MW__) return; } catch (eMw) {}
                     var HCEP = win.HTMLCanvasElement && win.HTMLCanvasElement.prototype;
                     var C2DP = win.CanvasRenderingContext2D && win.CanvasRenderingContext2D.prototype;
@@ -8597,6 +8766,7 @@ if (!_STEALTH)     (function() {
     var _FEAT = MW.FEAT;
     var ID = MW.ID;
     var _mn = MW.mn;
+    var _mnCtor = MW.mnCtor;
     var _getSessionSeed = MW.getSessionSeed;
     var _BASE_FONTS = MW.BASE_FONTS;
     // [FIX status-was-a-page-readable-key] The module list used to be written into
@@ -9038,8 +9208,30 @@ if (!_STEALTH)     (function() {
             // platform reports rather than written as a constant: keys/values/entries are 0
             // in both today, and a browser that changes one of them should not need an edit
             // here to stay matched.
+            // [FIX the-stubs-answered-every-receiver] These replacements had no brand check,
+            // so reading them off the PROTOTYPE — the classic way to ask "is this patched" —
+            // answered where the platform refuses. Found by walking Chrome's whole readable
+            // tree against a clean browser (tools/probe-engine.mjs), one row out of 8942:
+            //
+            //   document.fonts.__proto__.size    clean REFUSED:TypeError   ours 0
+            //
+            // Same class as NetworkInformation.prototype and BatteryManager.prototype before
+            // it, and the same cure: let the platform answer first. The native `size` getter is
+            // the oracle because it is free of side effects — calling native forEach to test
+            // the receiver would run the page's callback over the real font list, which is
+            // the leak this whole block exists to prevent.
+            var _dSize = Object.getOwnPropertyDescriptor(_fsTarget, 'size');
+            var _natSizeGet = (_dSize && typeof _dSize.get === 'function') ? _dSize.get : null;
+            function _fsBrand(self) {
+                // Throws exactly what the platform throws for a receiver that is not a
+                // FontFaceSet; returns quietly for one that is.
+                if (_natSizeGet) _natSizeGet.call(self);
+            }
             ['forEach','keys','values','entries'].forEach(function(m) {
-                var stub = ({ [m]: function() { return m === 'forEach' ? undefined : _emptyIter(); } })[m];
+                var stub = ({ [m]: function() {
+                    _fsBrand(this);
+                    return m === 'forEach' ? undefined : _emptyIter();
+                } })[m];
                 try {
                     var natFn = _fsTarget[m];
                     if (typeof natFn === 'function') {
@@ -9049,8 +9241,153 @@ if (!_STEALTH)     (function() {
                 try { Object.defineProperty(_fsTarget, m, { value: _mn(stub), writable: true, configurable: true }); } catch(e) {}
             });
             // [Symbol.iterator] у setlike-интерфейсов — это тот же values()
-            try { Object.defineProperty(_fsTarget, Symbol.iterator, { value: _mn(function values() { return _emptyIter(); }), writable: true, configurable: true }); } catch(e) {}
-            try { Object.defineProperty(_fsTarget, 'size', { get: _mn(function size() { return 0; }, true), configurable: true }); } catch(e) {}
+            try {
+                Object.defineProperty(_fsTarget, Symbol.iterator, {
+                    value: _mn(function values() { _fsBrand(this); return _emptyIter(); }),
+                    writable: true, configurable: true
+                });
+            } catch(e) {}
+            try {
+                Object.defineProperty(_fsTarget, 'size', {
+                    get: _mn(function size() { _fsBrand(this); return 0; }, true),
+                    enumerable: _dSize ? _dSize.enumerable : true,
+                    configurable: true
+                });
+            } catch(e) {}
+
+            // ===== THE queryLocalFonts DOOR =====
+            // [FIX querylocalfonts-handed-over-every-font] Local Font Access returns the
+            // machine's whole font book -- family, fullName, postscriptName, style -- and
+            // nothing here filtered it, so the allowlist that shortens every other answer
+            // was bypassed wholesale through one call. The patched-Chromium series closed
+            // the same door as its patch 0060.
+            //
+            // Not a silent channel: it needs a secure context and a granted `local-fonts`
+            // permission, which is a prompt the user sees. That is why it is closed rather
+            // than faked -- the answer stays a real FontData list, only shortened to the
+            // families every other door already admits.
+            //
+            // The native promise is awaited rather than replaced: its rejections are the
+            // page's to see (no permission, insecure context, a bad options object), and
+            // swallowing them would invent a browser where the call always succeeds.
+            try {
+                if (typeof window.queryLocalFonts === 'function') {
+                    var _origQLF = window.queryLocalFonts;
+                    var _qlf = _mn(function queryLocalFonts() {
+                        var r;
+                        try { r = _origQLF.apply(window, arguments); } catch (eQ) { throw eQ; }
+                        if (!r || typeof r.then !== 'function') return r;
+                        return r.then(function (list) {
+                            try {
+                                if (!list || typeof list.filter !== 'function') return list;
+                                return list.filter(function (f) {
+                                    try {
+                                        var fam = String((f && f.family) || '').toLowerCase();
+                                        return !!sf[fam];
+                                    } catch (eF) { return false; }
+                                });
+                            } catch (eL) { return list; }
+                        });
+                    });
+                    try {
+                        Object.defineProperty(_qlf, 'length',
+                            { value: _origQLF.length, configurable: true });
+                    } catch (eQLen) {}
+                    window.queryLocalFonts = _qlf;
+                }
+            } catch (eQLF) {}
+
+            // ===== THE local() DOOR =====
+            // [FIX fontface-local-walked-past-the-allowlist] measureText and
+            // document.fonts.check both refuse a family outside the allowlist. The FontFace
+            // CONSTRUCTOR did not, so `new FontFace('x','local("Agency FB")').load()`
+            // RESOLVED for a family the other two hide, and a page enumerated every font on
+            // the machine through that one door while the list it read stayed short.
+            // Measured against a clean browser, three doors, one family
+            // (tools/probe-fontdoors.mjs):
+            //
+            //   ours  Agency FB   measureText false  check true  local() TRUE   <- the hole
+            //   ours  Arial       measureText true   check true  local() true   <- control
+            //
+            // The refusal below is the one a clean browser gives for a family that is not
+            // installed at all, read off it rather than invented:
+            //
+            //   DOMException / name NetworkError / code 19 / "A network error occurred."
+            //
+            // `status` and `loaded` are carried with it. A rejected promise alone would
+            // leave status 'unloaded' and `loaded` pending forever, and both are readable —
+            // which is the same mistake in a smaller room.
+            //
+            // A source with no local() at all is not ours to judge: url() fetches a file, it
+            // does not ask what this machine has installed.
+            try {
+                var OrigFF = window.FontFace;
+                if (typeof OrigFF === 'function' && OrigFF.prototype &&
+                    typeof OrigFF.prototype.load === 'function' && typeof Reflect !== 'undefined') {
+                    var _ffSrc = new WeakMap();       // instance -> the source string it was built with
+                    var _ffRejected = new WeakMap();  // instance -> the refusal, reused by `loaded`
+                    var _origFFLoad = OrigFF.prototype.load;
+                    function _localFamilies(src) {
+                        var out = [], re = /local\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/g, m;
+                        while ((m = re.exec(String(src)))) {
+                            var n = (m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : (m[3] || ''))).trim();
+                            if (n) out.push(n.toLowerCase());
+                        }
+                        return out;
+                    }
+                    // Blocked only when EVERY local() family is outside the list: a source
+                    // that also names an allowed family would load in a clean browser too.
+                    function _localBlocked(src) {
+                        var f = _localFamilies(src);
+                        if (!f.length) return false;
+                        for (var i = 0; i < f.length; i++) if (sf[f[i]]) return false;
+                        return true;
+                    }
+                    var _FF = _mnCtor(function FontFace(family, source, descriptors) {
+                        var inst = Reflect.construct(OrigFF, arguments, new.target || _FF);
+                        try { if (typeof source === 'string') _ffSrc.set(inst, source); } catch (eS) {}
+                        return inst;
+                    }, 'FontFace', OrigFF.length);
+                    _FF.prototype = OrigFF.prototype;
+                    try {
+                        Object.defineProperty(OrigFF.prototype, 'constructor',
+                            { value: _FF, writable: true, configurable: true });
+                    } catch (eC) {}
+                    window.FontFace = _FF;
+
+                    OrigFF.prototype.load = _mn(function load() {
+                        var self = this, src = null;
+                        try { src = _ffSrc.get(self); } catch (eG) {}
+                        if (src && _localBlocked(src)) {
+                            var p = Promise.reject(new DOMException('A network error occurred.', 'NetworkError'));
+                            try { _ffRejected.set(self, p); } catch (eR) {}
+                            return p;
+                        }
+                        return _origFFLoad.apply(self, arguments);
+                    });
+
+                    var _dStatus = Object.getOwnPropertyDescriptor(OrigFF.prototype, 'status');
+                    if (_dStatus && typeof _dStatus.get === 'function') {
+                        Object.defineProperty(OrigFF.prototype, 'status', {
+                            get: _mn(function status() {
+                                try { if (_ffRejected.has(this)) return 'error'; } catch (eH) {}
+                                return _dStatus.get.call(this);
+                            }, true),
+                            enumerable: _dStatus.enumerable, configurable: true
+                        });
+                    }
+                    var _dLoaded = Object.getOwnPropertyDescriptor(OrigFF.prototype, 'loaded');
+                    if (_dLoaded && typeof _dLoaded.get === 'function') {
+                        Object.defineProperty(OrigFF.prototype, 'loaded', {
+                            get: _mn(function loaded() {
+                                try { var r = _ffRejected.get(this); if (r) return r; } catch (eL) {}
+                                return _dLoaded.get.call(this);
+                            }, true),
+                            enumerable: _dLoaded.enumerable, configurable: true
+                        });
+                    }
+                }
+            } catch (eFF) {}
 
             if (proto) _fontProtoPatched.add(proto);
         } catch(e) {}
@@ -10922,6 +11259,16 @@ if (!_STEALTH)     (function() {
         }
         function _getLang(){ return _P().language || 'en-US'; }
         function _getLangs(){ return _P().languages || ['en-US','en']; }
+        // [FIX the-worker-had-one-value-for-two-roles] `navigator.language` and the DEFAULT
+        // Intl locale are different strings — measured on a clean browser, 57 of 67 countries
+        // differ (de-DE reports `de`, et-EE reports `et`, en-IE reports `en-GB`). The window
+        // learned that; the worker payload kept passing _getLang() to _intlShim as well, so
+        // one page answered `de` in the window and `de-DE` in its own worker. Caught by
+        // test/localeflag.mjs, which exists to catch exactly this shape.
+        //
+        // Falls back to the tag where the value is absent — the two locales tools/gen-locales
+        // could not switch this browser to — which is the same fallback the window uses.
+        function _getIntlLoc(){ return _P().intlLocale || _P().language || 'en-US'; }
         function _getTZ()  { return _P().timezone || 'America/New_York'; }
         // [FIX worker-and-window-resolved-the-canvas-seed-separately]
         //
@@ -13088,6 +13435,9 @@ if (!_STEALTH)     (function() {
             var plat = JSON.stringify(_getPlat()), ua = JSON.stringify(_getUA());
             var av = JSON.stringify(_getAV());
             var lang = JSON.stringify(_getLang()), langs = JSON.stringify(_getLangs());
+            // Separate from `lang` on purpose — see _getIntlLoc. `lang` is what
+            // navigator.language answers; this is what Intl resolves its default to.
+            var intlLoc = JSON.stringify(_getIntlLoc());
             var tz = JSON.stringify(_getTZ());
             // [FIX dst-rules-were-guessed-from-the-tz-prefix] offset, rule and both zone
             // labels come from the one _TZ_ZONE row now — no prefix sniffing here.
@@ -13301,7 +13651,7 @@ if (!_STEALTH)     (function() {
                 // function in this file — see [REFACTOR worker-shim-as-real-code] and
                 // _intlShim above. `_M` below is not this file's variable: it is emitted
                 // verbatim and resolves inside the generated worker IIFE.
-                (_on('navigator')) ? ('(' + _intlShim.toString() + ')(' + lang + ',_M);') : '',
+                (_on('navigator')) ? ('(' + _intlShim.toString() + ')(' + intlLoc + ',_M);') : '',
                 // [FIX worker-ua-ch-win11] UA-CH + Notification + connection aligned with main
                 // Body is a real function in this file — see _uachShim above.
                 (_on('navigator')) ? ('(' + _uachShim.toString() + ')(' + JSON.stringify(String(_chMajor)) + ',' +

@@ -121,6 +121,35 @@
       against a fresh iframe does not show them &mdash; but a name anyone can guess once needs
       no diff. Deriving them per site is blocked by the markers being set before the seed
       exists and by the in-browser checks that read them.</li>
+    <li><b>With the timezone module off, the Intl locale is the host&rsquo;s while the worker
+      still answers the profile&rsquo;s.</b> <code>navigator.language</code> belongs to the
+      navigator module; the window&rsquo;s Intl locale is installed under the timezone flag,
+      so switching that one off leaves no wrapper to answer with &mdash; measured
+      <code>de-DE</code> in the window beside an Intl locale of <code>ru</code>, against
+      <code>de-DE</code> in both places in the worker. The other direction, navigator off, is
+      closed: the locale follows it back to the host. Closing this one means moving the
+      locale override under the navigator flag, mirroring what the worker has always done.
+      Pinned by <code>test/localeflag.mjs</code>, which prints the split rather than failing
+      on it.</li>
+    <li><b>The claimed core count is a number; parallelism is behaviour.</b>
+      <code>navigator.hardwareConcurrency</code> answers 8 while the machine still runs as
+      many workers at once as it really has. An extension cannot refuse the ninth the way an
+      eight-core processor would &mdash; the scheduler is the engine&rsquo;s. Closed in the
+      patched-Chromium project at that level; not closable here.</li>
+    <li><b>The claimed memory size is not backed either.</b>
+      <code>navigator.deviceMemory</code> reports the profile&rsquo;s bucket while a page can
+      simply allocate and watch for the bend that never comes &mdash; measured there as 12 GB
+      held at memory speed under a claim of 8. Same reason, same verdict: the allocator is the
+      engine&rsquo;s. Both of these are silent, need no permission, and are readable by any
+      page that thinks to look.</li>
+    <li><b>One <code>sessionStorage</code> key is visible, and its name need not be guessed.</b>
+      The per-document Trusted Types verdict lives at <code>v.ui.tte</code>; it claims nothing
+      about the machine, but on a fresh origin a clean browser has no keys at all, so
+      <code>sessionStorage.length</code> reading 1 instead of 0 finds it in one character. It
+      stays there because it has to survive navigation &mdash; a previous document&rsquo;s
+      verdict for the same route is what stops the proxies installing on a repeat load
+      &mdash; and hiding it would mean five more wrapped doors that must agree with each
+      other, to conceal a build whose presence <code>__t0</code> already announces.</li>
   </ul>
   <!-- defaults.js for afpCspScope / afpCspScopeMatches: the lists are per route now. -->
   <script src="defaults.js"></script>

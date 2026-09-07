@@ -356,6 +356,16 @@
         }
         function _getLang(){ return _P().language || 'en-US'; }
         function _getLangs(){ return _P().languages || ['en-US','en']; }
+        // [FIX the-worker-had-one-value-for-two-roles] `navigator.language` and the DEFAULT
+        // Intl locale are different strings — measured on a clean browser, 57 of 67 countries
+        // differ (de-DE reports `de`, et-EE reports `et`, en-IE reports `en-GB`). The window
+        // learned that; the worker payload kept passing _getLang() to _intlShim as well, so
+        // one page answered `de` in the window and `de-DE` in its own worker. Caught by
+        // test/localeflag.mjs, which exists to catch exactly this shape.
+        //
+        // Falls back to the tag where the value is absent — the two locales tools/gen-locales
+        // could not switch this browser to — which is the same fallback the window uses.
+        function _getIntlLoc(){ return _P().intlLocale || _P().language || 'en-US'; }
         function _getTZ()  { return _P().timezone || 'America/New_York'; }
         // [FIX worker-and-window-resolved-the-canvas-seed-separately]
         //
@@ -2522,6 +2532,9 @@
             var plat = JSON.stringify(_getPlat()), ua = JSON.stringify(_getUA());
             var av = JSON.stringify(_getAV());
             var lang = JSON.stringify(_getLang()), langs = JSON.stringify(_getLangs());
+            // Separate from `lang` on purpose — see _getIntlLoc. `lang` is what
+            // navigator.language answers; this is what Intl resolves its default to.
+            var intlLoc = JSON.stringify(_getIntlLoc());
             var tz = JSON.stringify(_getTZ());
             // [FIX dst-rules-were-guessed-from-the-tz-prefix] offset, rule and both zone
             // labels come from the one _TZ_ZONE row now — no prefix sniffing here.
@@ -2735,7 +2748,7 @@
                 // function in this file — see [REFACTOR worker-shim-as-real-code] and
                 // _intlShim above. `_M` below is not this file's variable: it is emitted
                 // verbatim and resolves inside the generated worker IIFE.
-                (_on('navigator')) ? ('(' + _intlShim.toString() + ')(' + lang + ',_M);') : '',
+                (_on('navigator')) ? ('(' + _intlShim.toString() + ')(' + intlLoc + ',_M);') : '',
                 // [FIX worker-ua-ch-win11] UA-CH + Notification + connection aligned with main
                 // Body is a real function in this file — see _uachShim above.
                 (_on('navigator')) ? ('(' + _uachShim.toString() + ')(' + JSON.stringify(String(_chMajor)) + ',' +

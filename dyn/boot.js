@@ -148,6 +148,10 @@
             detail: {
                 timezone: cc.tz,
                 locale: cc.loc,
+                // Separate from `locale` on purpose: Intl's DEFAULT is a third string, not
+                // a copy of the tag — et-EE reports `et`, en-IE reports `en-GB`. Measured
+                // per locale; see tools/gen-locales.mjs.
+                intlLocale: cc.intlLocale,
                 mode: mode || 'normal',
                 profileId: hw.id,
                 countryCode: hw.cc,

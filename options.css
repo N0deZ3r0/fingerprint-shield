@@ -128,3 +128,24 @@ header h1 {
 /* The exit-country switch sits in a card head beside the heading, like the Clear buttons. */
 .geocheck { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mu); cursor: pointer; }
 .geocheck input { cursor: pointer; }
+
+/* ── presets ────────────────────────────────────────────────────────────────
+   Rows, not a <select>: each one carries a measured consequence under its name and a
+   dropdown would hide exactly the half that matters. Same tokens as .feat so the card
+   reads as one surface, and the active row is marked from the GRID rather than from the
+   click — tick a box by hand into the same set and the row lights up too, which is the
+   honest way round: the checkboxes are the state, a preset is only a way to reach it. */
+.preset-list { display: grid; gap: 6px; margin-bottom: 10px; }
+.preset {
+  display: grid; gap: 3px; text-align: left; width: 100%;
+  padding: 10px 12px; border-radius: var(--r-s);
+  background: var(--card-2); border: 1px solid var(--line);
+  color: inherit; font: inherit; cursor: pointer;
+}
+.preset:hover { border-color: var(--ac); }
+.preset.active { border-color: var(--ac); box-shadow: inset 0 0 0 1px var(--ac); }
+.preset-name { font-weight: 640; font-size: 13px; }
+.preset-desc { color: var(--mu); font-size: 12px; line-height: 1.45; }
+/* The language row is a .feat so it inherits the grid's look, but it lives in the preset
+   card and has no grid to sit in — this keeps it full width instead of half. */
+#hostLangRow { margin-top: 4px; }

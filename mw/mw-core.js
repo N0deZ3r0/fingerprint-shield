@@ -288,16 +288,35 @@
     // [FIX clientCode-p0-enumerable] Bare window.__p0 = true is enumerable →
     // CreepJS getClientCode() (Object.keys(window).slice(-50)) picks it up as
     // client litter → non-empty code hash. Keep the flag, hide from Object.keys.
+    //
+    // [FIX two-marker-names-where-one-would-do] This used to be a global of its own.
+    // README "Limits" 17 records `__t0` AND `__p0` as names a page can test for, and hiding
+    // either was MEASURED as worse than leaving it: a clean window has zero own symbols,
+    // so a symbol key makes the count anomalous by itself and `Symbol.keyFor` hands the
+    // name straight back; hiding from enumeration alone makes reachable / listed / `in`
+    // disagree, which no browser does for any name. What was left to do was stop paying
+    // twice. This flag marks a different STAGE from __t0 — "the bundle ran in this realm",
+    // against profile-injector's status object merely existing — but a stage is a field,
+    // not a global. One own name where there were two, same behaviour, and __t0 is
+    // already defined non-enumerable in all six places that define it, so the Object.keys
+    // hiding the note above is about is inherited rather than re-earned.
+    //
+    // The parent-side reader is the frame bridge in mw-canvas-audio; it moved with this.
     try {
-        if (window.__p0) return;
+        if (window.__t0 && window.__t0.p) return;
     } catch (eP0) {}
     try {
-        Object.defineProperty(window, '__p0', {
-            value: true, writable: true, configurable: true, enumerable: false
-        });
-    } catch (eDef) {
-        try { window.__p0 = true; } catch (e2) {}
-    }
+        var _st0p = window.__t0;
+        if (!_st0p) {
+            _st0p = {};
+            try {
+                Object.defineProperty(window, '__t0', {
+                    value: _st0p, writable: true, configurable: true, enumerable: false
+                });
+            } catch (eD0) { window.__t0 = _st0p; }
+        }
+        _st0p.p = true;
+    } catch (eDef) {}
 
     // STEALTH MODE: fewer patches → lower anti_detect / puppeteer_stealth score.
     // Applied per page load (toggle + Apply + reload). Live switch mid-page is not reliable.

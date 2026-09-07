@@ -8,6 +8,9 @@
 importScripts('defaults.js', 'seed-lib.js');
 
 const STORAGE_KEY = 'afp_country_code';
+// Set from the options page. Read by buildProfile AND by the accept-language rule — see
+// afpLanguageClaim, which is the only place that decides what the language claim is.
+const HOST_LANG_KEY = 'afp_host_language';
 const PROFILE_KEY = 'afp_profile_id';
 const PROFILE_DATA_KEY = 'afp_profile_data';
 const NOISE_SEED_KEY = 'afp_noise_seed'; // master seed; per-domain derived at inject time
@@ -205,6 +208,54 @@ async function afpPlatformVersion() {
 }
 
 /** Chrome major from SW UA; single fallback for UA string + DNR brands. */
+/**
+ * The language claim, resolved in ONE place.
+ *
+ * With `afp_host_language` set, the country's language is not substituted at all: the page
+ * and the wire both answer with the browser's own. It is the only configuration measured in
+ * which Fingerprint Pro does not report a bot — three values tried on a real Chrome, one
+ * variable, everything else held:
+ *
+ *   navigator.language ru-RU (the host's)   bot not_detected
+ *   navigator.language et-EE (the profile)  bot bad / BrowserAutomationStudio
+ *   navigator.language en-US (the profile)  bot bad
+ *
+ * The mechanism was never found, which is why this is a switch the user throws rather than a
+ * default: it costs the real language to every site, and that is a trade, not a fix.
+ *
+ * The header is built the way Chrome builds it, measured on a clean browser with the
+ * field-trial config left on (ReduceAcceptLanguage is live for real users), five languages,
+ * five times out of five: the regional tag, then its base at q=0.9, and nothing else. The
+ * JS list is NOT that list — it is the configured tag alone. See buildProfile's note.
+ */
+function afpLanguageClaim(country, hostOn) {
+    let loc = country.loc, lang = country.lang;
+    // The DEFAULT Intl locale is a THIRD string, not a copy of either of the two above.
+    // Measured on a clean browser, one launch per locale (tools/gen-locales.mjs): 57 of 67
+    // differ from the tag — et-EE reports `et`, en-IE reports `en-GB`, es-CL reports
+    // `es-MX` — and the rule cannot be derived, `Intl.Locale.minimize()` gets 7 of 10 and
+    // is wrong for exactly the locales with their own CLDR data (en-US, pt-BR, zh-CN).
+    // Absent for the two this Chromium cannot switch to, where the tag is the honest
+    // fallback: "not measurable here" must not become "whatever this machine speaks".
+    let intl = country.intlLocale || country.loc;
+    if (hostOn) {
+        let host = '';
+        try { host = String((self.navigator && self.navigator.language) || ''); } catch (e) {}
+        if (host) {
+            loc = host;
+            const base = host.split('-')[0];
+            lang = (base && base !== host) ? (host + ',' + base + ';q=0.9') : host;
+        }
+        // No table needed for this one: the service worker runs in the very browser being
+        // claimed, so its own Intl default IS the answer.
+        try {
+            const own = new Intl.DateTimeFormat().resolvedOptions().locale;
+            if (own) intl = own;
+        } catch (e) {}
+    }
+    return { loc, lang, intl };
+}
+
 function afpChromeMajor() {
     try {
         var m = String(navigator.userAgent || '').match(/Chrome\/(\d+)/);
@@ -403,73 +454,73 @@ function afpHostGpu(rec) {
 
 const COUNTRY_DATA = {
     // <generated:COUNTRY_DATA> from data/countries.json — do not edit; run: node tools/gen-tables.mjs
-    'EE': { tz: 'Europe/Tallinn', loc: 'et-EE', lang: 'et-EE,et;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'DE': { tz: 'Europe/Berlin', loc: 'de-DE', lang: 'de-DE,de;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'GB': { tz: 'Europe/London', loc: 'en-GB', lang: 'en-GB,en;q=0.9' },
-    'FR': { tz: 'Europe/Paris', loc: 'fr-FR', lang: 'fr-FR,fr;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'IT': { tz: 'Europe/Rome', loc: 'it-IT', lang: 'it-IT,it;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'ES': { tz: 'Europe/Madrid', loc: 'es-ES', lang: 'es-ES,es;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'NL': { tz: 'Europe/Amsterdam', loc: 'nl-NL', lang: 'nl-NL,nl;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'PL': { tz: 'Europe/Warsaw', loc: 'pl-PL', lang: 'pl-PL,pl;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'SE': { tz: 'Europe/Stockholm', loc: 'sv-SE', lang: 'sv-SE,sv;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'FI': { tz: 'Europe/Helsinki', loc: 'fi-FI', lang: 'fi-FI,fi;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'NO': { tz: 'Europe/Oslo', loc: 'nb-NO', lang: 'nb-NO,nb;q=0.9,no;q=0.8,en;q=0.7' },
-    'DK': { tz: 'Europe/Copenhagen', loc: 'da-DK', lang: 'da-DK,da;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'CZ': { tz: 'Europe/Prague', loc: 'cs-CZ', lang: 'cs-CZ,cs;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'AT': { tz: 'Europe/Vienna', loc: 'de-AT', lang: 'de-AT,de;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'CH': { tz: 'Europe/Zurich', loc: 'de-CH', lang: 'de-CH,de;q=0.9,fr;q=0.7,en;q=0.5' },
-    'TR': { tz: 'Europe/Istanbul', loc: 'tr-TR', lang: 'tr-TR,tr;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'GR': { tz: 'Europe/Athens', loc: 'el-GR', lang: 'el-GR,el;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'PT': { tz: 'Europe/Lisbon', loc: 'pt-PT', lang: 'pt-PT,pt;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'IE': { tz: 'Europe/Dublin', loc: 'en-IE', lang: 'en-IE,en;q=0.9' },
-    'BE': { tz: 'Europe/Brussels', loc: 'nl-BE', lang: 'nl-BE,nl;q=0.9,fr;q=0.7,en;q=0.5' },
-    'RO': { tz: 'Europe/Bucharest', loc: 'ro-RO', lang: 'ro-RO,ro;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'HU': { tz: 'Europe/Budapest', loc: 'hu-HU', lang: 'hu-HU,hu;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'BG': { tz: 'Europe/Sofia', loc: 'bg-BG', lang: 'bg-BG,bg;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'LV': { tz: 'Europe/Riga', loc: 'lv-LV', lang: 'lv-LV,lv;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'LT': { tz: 'Europe/Vilnius', loc: 'lt-LT', lang: 'lt-LT,lt;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'SK': { tz: 'Europe/Bratislava', loc: 'sk-SK', lang: 'sk-SK,sk;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'SI': { tz: 'Europe/Ljubljana', loc: 'sl-SI', lang: 'sl-SI,sl;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'HR': { tz: 'Europe/Zagreb', loc: 'hr-HR', lang: 'hr-HR,hr;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'RS': { tz: 'Europe/Belgrade', loc: 'sr-RS', lang: 'sr-RS,sr;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'CY': { tz: 'Asia/Nicosia', loc: 'el-CY', lang: 'el-CY,el;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'MT': { tz: 'Europe/Malta', loc: 'mt-MT', lang: 'mt-MT,mt;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'LU': { tz: 'Europe/Luxembourg', loc: 'fr-LU', lang: 'fr-LU,fr;q=0.9,de;q=0.7,en;q=0.5' },
-    'IS': { tz: 'Atlantic/Reykjavik', loc: 'is-IS', lang: 'is-IS,is;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'US': { tz: 'America/New_York', loc: 'en-US', lang: 'en-US,en;q=0.9' },
-    'CA': { tz: 'America/Toronto', loc: 'en-CA', lang: 'en-CA,en;q=0.9,fr;q=0.7,fr-CA;q=0.5' },
-    'BR': { tz: 'America/Sao_Paulo', loc: 'pt-BR', lang: 'pt-BR,pt;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'MX': { tz: 'America/Mexico_City', loc: 'es-MX', lang: 'es-MX,es;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'AR': { tz: 'America/Buenos_Aires', loc: 'es-AR', lang: 'es-AR,es;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'CL': { tz: 'America/Santiago', loc: 'es-CL', lang: 'es-CL,es;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'CO': { tz: 'America/Bogota', loc: 'es-CO', lang: 'es-CO,es;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'PE': { tz: 'America/Lima', loc: 'es-PE', lang: 'es-PE,es;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'JP': { tz: 'Asia/Tokyo', loc: 'ja-JP', lang: 'ja-JP,ja;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'KR': { tz: 'Asia/Seoul', loc: 'ko-KR', lang: 'ko-KR,ko;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'CN': { tz: 'Asia/Shanghai', loc: 'zh-CN', lang: 'zh-CN,zh;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'IN': { tz: 'Asia/Kolkata', loc: 'en-IN', lang: 'en-IN,en;q=0.9,hi;q=0.7' },
-    'SG': { tz: 'Asia/Singapore', loc: 'en-SG', lang: 'en-SG,en;q=0.9,zh;q=0.6' },
-    'HK': { tz: 'Asia/Hong_Kong', loc: 'zh-HK', lang: 'zh-HK,zh;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'TW': { tz: 'Asia/Taipei', loc: 'zh-TW', lang: 'zh-TW,zh;q=0.9,en;q=0.6,en-US;q=0.4' },
-    'TH': { tz: 'Asia/Bangkok', loc: 'th-TH', lang: 'th-TH,th;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'VN': { tz: 'Asia/Ho_Chi_Minh', loc: 'vi-VN', lang: 'vi-VN,vi;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'ID': { tz: 'Asia/Jakarta', loc: 'id-ID', lang: 'id-ID,id;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'MY': { tz: 'Asia/Kuala_Lumpur', loc: 'ms-MY', lang: 'ms-MY,ms;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'PH': { tz: 'Asia/Manila', loc: 'en-PH', lang: 'en-PH,en;q=0.9,tl;q=0.7' },
-    'AE': { tz: 'Asia/Dubai', loc: 'ar-AE', lang: 'ar-AE,ar;q=0.9,en;q=0.8,en-US;q=0.6' },
-    'IL': { tz: 'Asia/Jerusalem', loc: 'he-IL', lang: 'he-IL,he;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'SA': { tz: 'Asia/Riyadh', loc: 'ar-SA', lang: 'ar-SA,ar;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'IR': { tz: 'Asia/Tehran', loc: 'fa-IR', lang: 'fa-IR,fa;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'PK': { tz: 'Asia/Karachi', loc: 'ur-PK', lang: 'ur-PK,ur;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'BD': { tz: 'Asia/Dhaka', loc: 'bn-BD', lang: 'bn-BD,bn;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'IQ': { tz: 'Asia/Baghdad', loc: 'ar-IQ', lang: 'ar-IQ,ar;q=0.9,en;q=0.5,en-US;q=0.3' },
-    'AU': { tz: 'Australia/Sydney', loc: 'en-AU', lang: 'en-AU,en;q=0.9' },
-    'NZ': { tz: 'Pacific/Auckland', loc: 'en-NZ', lang: 'en-NZ,en;q=0.9' },
-    'ZA': { tz: 'Africa/Johannesburg', loc: 'en-ZA', lang: 'en-ZA,en;q=0.9,af;q=0.5' },
-    'EG': { tz: 'Africa/Cairo', loc: 'ar-EG', lang: 'ar-EG,ar;q=0.9,en;q=0.7,en-US;q=0.5' },
-    'NG': { tz: 'Africa/Lagos', loc: 'en-NG', lang: 'en-NG,en;q=0.9' },
-    'MA': { tz: 'Africa/Casablanca', loc: 'fr-MA', lang: 'fr-MA,fr;q=0.9,ar;q=0.7,en;q=0.5' },
-    'KE': { tz: 'Africa/Nairobi', loc: 'en-KE', lang: 'en-KE,en;q=0.9,sw;q=0.6' },
+    'EE': { tz: 'Europe/Tallinn', loc: 'et-EE', lang: 'et-EE,et;q=0.9', intlLocale: 'et' },
+    'DE': { tz: 'Europe/Berlin', loc: 'de-DE', lang: 'de-DE,de;q=0.9', intlLocale: 'de' },
+    'GB': { tz: 'Europe/London', loc: 'en-GB', lang: 'en-GB,en;q=0.9', intlLocale: 'en-GB' },
+    'FR': { tz: 'Europe/Paris', loc: 'fr-FR', lang: 'fr-FR,fr;q=0.9', intlLocale: 'fr' },
+    'IT': { tz: 'Europe/Rome', loc: 'it-IT', lang: 'it-IT,it;q=0.9', intlLocale: 'it' },
+    'ES': { tz: 'Europe/Madrid', loc: 'es-ES', lang: 'es-ES,es;q=0.9', intlLocale: 'es-ES' },
+    'NL': { tz: 'Europe/Amsterdam', loc: 'nl-NL', lang: 'nl-NL,nl;q=0.9', intlLocale: 'nl' },
+    'PL': { tz: 'Europe/Warsaw', loc: 'pl-PL', lang: 'pl-PL,pl;q=0.9', intlLocale: 'pl' },
+    'SE': { tz: 'Europe/Stockholm', loc: 'sv-SE', lang: 'sv-SE,sv;q=0.9', intlLocale: 'sv' },
+    'FI': { tz: 'Europe/Helsinki', loc: 'fi-FI', lang: 'fi-FI,fi;q=0.9', intlLocale: 'fi' },
+    'NO': { tz: 'Europe/Oslo', loc: 'nb-NO', lang: 'nb-NO,nb;q=0.9', intlLocale: 'nb' },
+    'DK': { tz: 'Europe/Copenhagen', loc: 'da-DK', lang: 'da-DK,da;q=0.9', intlLocale: 'da' },
+    'CZ': { tz: 'Europe/Prague', loc: 'cs-CZ', lang: 'cs-CZ,cs;q=0.9', intlLocale: 'cs' },
+    'AT': { tz: 'Europe/Vienna', loc: 'de-AT', lang: 'de-AT,de;q=0.9', intlLocale: 'de' },
+    'CH': { tz: 'Europe/Zurich', loc: 'de-CH', lang: 'de-CH,de;q=0.9', intlLocale: 'de' },
+    'TR': { tz: 'Europe/Istanbul', loc: 'tr-TR', lang: 'tr-TR,tr;q=0.9', intlLocale: 'tr' },
+    'GR': { tz: 'Europe/Athens', loc: 'el-GR', lang: 'el-GR,el;q=0.9', intlLocale: 'el' },
+    'PT': { tz: 'Europe/Lisbon', loc: 'pt-PT', lang: 'pt-PT,pt;q=0.9', intlLocale: 'pt-PT' },
+    'IE': { tz: 'Europe/Dublin', loc: 'en-IE', lang: 'en-IE,en;q=0.9', intlLocale: 'en-GB' },
+    'BE': { tz: 'Europe/Brussels', loc: 'nl-BE', lang: 'nl-BE,nl;q=0.9', intlLocale: 'nl' },
+    'RO': { tz: 'Europe/Bucharest', loc: 'ro-RO', lang: 'ro-RO,ro;q=0.9', intlLocale: 'ro' },
+    'HU': { tz: 'Europe/Budapest', loc: 'hu-HU', lang: 'hu-HU,hu;q=0.9', intlLocale: 'hu' },
+    'BG': { tz: 'Europe/Sofia', loc: 'bg-BG', lang: 'bg-BG,bg;q=0.9', intlLocale: 'bg' },
+    'LV': { tz: 'Europe/Riga', loc: 'lv-LV', lang: 'lv-LV,lv;q=0.9', intlLocale: 'lv' },
+    'LT': { tz: 'Europe/Vilnius', loc: 'lt-LT', lang: 'lt-LT,lt;q=0.9', intlLocale: 'lt' },
+    'SK': { tz: 'Europe/Bratislava', loc: 'sk-SK', lang: 'sk-SK,sk;q=0.9', intlLocale: 'sk' },
+    'SI': { tz: 'Europe/Ljubljana', loc: 'sl-SI', lang: 'sl-SI,sl;q=0.9', intlLocale: 'sl' },
+    'HR': { tz: 'Europe/Zagreb', loc: 'hr-HR', lang: 'hr-HR,hr;q=0.9', intlLocale: 'hr' },
+    'RS': { tz: 'Europe/Belgrade', loc: 'sr-RS', lang: 'sr-RS,sr;q=0.9', intlLocale: 'sr' },
+    'CY': { tz: 'Asia/Nicosia', loc: 'el-CY', lang: 'el-CY,el;q=0.9', intlLocale: 'el' },
+    'MT': { tz: 'Europe/Malta', loc: 'mt-MT', lang: 'mt-MT,mt;q=0.9' },
+    'LU': { tz: 'Europe/Luxembourg', loc: 'fr-LU', lang: 'fr-LU,fr;q=0.9', intlLocale: 'fr' },
+    'IS': { tz: 'Atlantic/Reykjavik', loc: 'is-IS', lang: 'is-IS,is;q=0.9' },
+    'US': { tz: 'America/New_York', loc: 'en-US', lang: 'en-US,en;q=0.9', intlLocale: 'en-US' },
+    'CA': { tz: 'America/Toronto', loc: 'en-CA', lang: 'en-CA,en;q=0.9', intlLocale: 'en-GB' },
+    'BR': { tz: 'America/Sao_Paulo', loc: 'pt-BR', lang: 'pt-BR,pt;q=0.9', intlLocale: 'pt-BR' },
+    'MX': { tz: 'America/Mexico_City', loc: 'es-MX', lang: 'es-MX,es;q=0.9', intlLocale: 'es-MX' },
+    'AR': { tz: 'America/Buenos_Aires', loc: 'es-AR', lang: 'es-AR,es;q=0.9', intlLocale: 'es-MX' },
+    'CL': { tz: 'America/Santiago', loc: 'es-CL', lang: 'es-CL,es;q=0.9', intlLocale: 'es-MX' },
+    'CO': { tz: 'America/Bogota', loc: 'es-CO', lang: 'es-CO,es;q=0.9', intlLocale: 'es-MX' },
+    'PE': { tz: 'America/Lima', loc: 'es-PE', lang: 'es-PE,es;q=0.9', intlLocale: 'es-MX' },
+    'JP': { tz: 'Asia/Tokyo', loc: 'ja-JP', lang: 'ja-JP,ja;q=0.9', intlLocale: 'ja' },
+    'KR': { tz: 'Asia/Seoul', loc: 'ko-KR', lang: 'ko-KR,ko;q=0.9', intlLocale: 'ko' },
+    'CN': { tz: 'Asia/Shanghai', loc: 'zh-CN', lang: 'zh-CN,zh;q=0.9', intlLocale: 'zh-CN' },
+    'IN': { tz: 'Asia/Kolkata', loc: 'en-IN', lang: 'en-IN,en;q=0.9', intlLocale: 'en-GB' },
+    'SG': { tz: 'Asia/Singapore', loc: 'en-SG', lang: 'en-SG,en;q=0.9', intlLocale: 'en-GB' },
+    'HK': { tz: 'Asia/Hong_Kong', loc: 'zh-HK', lang: 'zh-HK,zh;q=0.9', intlLocale: 'zh-TW' },
+    'TW': { tz: 'Asia/Taipei', loc: 'zh-TW', lang: 'zh-TW,zh;q=0.9', intlLocale: 'zh-TW' },
+    'TH': { tz: 'Asia/Bangkok', loc: 'th-TH', lang: 'th-TH,th;q=0.9', intlLocale: 'th' },
+    'VN': { tz: 'Asia/Ho_Chi_Minh', loc: 'vi-VN', lang: 'vi-VN,vi;q=0.9', intlLocale: 'vi' },
+    'ID': { tz: 'Asia/Jakarta', loc: 'id-ID', lang: 'id-ID,id;q=0.9', intlLocale: 'id' },
+    'MY': { tz: 'Asia/Kuala_Lumpur', loc: 'ms-MY', lang: 'ms-MY,ms;q=0.9', intlLocale: 'ms' },
+    'PH': { tz: 'Asia/Manila', loc: 'en-PH', lang: 'en-PH,en;q=0.9', intlLocale: 'en-US' },
+    'AE': { tz: 'Asia/Dubai', loc: 'ar-AE', lang: 'ar-AE,ar;q=0.9', intlLocale: 'ar' },
+    'IL': { tz: 'Asia/Jerusalem', loc: 'he-IL', lang: 'he-IL,he;q=0.9', intlLocale: 'he' },
+    'SA': { tz: 'Asia/Riyadh', loc: 'ar-SA', lang: 'ar-SA,ar;q=0.9', intlLocale: 'ar' },
+    'IR': { tz: 'Asia/Tehran', loc: 'fa-IR', lang: 'fa-IR,fa;q=0.9', intlLocale: 'fa' },
+    'PK': { tz: 'Asia/Karachi', loc: 'ur-PK', lang: 'ur-PK,ur;q=0.9', intlLocale: 'ur' },
+    'BD': { tz: 'Asia/Dhaka', loc: 'bn-BD', lang: 'bn-BD,bn;q=0.9', intlLocale: 'bn' },
+    'IQ': { tz: 'Asia/Baghdad', loc: 'ar-IQ', lang: 'ar-IQ,ar;q=0.9', intlLocale: 'ar' },
+    'AU': { tz: 'Australia/Sydney', loc: 'en-AU', lang: 'en-AU,en;q=0.9', intlLocale: 'en-GB' },
+    'NZ': { tz: 'Pacific/Auckland', loc: 'en-NZ', lang: 'en-NZ,en;q=0.9', intlLocale: 'en-GB' },
+    'ZA': { tz: 'Africa/Johannesburg', loc: 'en-ZA', lang: 'en-ZA,en;q=0.9', intlLocale: 'en-GB' },
+    'EG': { tz: 'Africa/Cairo', loc: 'ar-EG', lang: 'ar-EG,ar;q=0.9', intlLocale: 'ar' },
+    'NG': { tz: 'Africa/Lagos', loc: 'en-NG', lang: 'en-NG,en;q=0.9', intlLocale: 'en-GB' },
+    'MA': { tz: 'Africa/Casablanca', loc: 'fr-MA', lang: 'fr-MA,fr;q=0.9', intlLocale: 'fr' },
+    'KE': { tz: 'Africa/Nairobi', loc: 'en-KE', lang: 'en-KE,en;q=0.9', intlLocale: 'en-GB' },
     // </generated:COUNTRY_DATA>
 };
 
@@ -510,7 +561,7 @@ function afpResolveDpr(profile, profileId) {
 }
 
 async function buildProfile() {
-    const cached = await chrome.storage.local.get([PROFILE_DATA_KEY, STORAGE_KEY, NOISE_SEED_KEY, PROFILE_KEY, 'afp_mode', 'afp_features']);
+    const cached = await chrome.storage.local.get([PROFILE_DATA_KEY, STORAGE_KEY, NOISE_SEED_KEY, PROFILE_KEY, 'afp_mode', 'afp_features', HOST_LANG_KEY]);
     const profileId = cached[PROFILE_KEY] || 'laptop_mid';
     // [FIX host-mode] The measured record is taken as it is: enforceCoherence would
     // "correct" a real 18-core machine towards one of the four tables, and GPU_DATA has no
@@ -520,6 +571,7 @@ async function buildProfile() {
     const profile = isHost ? Object.assign({}, rawRec) : enforceCoherence(rawRec);
     const countryCode = cached[STORAGE_KEY] || 'US';
     const country = COUNTRY_DATA[countryCode] || COUNTRY_DATA['US'];
+    const _langClaim = afpLanguageClaim(country, !!cached[HOST_LANG_KEY]);
     const gpu = isHost ? afpHostGpu(rawRec) : (GPU_DATA[profile.gpu] || GPU_DATA['intel_iris']);
     // Десктоп-профили (pc_*) — без Bluetooth-адаптера типичнее, чем laptop
     const isDesktop = String(profileId).indexOf('pc_') === 0;
@@ -603,12 +655,31 @@ async function buildProfile() {
         screenWidth: sw, screenHeight: sh, colorDepth: 24, devicePixelRatio: dpr,
         platform: profile.platform || 'Win32', hwConcurrency: profile.cores || 8,
         deviceMemory: _memChrome, webdriver: false, vendor: 'Google Inc.',
-        language: country.loc,
-        locale: country.loc,
+        language: _langClaim.loc,
+        locale: _langClaim.loc,
+        // Read by mw/mw-timezone-screen's _dtfLocale for everything Intl answers with. Kept
+        // separate from `locale` because they are different strings on 57 of 67 countries —
+        // see afpLanguageClaim.
+        intlLocale: _langClaim.intl,
         // [FIX missing-countryCode] Гео в main-world ждёт profile.countryCode;
         // раньше падало на language.split('-').pop() — хрупкий fallback.
         countryCode: countryCode,
-        languages: country.lang.split(',').map(function(p) { return p.trim().split(';')[0].trim(); }),
+        // [FIX languages-was-the-header-list] navigator.languages was derived from the
+        // Accept-Language string by stripping the q values, which put the BASE tag in
+        // it: ['et-EE','et','en','en-US']. Chrome does not do that, and since
+        // ReduceAcceptLanguage shipped it does not send that header either. Measured
+        // on a clean browser with the field-trial config left ON (the rig keeps it for
+        // exactly this reason), five languages, five times out of five:
+        //
+        //   pref et-EE   header 'et-EE,et;q=0.9'   navigator.languages ['et-EE']
+        //   pref en-GB   header 'en-GB,en;q=0.9'   navigator.languages ['en-GB']
+        //
+        // The header expands, the JS list does not. Ours announced a four-tag list in
+        // the pre-reduction shape — a browser calling itself Chrome 152 while speaking
+        // like an older one. Isolated on live Fingerprint Pro events as the single
+        // cause of bot: bad / BrowserAutomationStudio: the same build with only this
+        // field left native read not_detected.
+        languages: [_langClaim.loc],
         doNotTrack: null, maxTouchPoints: 0, pdfViewerEnabled: true,
         // laptop_* → Bluetooth есть; pc_* → типичный desktop без BT-адаптера.
         // Host mode: true, which is the value that installs NO accessor — the adapter is
@@ -2603,6 +2674,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const f = afpMergeFeatures(message.features || {});
                 await chrome.storage.local.set({ afp_features: f });
                 invalidateProfileCache();
+                // The options page writes afp_host_language just before sending this, and
+                // that key is read by TWO builders: buildProfile below and the
+                // accept-language rule. Rebuilding only the profile would leave the header
+                // announcing the country's language while navigator.language announced the
+                // machine's — the exact window/wire split this switch exists to remove.
+                await updateDynamicLanguageRule();
                 await injectProfileOnAllTabs();
                 sendResponse({ ok: true });
             } catch (e) {
@@ -2658,9 +2735,12 @@ async function pruneStaleDynamicRules() {
 
 async function updateDynamicLanguageRule() {
     try {
-        const cached = await chrome.storage.local.get([STORAGE_KEY]);
+        const cached = await chrome.storage.local.get([STORAGE_KEY, HOST_LANG_KEY]);
         const countryCode = cached[STORAGE_KEY] || 'US';
         const country = COUNTRY_DATA[countryCode] || COUNTRY_DATA['US'];
+        // Same helper as buildProfile: the header and navigator.language are one claim, and
+        // the whole point of the switch is that BOTH stop lying, not one of them.
+        const _hdrLang = afpLanguageClaim(country, !!cached[HOST_LANG_KEY]).lang;
         // The header and the JS value must be the same string. Both come from the profile,
         // so a future change to one cannot leave the other behind — the window/worker/header
         // split is the failure mode this whole file keeps guarding against.
@@ -2739,7 +2819,7 @@ async function updateDynamicLanguageRule() {
                 action: {
                     type: 'modifyHeaders',
                     requestHeaders: ([
-                        { header: 'accept-language', operation: 'set', value: country.lang },
+                        { header: 'accept-language', operation: 'set', value: _hdrLang },
                         { header: 'user-agent', operation: 'set', value: spoofUa },
                         /* sec-ch-ua: left native — see the note above */
                         { header: 'sec-ch-ua-platform', operation: 'set', value: '"Windows"' },

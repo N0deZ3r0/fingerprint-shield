@@ -7,7 +7,7 @@
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
 ![version](https://img.shields.io/badge/version-2.5.26-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
-![suites](https://img.shields.io/badge/suites-56-2f9e44)
+![suites](https://img.shields.io/badge/suites-57-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
 
 **English** · [Русский](README.ru.md)
@@ -82,10 +82,10 @@ showing one language twice.
 ```bash
 npm ci
 npm test           # the 9 Node suites — seconds, no browser
-npm run test:all   # adds the 47 Playwright suites — six to eight minutes
+npm run test:all   # adds the 48 Playwright suites — six to eight minutes
 ```
 
-**56 suites** in total. The Node half runs on every push and every pull request; it includes
+**57 suites** in total. The Node half runs on every push and every pull request; it includes
 `test/parity-static.mjs`, which re-runs both generators in memory and fails if
 `mw-bundle.js` or `dyn/` on disk are stale. The Playwright half loads the extension for real
 in Chromium and is triggered manually, because its assertions are Windows facts — the ANGLE
@@ -147,12 +147,40 @@ from the audit page, so they are not renumbered.
 16. **A WebGL warning about an unknown constant names us.** Chrome attributes `INVALID_ENUM`
     to the nearest script frame, which is our wrapper.
 
-17. **Two marker names are fixed.** `'__t0' in window` answers yes for this build and no
+17. **The marker names are fixed.** `'__t0' in window` answers yes for this build and no
     for a clean browser, in the top document and in frames, and `__AFP_PATCH_URL` is the
     worker’s equivalent. They are non-enumerable, so a name diff against a fresh iframe
     does not show them — but a constant anyone can guess once needs no diff. Deriving them
     per site is blocked by the markers being set before the seed exists and by the
-    in-browser checks that read them.
+    in-browser checks that read them. There were two names on the window until 2.5.27; the
+    second is a field of the first now. Hiding either was measured as worse than owning one
+    fewer — a clean window has zero own symbols, so a symbol key makes the count anomalous
+    and `Symbol.keyFor` hands the name back, while hiding from enumeration alone makes
+    reachable, listed and `in` disagree, which no browser does for any name.
+
+18. **The Intl locale and `navigator.language` answer to different switches.** The language
+    claim belongs to the navigator module; the window's Intl locale is installed under the
+    timezone one. With navigator off the locale follows it back to the host, but the
+    mirrored case is open: with the timezone module off no Intl wrapper is installed at all,
+    so the window answers with the machine's locale while a worker answers with the
+    profile's.
+
+19. **The claimed core count is a number; parallelism is behaviour.**
+    `navigator.hardwareConcurrency` answers with the profile while the machine still runs as
+    many workers at once as it really has. An extension cannot refuse the ninth the way an
+    eight-core processor would — the scheduler belongs to the engine.
+
+20. **The claimed memory size is not backed either.** `navigator.deviceMemory` reports the
+    profile's bucket while a page can allocate and watch for the bend that never comes. Same
+    reason: the allocator belongs to the engine. Both of these are silent, need no
+    permission, and are readable by any page that thinks to look.
+
+21. **One `sessionStorage` key is visible.** The per-document Trusted Types verdict lives at
+    `v.ui.tte`. It claims nothing about the machine — it decides who is named in a refusal —
+    but on a fresh origin a clean browser has no keys at all, so `sessionStorage.length`
+    reading 1 instead of 0 finds it without guessing the name. It stays because it has to
+    survive navigation: a previous document's verdict for the same route is what keeps the
+    proxies from installing on a repeat load.
 
 The extension's own audit page carries the same list beside its verdict, because a green
 verdict is only ever as broad as the questions asked.

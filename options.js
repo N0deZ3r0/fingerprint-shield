@@ -92,6 +92,8 @@ function render(features) {
   });
 }
 
+grid.addEventListener('change', function () { markActivePreset(); });
+
 function readForm() {
   var out = defaults();
   grid.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
@@ -111,6 +113,7 @@ function load() {
           ? afpMergeFeatures(r.afp_features)
           : Object.assign(defaults(), r.afp_features || {});
         render(f);
+        markActivePreset();
       });
       return;
     }
@@ -118,12 +121,18 @@ function load() {
       ? (typeof afpMergeFeatures === 'function' ? afpMergeFeatures(res.features) : res.features)
       : defaults();
     render(f);
+    markActivePreset();
   });
 }
 
 function save() {
   var f = readForm();
   saveBtn.disabled = true;
+  // Written BEFORE setFeatures, because that message is what makes background.js rebuild the
+  // profile: writing after would leave the old language on it until the next rebuild.
+  try {
+    if (hostLangCb) chrome.storage.local.set({ afp_host_language: !!hostLangCb.checked });
+  } catch (eHL) {}
   chrome.runtime.sendMessage({ type: 'setFeatures', features: f }, function(res) {
     saveBtn.disabled = false;
     if (chrome.runtime.lastError) {
@@ -141,7 +150,104 @@ function save() {
 function resetSafe() {
   var f = defaults();
   render(f);
+  markActivePreset();
   showStatus(T('optDefaultsSet', 'Выставлены безопасные дефолты — нажмите «Сохранить»'));
+}
+
+// ── presets ──────────────────────────────────────────────────────────────────
+// A preset is a named set of the checkboxes below, nothing more: it does not save, it does
+// not touch the machine profile, and the grid stays the truth. "Safe reset" was already one
+// of these — the factory row — and stood alone only because there was nothing to compare it
+// against.
+//
+// The quiet row is MEASURED, not designed. Live Fingerprint Pro events off a real Chrome,
+// one module switch at a time, every configuration confirmed by markers inside the event:
+//
+//   shipped default              bot bad / BAS · anti_detect true  · ml 0.9457
+//   minus Navigator/Fonts/       bot not_detected · anti_detect FALSE · tampering false
+//     ClientRects                                                    · ml 0.5901
+//
+// The note under the row says that rather than promising anything, because the difference is
+// a trade and the user is the one making it: the invented machine goes, the canvas noise
+// stays, so cross-site linkability is still broken while the hardware becomes this machine's.
+var PRESETS = [
+  {
+    id: 'full',
+    name: function () { return T('optPresetFullName', 'Полная защита'); },
+    desc: function () { return T('optPresetFullDesc', 'Заводской набор: всё, кроме ClientRects. Больше всего подменяется — и Fingerprint Pro помечает такой браузер (измерено: bot bad, anti_detect true).'); },
+    features: function () { return defaults(); }
+  },
+  {
+    id: 'quiet',
+    name: function () { return T('optPresetQuietName', 'Тихий'); },
+    desc: function () { return T('optPresetQuietDesc', 'Без Navigator, Fonts и ClientRects. Измерено: все вердикты чистые. Шум канваса работает, поэтому связываемость между сайтами по-прежнему сломана; выдуманная машина — нет, железо становится настоящим.'); },
+    features: function () {
+      var f = defaults();
+      f.navigator = false;
+      f.fonts = false;
+      f.clientRects = false;
+      return f;
+    }
+  }
+];
+
+var presetList = document.getElementById('presetList');
+
+/** Same key set, same values — a preset is "active" only when the grid matches it exactly. */
+function sameFeatures(a, b) {
+  var keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (var i = 0; i < keys.length; i++) {
+    if ((a[keys[i]] !== false) !== (b[keys[i]] !== false)) return false;
+  }
+  return true;
+}
+
+function markActivePreset() {
+  if (!presetList) return;
+  var now = readForm();
+  presetList.querySelectorAll('.preset').forEach(function (el) {
+    var p = PRESETS.filter(function (x) { return x.id === el.dataset.id; })[0];
+    el.classList.toggle('active', !!p && sameFeatures(now, p.features()));
+  });
+}
+
+function renderPresets() {
+  if (!presetList) return;
+  presetList.innerHTML = '';
+  PRESETS.forEach(function (p) {
+    var row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'preset';
+    row.dataset.id = p.id;
+    var n = document.createElement('span');
+    n.className = 'preset-name';
+    n.textContent = p.name();
+    var d = document.createElement('span');
+    d.className = 'preset-desc';
+    d.textContent = p.desc();
+    row.appendChild(n);
+    row.appendChild(d);
+    row.addEventListener('click', function () {
+      render(p.features());
+      markActivePreset();
+      showStatus(T('optPresetPicked', 'Набор выставлен — нажмите «Сохранить»'));
+    });
+    presetList.appendChild(row);
+  });
+}
+
+// ── the language claim ───────────────────────────────────────────────────────
+// Stored on its own key rather than as a fourteenth module: it is not a patch that can be
+// switched off, it is a choice about WHAT the patched value says. background.js reads it in
+// buildProfile and puts the browser's own language on the profile instead of the country's.
+var hostLangCb = document.getElementById('hostLang');
+
+function loadHostLang() {
+  if (!hostLangCb) return;
+  chrome.storage.local.get(['afp_host_language'], function (r) {
+    hostLangCb.checked = !!(r && r.afp_host_language);
+  });
 }
 
 // ── WebRTC exceptions ────────────────────────────────────────────────────────
@@ -389,6 +495,8 @@ if (langSelect) {
   });
 }
 
+renderPresets();
+loadHostLang();
 load();
 loadRtcExceptions();
 loadSwBlocked();

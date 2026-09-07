@@ -124,9 +124,27 @@ export function generate() {
       cc,
       tz: d.tz,
       loc: d.loc,
-      // buildProfile() derives navigator.languages from the Accept-Language string, so
-      // the header and the JS list cannot drift apart. Same expression here.
-      langs: d.lang.split(',').map((s) => s.trim().split(';')[0].trim()),
+      // The DEFAULT Intl locale, which is a different string from the tag on 57 of 67
+      // countries — measured per locale by tools/gen-locales.mjs. It has to travel HERE too:
+      // background.js puts it on the profile, but the frames read dyn/cc/<CC>.js, and a key
+      // that reaches only one of the two writers is how the top window and a srcdoc frame
+      // ended up answering differently about navigator.languages an hour ago. Absent for the
+      // two locales that generator could not switch the browser to, where the tag is the
+      // honest fallback.
+      intlLocale: d.intlLocale || undefined,
+      // [FIX languages-had-three-writers] This used to split the Accept-Language string,
+      // "so the header and the JS list cannot drift apart". They are not the same list.
+      // Measured on a clean browser with the field-trial config left ON, five languages,
+      // 5 of 5: the HEADER expands a regional tag with its base ('et-EE,et;q=0.9') while
+      // navigator.languages stays the configured tag alone (['et-EE']).
+      //
+      // The drift this caused was real and was caught in a live browser: after
+      // background.js was corrected and this was not, the top window and a worker said
+      // ['et-EE'] while a srcdoc frame and a sandboxed frame said ['et-EE','et'] — one
+      // page, two answers. Three files build this list (background.js buildProfile, this
+      // generator for the frames, profile-injector's bootstrap); all three now say the
+      // same thing.
+      langs: [d.loc],
       // CreepJS reads speechSynthesis.getVoices() early — it gives up after 300ms — and
       // compares the default local voice's language with the Intl locale. Without this
       // the cold start fell back to the hardcoded en-US trio in mw/mw-canvas-audio.js,

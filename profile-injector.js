@@ -167,15 +167,20 @@
     // until the full profile landed.
     //
     // The first `if` already covers every correct case, so the branch is simply gone.
+    // [FIX languages-had-three-writers] The list is the configured tag and nothing else.
+    // The base tag and the English pair used to be appended here because the header
+    // carries them — but the header is not this list. Measured on a clean browser with
+    // the field-trial config left ON (ReduceAcceptLanguage is live for real users), five
+    // languages, 5 of 5:
+    //
+    //   pref et-EE   header 'et-EE,et;q=0.9'   navigator.languages ['et-EE']
+    //   pref en-GB   header 'en-GB,en;q=0.9'   navigator.languages ['en-GB']
+    //
+    // So the expansion belongs to the header alone. background.js and tools/gen-dyn.mjs
+    // say the same; a live browser showed what happens when they do not — window and
+    // worker on ['et-EE'], srcdoc and sandboxed frames on ['et-EE','et'].
     function buildBootstrapLangs(locale) {
-        var base = locale.split('-')[0];
-        var langs = [locale];
-        if (base && base !== locale) langs.push(base);
-        if (base !== 'en') {
-            langs.push('en-US');
-            langs.push('en');
-        }
-        return langs;
+        return [locale];
     }
 
     function applyBridge(p, detail) {
@@ -185,6 +190,7 @@
             // bridge already domain-scoped
             p.noiseSeed = detail.noiseSeed >>> 0;
         }
+        if (detail.intlLocale) p.intlLocale = detail.intlLocale;
         if (detail.locale) {
             p.language = detail.locale;
             p.locale = detail.locale;
@@ -406,6 +412,7 @@
             platform: platform, hwConcurrency: cores, deviceMemory: memory,
             webdriver: false, vendor: 'Google Inc.',
             language: locale, languages: langs, locale: locale,
+            intlLocale: detail.intlLocale || locale,
             countryCode: earlyCc,
             doNotTrack: null, maxTouchPoints: 0, pdfViewerEnabled: true,
             // [FIX early-bluetooth] laptop_mid has Bluetooth. Desktop pc_* will

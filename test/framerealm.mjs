@@ -19,7 +19,7 @@
  * and after load with a body (what the library actually acts on) — and the three are
  * printed side by side. A difference between columns 1 and 3 is the whole story.
  *
- * `__p0` is the marker for "did mw-core bootstrap this realm": mw-core.js defines it
+ * `__t0.p` is the marker for "did mw-core bootstrap this realm": mw-core.js sets it
  * non-enumerable on every window it bootstraps and mw-cleanup deliberately leaves it, so
  * nothing has to be added to the shipped files to read this.
  *
@@ -58,7 +58,10 @@ const PAGE = `<!doctype html><html><head><meta charset=utf-8></head><body>
 function snap(w) {
   var o = {}, T = function (k, fn) { try { o[k] = fn(); } catch (e) { o[k] = 'ERR:' + e.name; } };
   if (!w) return { dead: true };
-  T('p0',    function () { return !!w.__p0; });
+  // [FIX two-marker-names-where-one-would-do] The bootstrap flag is a FIELD of __t0 now,
+  // not a global of its own: the window carried two names a page could test for and now
+  // carries one. Read through the new place, so this suite fails if the move regresses.
+  T('p0',    function () { return !!(w.__t0 && w.__t0.p); });
   T('mw',    function () { return !!w.__AFP_MW__; });
   T('cores', function () { return w.navigator.hardwareConcurrency; });
   T('tz',    function () { return w.Intl.DateTimeFormat().resolvedOptions().timeZone; });
@@ -220,7 +223,7 @@ try {
 // for a reason that has nothing to do with frames.
 const T = R.top;
 console.log(`\ntop frame   p0=${T.p0}  cores=${T.cores}  tz=${T.tz}  fontDefault=${T.fontDefault}`);
-ok(T.p0 === true, 'the top frame is bootstrapped (__p0)');
+ok(T.p0 === true, 'the top frame is bootstrapped (__t0.p)');
 ok(String(T.cores) === String(PROFILES.find((x) => x.id === SEL.id).cores),
   `the top frame reports the profile's cores (got ${T.cores})`);
 
@@ -249,7 +252,7 @@ const SCRIPTLESS = 'sandbox (scriptless)';
 for (const f of R.frames) {
   const m = f.measured;
   if (f.name !== SCRIPTLESS) {
-    ok(m.p0 === true, `${f.name}: mw-core bootstrapped the measured realm (__p0)`);
+    ok(m.p0 === true, `${f.name}: mw-core bootstrapped the measured realm (__t0.p)`);
   }
   ok(String(m.cores) === String(T.cores),
     `${f.name}: measured realm agrees with the top frame on cores (${m.cores} vs ${T.cores})`);

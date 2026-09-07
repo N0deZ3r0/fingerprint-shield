@@ -16,6 +16,29 @@
       <p class="sub" data-i18n="optSub">Включение и выключение отдельных патчей. После сохранения обновите вкладки (F5).</p>
     </header>
 
+    <!-- The preset card generalises the "safe reset" button below: that button already was a
+         preset, the factory one, and it stood alone because there was nothing to compare it
+         with. There is now — the quiet set is a MEASURED configuration, not a taste, and the
+         note under each row says what it was measured to do rather than what it promises. -->
+    <section class="card">
+      <div class="card-head">
+        <h2 data-i18n="optPresetH2">Режим защиты</h2>
+      </div>
+      <p class="hint" data-i18n="optPresetHint">
+        Пресет ставит галки модулей ниже. Выбор ничего не сохраняет сам — нажмите «Сохранить».
+      </p>
+      <div class="preset-list" id="presetList"></div>
+      <label class="feat" id="hostLangRow" for="hostLang">
+        <input type="checkbox" id="hostLang" />
+        <span class="feat-text">
+          <span class="feat-name" data-i18n="optHostLangName">Язык — как у этого браузера</span>
+          <span class="feat-desc" data-i18n="optHostLangDesc">Не подменять язык страны: и
+            <code>navigator.language</code>, и заголовок отдают настоящий. Единственная
+            измеренная конфигурация, при которой Fingerprint не пишет бота.</span>
+        </span>
+      </label>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <h2 data-i18n="optModulesH2">Модули защиты</h2>

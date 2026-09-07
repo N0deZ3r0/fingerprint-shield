@@ -393,7 +393,11 @@ function selection(profileId, cc, mode = 'normal') {
       screen: `${p.screenW}x${p.screenH}`,
       tz: c.tz,
       lang: c.loc,
-      langs: c.lang.split(',').map((s) => s.trim().split(';')[0].trim()).join(','),
+      // [FIX languages-was-the-header-list] Not derived from the Accept-Language string any
+      // more. Measured on a clean browser with the field-trial config left on: the header
+      // expands a regional tag with its base ('et-EE,et;q=0.9') while navigator.languages
+      // stays the configured language alone (['et-EE']). background.js now says the same.
+      langs: c.loc,
       gpu: GPU_DATA[p.gpuKey].unmaskedRenderer,
       leak: ''
     }
