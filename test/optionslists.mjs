@@ -23,6 +23,24 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BROWSER, root, uiMessages, langArgs, bootSettled } from './harness.mjs';
+
+/**
+ * [FIX clear-was-waited-for-by-the-clock] Clicking Clear sends a message to the service
+ * worker, which clears the list and answers, and the page re-renders on that answer. The
+ * three call sites slept 1500-2000ms for that round trip. On the CI runner one guessed wrong
+ * — `Clear empties them (4 entries: 2 — do not allow blob workers; …)`, the list still
+ * holding exactly what Clear had been asked to remove — and a suite that reports a defect
+ * because a message was in flight is reporting the machine, not the code.
+ *
+ * The wait has a name: the row says it is empty. If it never does within the budget, the
+ * assertion that follows still fails, and now for the right reason.
+ */
+async function emptied(page, id, want) {
+  await page.waitForFunction(
+    ([elId, text]) => (document.getElementById(elId) || {}).textContent === text,
+    [id, want], { timeout: 15000 }
+  ).catch(() => { /* the assertion that follows reports it in its own words */ });
+}
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
 const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed++; } };
@@ -88,7 +106,7 @@ try {
 
   // ── cleared, through the page's own button ───────────────────────────────────
   await page.click('#swClearBtn');
-  await new Promise((r) => setTimeout(r, 2000));
+  await emptied(page, 'swList', M('optSwEmpty'));
   const afterSw = await read(page);
   console.log('SW cleared ' + JSON.stringify(afterSw));
   ok(afterSw.sw === M('optSwEmpty'), `Clear empties the SW list on screen (${afterSw.sw})`);
@@ -120,7 +138,7 @@ try {
   await new Promise((r) => setTimeout(r, 1000));
 
   await page.click('#rtcClearBtn');
-  await new Promise((r) => setTimeout(r, 2000));
+  await emptied(page, 'rtcList', M('optRtcEmpty'));
   const afterRtc = await read(page);
   console.log('RTC cleared ' + JSON.stringify(afterRtc));
   ok(afterRtc.rtc === M('optRtcEmpty'), `the WebRTC button clears its own list (${afterRtc.rtc})`);
@@ -157,7 +175,7 @@ try {
     `no site name is printed (${learned.text})`);
 
   await page.click('#learnedClearBtn');
-  await new Promise((r) => setTimeout(r, 1500));
+  await emptied(page, 'learnedList', M('optLearnedEmpty'));
   const afterLearned = await page.evaluate(() => ({
     text: document.getElementById('learnedList').textContent,
     btn: document.getElementById('learnedClearBtn').disabled
