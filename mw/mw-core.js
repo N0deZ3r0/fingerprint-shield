@@ -142,9 +142,41 @@
     // "does the claim CONTAIN the machine", and when it does not the machine's own pair is
     // reported whole, which is by construction a resolution that exists and by construction
     // large enough for any window on it.
+    // [FIX the-dpr-claim-was-refutable-in-two-lines] The same rule, applied to the ratio.
+    //
+    // A claimed devicePixelRatio is answered by navigator, by window.devicePixelRatio and by
+    // matchMedia — and NOT by the CSS engine, which no extension can reach (LIMITS item 8).
+    // So on any machine whose real ratio differs from the profile's, a page proves the lie
+    // with two lines:
+    //
+    //     devicePixelRatio === 1  &&  matchMedia('(min-resolution: 1.5dppx)').matches
+    //
+    // Measured on the author's machine, claim 1 against a host of 1.53, and the audit page
+    // printed the disagreement itself: `(-webkit-min-device-pixel-ratio: 1.5)` and
+    // `(min-resolution: 1.5dppx)` answered one way from matchMedia and the other from the
+    // engine. Fingerprint Pro called that browser BrowserAutomationStudio, tampering 0.96,
+    // while the same machine with the extension off parsed as clean Chrome 152.
+    //
+    // The screen already yields for exactly this reason, three paragraphs up: a refutable
+    // lie is worse than the truth, because it is unique instead of merely honest. The ratio
+    // is the same situation with a shorter refutation, so it yields too.
+    //
+    // What this costs: dpr stops being spoofed for anyone whose display ratio is not the
+    // profile's. It is real entropy — a handful of values, 1 / 1.25 / 1.5 / 2 — and giving
+    // it up is a loss. It buys removing a contradiction that no amount of patching can
+    // close, which is the trade this file already made for the screen.
+    var _NATIVE_DPR = 0;
+    try { _NATIVE_DPR = Number(window.devicePixelRatio) || 0; } catch (eND) {}
+
     function _screenAtLeastNative(p) {
         if (!p || typeof p !== 'object') return p;
         try {
+            // The ratio is judged on its own: the screen claim can hold while the ratio
+            // does not, and a page reads them separately.
+            if (_NATIVE_DPR > 0 && typeof p.devicePixelRatio === 'number' &&
+                Math.abs(p.devicePixelRatio - _NATIVE_DPR) > 0.001) {
+                p.devicePixelRatio = _NATIVE_DPR;
+            }
             if (_NATIVE_SW <= 0 || _NATIVE_SH <= 0) return p;
             var w = p.screenWidth | 0, h = p.screenHeight | 0;
             if (w >= _NATIVE_SW && h >= _NATIVE_SH) return p;   // the claim contains the machine

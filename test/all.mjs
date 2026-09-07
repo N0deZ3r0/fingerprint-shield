@@ -286,6 +286,11 @@ if (withBrowser) SUITES.push(['Bluetooth + GL readback (Chromium)', ['test/btrea
 // chrome.i18n answers '' and the control blanks — so the catalogues are diffed against each
 // other and against every key the UI asks for, in both directions.
 if (withBrowser) SUITES.push(['two languages (Chromium)', ['test/i18n.mjs']]);
+// The one contradiction a page proves in two lines, and the one the rig cannot see: it runs
+// at ratio 1, where a profile claiming 1 contradicts nothing. Driven at 1.53 — the author's
+// real machine — where matchMedia answered from the profile while the CSS engine answered
+// from the display, and Fingerprint Pro called that browser BrowserAutomationStudio.
+if (withBrowser) SUITES.push(['dpr vs the CSS engine (Chromium)', ['test/dprparity.mjs']]);
 
 /**
  * The one-line-per-suite summary. Each suite states its own count in its own words, so

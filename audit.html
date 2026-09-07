@@ -84,7 +84,10 @@
       150% zoom with a maximized window the resolution spoof does not apply.</li>
     <li><b>A few media features disagree between <code>@media</code> and
       <code>matchMedia</code></b> — the row above counts them separately. Structural:
-      matchMedia answers from the profile, the CSS engine from the real window.</li>
+      matchMedia answers from the profile, the CSS engine from the real window. The pixel
+      ratio half is CLOSED since 2.5.27, and not by patching: a claimed dpr the engine
+      disproves is refutable in two lines, so the ratio yields to the host exactly as the
+      screen does above.</li>
     <li><b>The install window sends the host's <code>user-agent</code>.</b> Free on Chrome,
       where the real and spoofed strings are identical; on Edge it carries
       <code>Edg/</code>.</li>
