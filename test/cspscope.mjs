@@ -91,7 +91,7 @@ try {
   await bootSettled(sw);
   // Germany: de-DE in JS and on the wire, against the rig's en-US.
   await sw.evaluate(() => chrome.storage.local.set({ afp_country_code: 'DE' }));
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
 
   const visit = async (label, p, page = null) => {
     const own = !page;

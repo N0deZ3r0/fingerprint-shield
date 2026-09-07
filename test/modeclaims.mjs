@@ -266,7 +266,7 @@ async function run(profile) {
         await ctx.waitForEvent('serviceworker', { timeout: 20000 });
       await bootSettled(ctx);
       await sw.evaluate(async (d) => { await chrome.storage.local.set(d); }, profile);
-      await new Promise((r) => setTimeout(r, 1500));
+      await bootSettled(sw);
       // Restart so the boot script is registered before the page loads — the same settle the
       // cold-start suite performs, and without it the profile arrives after the first script.
       await ctx.close();

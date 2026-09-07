@@ -182,7 +182,7 @@ window.__m = (function () {
     const sw2 = ctx2.serviceWorkers()[0] || await ctx2.waitForEvent('serviceworker', { timeout: 20000 });
     await bootSettled(sw2);
     await sw2.evaluate(async () => { await chrome.storage.local.set({ afp_mode: 'stealth' }); });
-    await new Promise((r) => setTimeout(r, 2000));
+    await bootSettled(sw2);
     const page2 = await ctx2.newPage();
     await page2.goto(`http://127.0.0.1:${p2}/`, { waitUntil: 'load' });
     const one = await page2.evaluate(() => window.__m);

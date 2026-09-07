@@ -219,28 +219,28 @@ try {
 
   // A half-hour zone: setMinutes and the .5 in setHours only show up here.
   await sw.evaluate(() => chrome.storage.local.set({ afp_country_code: 'IN' }));
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   const warm2 = await ctx.newPage(); await warm2.goto(`${BASE}/?warm=2`, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 500)); await warm2.close();
   compare('2) profile IN — Asia/Kolkata, UTC+5:30, no DST', 'Asia/Kolkata', await measure(2));
 
   // The southern hemisphere: DST spans the new year, the rule's other branch.
   await sw.evaluate(() => chrome.storage.local.set({ afp_country_code: 'AU' }));
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   const warm3 = await ctx.newPage(); await warm3.goto(`${BASE}/?warm=3`, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 500)); await warm3.close();
   compare('3) profile AU — Australia/Sydney, DST across the new year', 'Australia/Sydney', await measure(3));
 
   // The zone the report of 2026-09-03 came from — LMT +01:39:00 in 1113, EU rule today.
   await sw.evaluate(() => chrome.storage.local.set({ afp_country_code: 'EE' }));
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   const warm4 = await ctx.newPage(); await warm4.goto(`${BASE}/?warm=4`, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 500)); await warm4.close();
   compare('4) profile EE — Europe/Tallinn, LMT history', 'Europe/Tallinn', await measure(4));
 
   // The zone no rule table can express: permanent UTC+1 with a lunar-calendar break.
   await sw.evaluate(() => chrome.storage.local.set({ afp_country_code: 'MA' }));
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(sw);
   const warm5 = await ctx.newPage(); await warm5.goto(`${BASE}/?warm=5`, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 500)); await warm5.close();
   compare('5) profile MA — Africa/Casablanca, the Ramadan break', 'Africa/Casablanca', await measure(5));

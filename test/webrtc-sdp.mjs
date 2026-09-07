@@ -136,7 +136,7 @@ async function run({ extension, storage, stealth }) {
       await bootSettled(ctx);
       if (storage && sw) {
         await sw.evaluate(async (v) => { await chrome.storage.local.set(v); }, storage);
-        await new Promise((r) => setTimeout(r, 1500));
+        await bootSettled(sw);
       }
     }
     const p = await ctx.newPage();

@@ -90,7 +90,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root, harness, balanced, loadBackground, loadPopup } from './harness.mjs';
+import { BROWSER, root, harness, balanced, loadBackground, loadPopup, bootSettled } from './harness.mjs';
 import { settle } from '../tools/probe-settle.mjs';
 
 const headed = process.argv.includes('--headed');
@@ -334,7 +334,7 @@ async function open_(withExtension) {
  */
 async function apply(sw, storage) {
   await sw.evaluate(async (d) => { await chrome.storage.local.set(d); }, storage);
-  await new Promise((r) => setTimeout(r, 1200));
+  await bootSettled(sw);
 }
 
 /** Reads the Bluetooth surface at the first inline script. `wantCores` polls the

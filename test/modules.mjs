@@ -331,7 +331,7 @@ try {
   // produce (the real one needs a second extension doing the blocking).
   if (!only.length || only.some((f) => 'hideadblocker netblock'.includes(f.toLowerCase()))) {
     await sw.evaluate(async (d) => { await chrome.storage.local.set(d); }, { afp_netblock_seen: Date.now() });
-    await new Promise((r) => setTimeout(r, 600));
+    await bootSettled(sw);
     NETBLOCK = await run('netblock seen', ALL_ON);
     await sw.evaluate(async () => { await chrome.storage.local.remove('afp_netblock_seen'); });
 

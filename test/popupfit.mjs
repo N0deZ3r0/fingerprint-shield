@@ -397,7 +397,7 @@ try {
   ok(first.rtcWarn === false && first.swWarn === false, 'nothing is amber on the defaults');
 
   await popup.evaluate(async () => { await window.handleSwToggle(); });
-  await new Promise((r) => setTimeout(r, 1200));
+  await bootSettled(popup);
   const blocked = await read();
   console.log('after blocking SW     ' + JSON.stringify(blocked));
   ok(blocked.swOn === false && blocked.swWarn === true,
@@ -408,7 +408,7 @@ try {
     `the block reached storage (${JSON.stringify(stored.afp_sw_blocked)})`);
 
   await popup.evaluate(async () => { await window.handleWebrtcToggle(); });
-  await new Promise((r) => setTimeout(r, 1200));
+  await bootSettled(popup);
   const both = await read();
   console.log('after WebRTC off      ' + JSON.stringify(both));
   ok(both.rtcOn === false && both.rtcWarn === true, 'the WebRTC row flips independently');

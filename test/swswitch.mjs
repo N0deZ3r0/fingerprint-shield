@@ -72,7 +72,7 @@ await bootSettled(ctx);
 
 const setBlocked = async (list) => {
   await bg.evaluate(async (l) => { await chrome.storage.local.set({ afp_sw_blocked: l }); }, list);
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(bg);
 };
 const visit = async (host, fn) => {
   const p = await ctx.newPage();

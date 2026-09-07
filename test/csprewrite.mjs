@@ -263,7 +263,7 @@ try {
   await popup2.reload({ waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, 1200));
   await popup2.evaluate(async () => { await window.handleCspToggle(); });
-  await new Promise((r) => setTimeout(r, 2500));
+  await bootSettled(popup2);
   const off = await sw.evaluate(async () => {
     const st = await chrome.storage.local.get(['afp_csp_rewrite']);
     const rules = await chrome.declarativeNetRequest.getDynamicRules();

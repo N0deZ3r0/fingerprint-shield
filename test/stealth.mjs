@@ -119,7 +119,7 @@ async function read({ extension, stealth, bundledBuild }) {
         || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
       await bootSettled(ctx);
       await sw.evaluate(async () => { await chrome.storage.local.set({ afp_mode: 'stealth' }); });
-      await new Promise((r) => setTimeout(r, 2000));
+      await bootSettled(sw);
     }
     const page = await ctx.newPage();
     for (let i = 0; i < 4; i++) await page.goto(URL_ + '?warm=' + i, { waitUntil: 'load' });

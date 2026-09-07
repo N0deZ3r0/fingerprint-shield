@@ -128,14 +128,14 @@ try {
   // list could sit stale for as long as the tab stayed open — the same invisible state the
   // switches themselves were fixed for.
   await bg.evaluate(async () => { await chrome.storage.local.set({ afp_sw_blocked: ['live.example.com'] }); });
-  await new Promise((r) => setTimeout(r, 1200));
+  await bootSettled(bg);
   const live = await read(page);
   console.log('written elsewhere ' + JSON.stringify(live));
   ok(live.sw.includes('live.example.com'),
     `the open page follows a change made from the popup (${live.sw})`);
   ok(live.swBtn === false, 'and re-enables Clear without a reload');
   await bg.evaluate(async () => { await chrome.storage.local.set({ afp_sw_blocked: [] }); });
-  await new Promise((r) => setTimeout(r, 1000));
+  await bootSettled(bg);
 
   await page.click('#rtcClearBtn');
   await emptied(page, 'rtcList', M('optRtcEmpty'));

@@ -271,7 +271,7 @@ try {
 
   for (const mode of ['normal', 'stealth']) {
     await sw.evaluate(async (m) => { await chrome.storage.local.set({ afp_mode: m }); }, mode);
-    await new Promise((r) => setTimeout(r, 800));  // storage.onChanged → registerBootScript
+    await bootSettled(sw);   // storage.onChanged → registerBootScript
 
     const page = await ctx.newPage();
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });

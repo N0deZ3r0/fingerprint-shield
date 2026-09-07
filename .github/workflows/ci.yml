@@ -31,6 +31,14 @@ on:
     # only become a release if the suites passed on exactly the commit being released.
     tags: ['v*']
   pull_request:
+  # [FIX the-evidence-for-the-gate-was-a-snapshot] "5/5 runs green" was true on the day it
+  # was measured and held up nothing afterwards: it depended on me running the ledger by
+  # hand. A gate that rests on evidence needs the evidence to keep arriving, so the ledger
+  # runs nightly — three passes of the whole set, ~35 minutes, free on a public repository
+  # — and the flake-ledger.json artifact is the record. Written down as the plan on
+  # 2026-09-02, before the gate was added without it.
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       # [FIX conclusions-were-drawn-one-run-at-a-time] The browser job returned 12 red
@@ -232,12 +240,13 @@ jobs:
     # run that CI could not see and would not have missed. The reasons above are about not
     # wiring this to every PUSH; none of them argues for letting a published release skip
     # it. The cost is six to eight Windows minutes per RELEASE rather than per push.
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
+      startsWith(github.ref, 'refs/tags/v')
     # [FIX the-ledger-would-have-died-at-thirty-minutes] One run of this set takes 15-19
     # minutes on the runner, so a five-run ledger needs an hour and a half and the flat 30
     # would have killed it halfway with nothing to show. Caught before the first ledger ran,
     # by reading the number rather than by watching it die.
-    timeout-minutes: ${{ (github.event.inputs.repeat != '' && github.event.inputs.repeat != '1') && 240 || 30 }}
+    timeout-minutes: ${{ (github.event_name == 'schedule' || (github.event.inputs.repeat != '' && github.event.inputs.repeat != '1')) && 240 || 30 }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -256,6 +265,8 @@ jobs:
         shell: bash
         run: |
           n="${{ github.event.inputs.repeat }}"
+          # A scheduled run carries no inputs; three passes is the nightly evidence.
+          if [ "${{ github.event_name }}" = "schedule" ]; then n=3; fi
           SUITE="${{ github.event.inputs.suite }}"
           if [ -n "$n" ] && [ "$n" != "1" ]; then
             node tools/flake-ledger.mjs "$n" --json ${SUITE:+--suite=$SUITE}
@@ -263,7 +274,8 @@ jobs:
             node test/all.mjs --browser
           fi
       - uses: actions/upload-artifact@v7
-        if: always() && github.event.inputs.repeat != '' && github.event.inputs.repeat != '1'
+        if: always() && (github.event_name == 'schedule' ||
+          (github.event.inputs.repeat != '' && github.event.inputs.repeat != '1'))
         with:
           name: flake-ledger
           path: flake-ledger.json
