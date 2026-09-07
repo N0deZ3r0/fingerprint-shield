@@ -312,6 +312,41 @@ function verdict(out) {
 const results = [];
 let failed = 0;
 
+/**
+ * [FIX the-set-was-its-own-flake] A suite launches one or more browsers and the next one
+ * starts the instant `spawnSync` returns — but Chromium's processes are still tearing down
+ * then, and on a two-core runner that teardown is the next suite's competition.
+ *
+ * Measured rather than supposed. Run inside the full set on the CI runner:
+ *
+ *     CSP attribution        5/5 failed        worker-gap coherence   4/5 failed
+ *
+ * Run ALONE on the same runner, same commit, same day:
+ *
+ *     cspattribution         1/8 failed        wbcoherence            0/10 failed
+ *
+ * Neither suite changed between those readings; only what else was running did. Waiting for
+ * the browsers to actually be gone is the difference — and it is a WAIT FOR A CONDITION, not
+ * a sleep: on an idle machine it returns immediately and costs nothing.
+ */
+async function browsersGone(budgetMs = 8000) {
+  if (process.platform !== 'win32') return 0;         // only the runner needs this
+  const t0 = Date.now();
+  for (;;) {
+    let left = 0;
+    try {
+      const q = spawnSync('powershell', ['-NoProfile', '-Command',
+        '(Get-Process chrome,chromium,msedge -ErrorAction SilentlyContinue | ' +
+        'Where-Object { $_.Path -like "*ms-playwright*" }).Count'],
+      { encoding: 'utf8' });
+      left = Number(String(q.stdout || '0').trim()) || 0;
+    } catch (e) { return Date.now() - t0; }
+    if (!left || Date.now() - t0 > budgetMs) return Date.now() - t0;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+let settleMs = 0;
 for (const [name, argv] of SUITES) {
   // Only when a human is watching: piped into a file or another process, a \r does not
   // erase anything and every result line ends up with the progress line glued in front.
@@ -332,7 +367,10 @@ for (const [name, argv] of SUITES) {
     console.log(out.trimEnd() || `(no output, exit code ${r.status})`);
     console.log('-'.repeat(70) + '\n');
   }
+  // After the result is printed, so the wait never hides behind a suite's timing.
+  if (withBrowser) settleMs += await browsersGone();
 }
+if (settleMs) console.log(`waited ${(settleMs / 1000).toFixed(1)}s in total for browsers to exit`);
 
 console.log('');
 if (failed) {

@@ -230,9 +230,23 @@ try {
     // So the residual is now recognised by what it IS — the halves not yet agreeing — and
     // it is bounded: it may not survive LEARNED_BY visits, or the stand-down is not slow,
     // it is broken, which is the defect this file was written for.
-    const LEARNED_BY = 3;
+    // How many visits the learning is ALLOWED to take, measured on three machines rather
+    // than picked:
+    //
+    //   this machine, 18 cores          1 visit, every run
+    //   the CI runner, suite alone      within the budget, 0 failures in 10 runs
+    //   the CI runner, inside the set   MORE than 3 — 4 of 5 runs tripped this bound
+    //
+    // The third reading is not the stand-down failing. The same suite alone on the same
+    // runner passes 10/10; what changes is that fifty-four browser suites run back to back
+    // there. A bound chosen on an 18-core machine was measuring the runner's spare capacity.
+    //
+    // Six, and the set now waits for the previous suite's browsers to exit (test/all.mjs).
+    // The assertion still does its job: it fails on a stand-down that NEVER arrives, which
+    // is the defect this file was written for and which no amount of slowness produces.
+    const LEARNED_BY = 6;
     let learningVisits = 0;
-    for (const n of [1, 2, 3, 4]) {
+    for (const n of [1, 2, 3, 4, 5, 6, 7]) {
       const { worker, frame, win, sent } = await visit(key, n);
       if (!worker || typeof worker !== 'object') {
         // A worker that never ran cannot contradict anything — the documented residual of a
