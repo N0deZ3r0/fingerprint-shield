@@ -25,7 +25,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root, loadBackground, loadPopup } from './harness.mjs';
+import { BROWSER, root, loadBackground, loadPopup, bootSettled } from './harness.mjs';
 const headed = process.argv.includes('--headed');
 // afpPackFeatures comes from defaults.js, which the harness inlines ahead of background.js
 // — the same function the extension itself uses to write 'v.ui.f', so the value this suite
@@ -415,11 +415,48 @@ let ctx = await launch();
 
 try {
   let sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
+  // [FIX cold-start-flaked-on-two-clock-bets] Both waits here were fixed sleeps, and the
+  // flake ledger caught both on the two-core runner — 2 failures in 15 runs of this suite
+  // alone, with the assertions naming exactly these two races:
+  //
+  //   run 5   every value was the DEFAULT profile — 8 cores where the fixture says 16,
+  //           America/New_York where it says Europe/Berlin — because initDefaults had not
+  //           finished when the fixture was written and landed on top of it.
+  //   run 12  `stealth: cores — got 4, want 12`, the PREVIOUS selection's cores: the boot
+  //           script had not been re-registered for the new one when the tab opened.
+  //
+  // Neither is a guess about the extension. Both are this file betting that 1200 and 1500
+  // milliseconds are enough on a machine it has never seen. What it is actually waiting for
+  // has a name in both cases, so it waits for that.
+  const applied = async (sel) => sw.evaluate(async (want) => {
+    const reg = await chrome.scripting.getRegisteredContentScripts({ ids: ['afp-boot'] });
+    const js = (reg[0] && reg[0].js) || [];
+    const st = await chrome.storage.local.get(['afp_profile_id', 'afp_country_code', 'afp_mode']);
+    return js.includes(want.dev) && js.includes(want.cc) &&
+      st.afp_profile_id === want.id && st.afp_country_code === want.code &&
+      st.afp_mode === want.mode;
+  }, {
+    dev: `dyn/dev/${sel.storage.afp_profile_id}.js`,
+    cc: `dyn/cc/${sel.storage.afp_country_code}.js`,
+    id: sel.storage.afp_profile_id,
+    code: sel.storage.afp_country_code,
+    mode: sel.storage.afp_mode
+  });
+
   const apply = async (sel) => {
     await sw.evaluate(async (d) => { await chrome.storage.local.set(d); }, sel.storage);
     // registerBootScript runs off storage.onChanged; the popup awaits applyToCurrentTab
-    // before it reloads the tab, which is the same wait by another name.
-    await new Promise((r) => setTimeout(r, 1200));
+    // before it reloads the tab, which is the same wait by another name. Waited for by the
+    // VALUE — the registered files and the stored selection both being this one — because a
+    // tab opened before that is a tab describing the previous machine.
+    const t0 = Date.now();
+    while (Date.now() - t0 < 20000) {
+      if (await applied(sel).catch(() => false)) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`the boot script never came to describe ${sel.storage.afp_profile_id}/` +
+      `${sel.storage.afp_country_code}/${sel.storage.afp_mode} within 20s — every reading ` +
+      'after this would be of some other machine');
   };
   const early = async (url) => {
     const page = await ctx.newPage();
@@ -428,7 +465,9 @@ try {
     return { page, snap };
   };
 
-  await new Promise((r) => setTimeout(r, 1500)); // onInstalled → initDefaults → register
+  // The other half of the same lesson: this stood in for initDefaults finishing, and a
+  // fixture written before it finishes is a fixture the background overwrites.
+  await bootSettled(ctx);
 
   // 1. A brand-new tab, the case the popup's own "close and reopen" flow produces.
   const a = selection('pc_power', 'DE');
