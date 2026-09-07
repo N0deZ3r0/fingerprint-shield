@@ -243,6 +243,20 @@ try {
       `and on a blob-refusing origin they agree — ${halves.slice(0, 150)}`);
     assert(/by (host|route)/.test(halves),
       `and it says which exclusion covers it, host-wide or per route — ${halves.slice(0, 150)}`);
+    // [AUDIT what-an-anti-detect-detector-reads] The section added after Fingerprint Pro
+    // called this browser BrowserAutomationStudio with the extension on and clean without it.
+    // It deliberately judges nothing — nobody has established which of these a detector
+    // weighs — so what is asserted is that it READS: the rows exist, they carry both realms,
+    // and window.chrome is among them, that being the one surface where this extension has
+    // already shipped a defect (an invented chrome.runtime real Chrome does not have).
+    const anti = rows.split(/\r?\n/).filter((l) => /^(chromeKeys|chromeTypes|fontPrefs|emojiWidth|webglParamHash)\t/.test(l));
+    assert(anti.length >= 5,
+      `the anti-detect surface is reported, page against host (${anti.length} rows)`);
+    const chromeRow = anti.find((l) => /^chromeTypes\t/.test(l)) || '';
+    assert(/app:/.test(chromeRow) && /runtime:/.test(chromeRow),
+      `window.chrome's shape is among them (${chromeRow.slice(0, 120)})`);
+    assert(/page = host|DIFFERS/.test(anti[0]),
+      `and every row says whether the two realms agree (${anti[0].slice(0, 120)})`);
     const fline = rows.split(/\r?\n/).find((l) => /^same-origin iframe/.test(l)) || '';
     assert(!/no reading|TIMEOUT/i.test(fline),
       `the iframe scope survives a framing refusal — ${fline.slice(0, 110) || '(no row)'}`);

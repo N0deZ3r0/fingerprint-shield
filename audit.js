@@ -34,6 +34,72 @@
 const $ = (id) => document.getElementById(id);
 
 /** What a page can be asked, in one self-contained function — executeScript serialises it. */
+
+/**
+ * [AUDIT what-an-anti-detect-detector-reads] Fingerprint Pro classified this browser as
+ * BrowserAutomationStudio with the shield on (tampering 0.96, anti_detect_browser true)
+ * and as clean Chrome 152 with it off — same IP, same minute. The UA string, the JS client
+ * hints and the outgoing sec-ch-ua headers were each measured and each correct, so the
+ * signal is in the JS surface. These are the places such a detector looks, and the ones
+ * the raw attributes of those two events actually disagreed on.
+ *
+ * Read in BOTH realms, because a value is only evidence next to the host it replaced.
+ */
+function antiDetectProbe() {
+  const o = {};
+  const t = (k, f) => { try { o[k] = f(); } catch (e) { o[k] = 'THREW ' + e.name; } };
+  // window.chrome is the classic anti-detect tell: real Chrome exposes app, csi and
+  // loadTimes and NO runtime, and this extension once invented one.
+  t('chromeKeys', () => Object.keys(window.chrome || {}).sort().join(',') || '(none)');
+  t('chromeTypes', () => ['app', 'csi', 'loadTimes', 'runtime', 'webstore']
+    .map((k) => k + ':' + typeof (window.chrome || {})[k]).join(' '));
+  // The generic families, at the size a detector measures them. Two Fingerprint Pro events
+  // had these scaled ~1.53x with the shield on while the emoji width was unchanged, which
+  // is a shape no font list alone explains.
+  t('fontPrefs', () => {
+    const el = document.createElement('span');
+    el.textContent = 'mmMwWLliI0fiflO&1';
+    el.style.cssText = 'position:absolute;left:-9999px;font-size:48px;';
+    document.body.appendChild(el);
+    const out = ['serif', 'sans-serif', 'monospace', 'system-ui'].map((f) => {
+      el.style.fontFamily = f;
+      return f + '=' + el.getBoundingClientRect().width.toFixed(2);
+    }).join(' ');
+    el.remove();
+    return out;
+  });
+  // The emoji control from the same report: unchanged there, so a difference HERE would
+  // mean the scaling is not specific to generic families after all.
+  t('emojiWidth', () => {
+    const el = document.createElement('span');
+    el.textContent = '\u{1F600}\u{1F3FB}\u{200D}\u{1F4BB}';
+    el.style.cssText = 'position:absolute;left:-9999px;font-size:48px;font-family:"Times New Roman";';
+    document.body.appendChild(el);
+    const w = el.getBoundingClientRect().width.toFixed(3);
+    el.remove();
+    return w;
+  });
+  // The layout HASH moved between those two events while the layout NAME did not. If one
+  // is spoofed and the other is not, that is a contradiction inside one machine.
+  t('keyboardMap', () => (navigator.keyboard ? 'present' : '(no navigator.keyboard)'));
+  t('permissionsShape', () => [typeof navigator.permissions,
+    typeof (navigator.permissions || {}).query].join('/'));
+  t('pluginShape', () => (navigator.plugins.length + ' plugins, ' +
+    navigator.mimeTypes.length + ' mimeTypes, pdfViewerEnabled=' + navigator.pdfViewerEnabled));
+  t('webglParamHash', () => {
+    const g = document.createElement('canvas').getContext('webgl');
+    if (!g) return '(no webgl)';
+    const ids = [0x0D33, 0x8869, 0x8DFB, 0x8B4D, 0x851C, 0x8073, 0x0D3A, 0x8DFD];
+    let h = 0x811c9dc5;
+    for (const id of ids) {
+      const v = String(g.getParameter(id));
+      for (let i = 0; i < v.length; i++) { h ^= v.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    }
+    return (h >>> 0).toString(16);
+  });
+  return o;
+}
+
 function pageCollector() {
   const out = { errors: [] };
   const t = (k, f) => { try { out[k] = f(); } catch (e) { out[k] = 'THREW ' + e.name; } };
@@ -91,6 +157,54 @@ function pageCollector() {
       };
       return on('v.ui.wb') || on('v.ui.tt');
     } catch (e) { return false; }
+  });
+
+  // The anti-detect surface, inlined: executeScript serialises THIS function only, so a
+  // reference to antiDetectProbe would be undefined in the page.
+  t('antiDetect', () => {
+    const o = {};
+    const q = (k, f) => { try { o[k] = f(); } catch (e) { o[k] = 'THREW ' + e.name; } };
+    q('chromeKeys', () => Object.keys(window.chrome || {}).sort().join(',') || '(none)');
+    q('chromeTypes', () => ['app', 'csi', 'loadTimes', 'runtime', 'webstore']
+      .map((k) => k + ':' + typeof (window.chrome || {})[k]).join(' '));
+    q('fontPrefs', () => {
+      const el = document.createElement('span');
+      el.textContent = 'mmMwWLliI0fiflO&1';
+      el.style.cssText = 'position:absolute;left:-9999px;font-size:48px;';
+      document.body.appendChild(el);
+      const out = ['serif', 'sans-serif', 'monospace', 'system-ui'].map((f) => {
+        el.style.fontFamily = f;
+        return f + '=' + el.getBoundingClientRect().width.toFixed(2);
+      }).join(' ');
+      el.remove();
+      return out;
+    });
+    q('emojiWidth', () => {
+      const el = document.createElement('span');
+      el.textContent = '\u{1F600}\u{1F3FB}\u{200D}\u{1F4BB}';
+      el.style.cssText = 'position:absolute;left:-9999px;font-size:48px;font-family:"Times New Roman";';
+      document.body.appendChild(el);
+      const w = el.getBoundingClientRect().width.toFixed(3);
+      el.remove();
+      return w;
+    });
+    q('keyboardMap', () => (navigator.keyboard ? 'present' : '(no navigator.keyboard)'));
+    q('permissionsShape', () => [typeof navigator.permissions,
+      typeof (navigator.permissions || {}).query].join('/'));
+    q('pluginShape', () => (navigator.plugins.length + ' plugins, ' +
+      navigator.mimeTypes.length + ' mimeTypes, pdfViewerEnabled=' + navigator.pdfViewerEnabled));
+    q('webglParamHash', () => {
+      const g = document.createElement('canvas').getContext('webgl');
+      if (!g) return '(no webgl)';
+      const ids = [0x0D33, 0x8869, 0x8DFB, 0x8B4D, 0x851C, 0x8073, 0x0D3A, 0x8DFD];
+      let h = 0x811c9dc5;
+      for (const id of ids) {
+        const v = String(g.getParameter(id));
+        for (let i = 0; i < v.length; i++) { h ^= v.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+      }
+      return (h >>> 0).toString(16);
+    });
+    return o;
   });
 
   t('navOwnBlank', () => {
@@ -424,6 +538,7 @@ function hostValues() {
     navOwn: Object.getOwnPropertyNames(navigator).sort().join(',') || '(none)',
     screenOwn: Object.getOwnPropertyNames(screen).sort().join(',') || '(none)',
     markers: Object.getOwnPropertyNames(window).filter((n) => /^__/.test(n)).sort().join(',') || '(none)',
+    antiDetect: antiDetectProbe(),
   };
 }
 
@@ -783,6 +898,39 @@ function render(profile, page, host, sdHalves) {
   }
 
   out.push(section('every scope tells the same story', ['scope', 'reading', '', '', ''], body));
+
+  // ---- what an anti-detect detector reads ----
+  // [AUDIT what-an-anti-detect-detector-reads] Fingerprint Pro called this browser
+  // BrowserAutomationStudio with the extension on — tampering 0.96, anti_detect_browser true,
+  // suspect 21 — and clean Chrome 152 with it off, from the same IP minutes apart. The UA
+  // string, the JS client hints and the outgoing sec-ch-ua headers were each measured against
+  // that pair and each was correct, so whatever it reacts to is in the JS surface.
+  //
+  // These rows do not judge. Nobody has established which of them a detector weighs, and
+  // guessing would be inventing a verdict — this project has spent two days learning what
+  // that costs. They report the page beside the host, on one machine at one moment, which is
+  // the comparison no suite can make: branded Chrome has refused --load-extension since 136,
+  // so every suite drives a Chromium and this shape is unreachable there.
+  body = '';
+  {
+    const pa = (page.antiDetect && typeof page.antiDetect === 'object') ? page.antiDetect : null;
+    const ha = (host.antiDetect && typeof host.antiDetect === 'object') ? host.antiDetect : null;
+    if (!pa || !ha) {
+      body += `<tr><td>anti-detect surface</td><td class="v" colspan="3">${esc(
+        !pa ? 'the page did not answer' : 'this realm did not answer')}</td>` +
+        verdictCell('skip', 'no reading');
+    } else {
+      for (const k of Object.keys(ha)) {
+        const a = String(pa[k]), b = String(ha[k]);
+        const same = a === b;
+        body += `<tr><td>${esc(k)}</td><td class="v">${esc(a.slice(0, 70))}</td>` +
+          `<td class="v">${esc(b.slice(0, 70))}</td><td></td>` +
+          verdictCell(same ? 'ok' : 'skip', same ? 'page = host' : 'DIFFERS — unjudged');
+      }
+    }
+  }
+  out.push(section('what an anti-detect detector reads — page against host, unjudged',
+    ['surface', 'the page sees', 'this machine', '', ''], body));
 
   // ---- 3. what a page can read about the extension itself ----
   body = '';
