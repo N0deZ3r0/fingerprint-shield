@@ -291,6 +291,11 @@ if (withBrowser) SUITES.push(['two languages (Chromium)', ['test/i18n.mjs']]);
 // real machine — where matchMedia answered from the profile while the CSS engine answered
 // from the display, and Fingerprint Pro called that browser BrowserAutomationStudio.
 if (withBrowser) SUITES.push(['dpr vs the CSS engine (Chromium)', ['test/dprparity.mjs']]);
+// The layout map, against a clean browser rather than against a list written here — a
+// hand-written key set is exactly how the shipped one came to carry Space and lack
+// IntlBackslash, which made it hash to a value no en-US keyboard produces while still
+// classifying as en-US. Fingerprint Pro called that browser BrowserAutomationStudio.
+if (withBrowser) SUITES.push(['keyboard layout (Chromium)', ['test/kblayout.mjs']]);
 
 /**
  * The one-line-per-suite summary. Each suite states its own count in its own words, so

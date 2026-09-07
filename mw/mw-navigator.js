@@ -1854,30 +1854,60 @@
     // costs — it answers a question the page asked, in the way most machines would.
     //
     // `navigator` still gates it, so unticking that in the options disables it as before.
+    // [FIX the-layout-said-en-US-and-hashed-to-nothing-real] The hand-written map above was
+    // the signature. Measured against a real Chrome on this machine:
+    //
+    //   real en-US map:  48 keys, includes IntlBackslash, has NO Space
+    //   the map we shipped: 48 keys, has Space, no IntlBackslash
+    //
+    // So a page got a layout that CLASSIFIES as en-US and HASHES to a value no en-US
+    // keyboard produces. Fingerprint Pro reported exactly that pair — keyboard_layout_name
+    // "en-US" beside a keyboard_layout_hash that was ours — and called the browser
+    // BrowserAutomationStudio, tampering 0.96, anti_detect_browser true. Bisected with the
+    // thirteen option switches on a live event: everything off is clean (bot not_detected,
+    // Chrome 152), WebGL alone is clean, NAVIGATOR ALONE reproduces the whole verdict.
+    //
+    // The key set is physical and belongs to the browser, not to the layout, so it is taken
+    // from the native map and only the VALUES are made US. A user whose layout is already US
+    // — which is what the machine above has — gets the native map back untouched, so there
+    // is nothing to hash differently and no Map-versus-KeyboardLayoutMap difference either.
     (function() {
         try {
             if (!navigator.keyboard || !navigator.keyboard.getLayoutMap) return;
-            // Стандартная US QWERTY — самая распространённая, соответствует Win32 профилю
-            var _usLayout = new Map([
-                ['KeyQ','q'],['KeyW','w'],['KeyE','e'],['KeyR','r'],['KeyT','t'],
-                ['KeyY','y'],['KeyU','u'],['KeyI','i'],['KeyO','o'],['KeyP','p'],
-                ['KeyA','a'],['KeyS','s'],['KeyD','d'],['KeyF','f'],['KeyG','g'],
-                ['KeyH','h'],['KeyJ','j'],['KeyK','k'],['KeyL','l'],
-                ['KeyZ','z'],['KeyX','x'],['KeyC','c'],['KeyV','v'],['KeyB','b'],
-                ['KeyN','n'],['KeyM','m'],
-                ['Digit1','1'],['Digit2','2'],['Digit3','3'],['Digit4','4'],['Digit5','5'],
-                ['Digit6','6'],['Digit7','7'],['Digit8','8'],['Digit9','9'],['Digit0','0'],
-                ['Minus','-'],['Equal','='],['BracketLeft','['],['BracketRight',']'],
-                ['Backslash','\\'],['Semicolon',';'],['Quote',"'"],['Comma',','],
-                ['Period','.'],['Slash','/'],['Backquote','`'],['Space',' ']
-            ]);
-            var _fakeGLM = _mn(function getLayoutMap() { return Promise.resolve(_usLayout); });
-            // [FIX instance-own-property-lies] The instance copy is dropped: native
-            // navigator.keyboard has no own properties, and the prototype patch below
-            // already covers every read.
-            try { Object.defineProperty(Object.getPrototypeOf(navigator.keyboard), 'getLayoutMap', { value: _fakeGLM, configurable: true }); } catch(e) {}
-        } catch(_) {}
+            // Values only. The KEYS come from whatever the browser reports.
+            var _usValues = {
+                KeyQ: 'q', KeyW: 'w', KeyE: 'e', KeyR: 'r', KeyT: 't', KeyY: 'y', KeyU: 'u',
+                KeyI: 'i', KeyO: 'o', KeyP: 'p', KeyA: 'a', KeyS: 's', KeyD: 'd', KeyF: 'f',
+                KeyG: 'g', KeyH: 'h', KeyJ: 'j', KeyK: 'k', KeyL: 'l', KeyZ: 'z', KeyX: 'x',
+                KeyC: 'c', KeyV: 'v', KeyB: 'b', KeyN: 'n', KeyM: 'm',
+                Digit1: '1', Digit2: '2', Digit3: '3', Digit4: '4', Digit5: '5',
+                Digit6: '6', Digit7: '7', Digit8: '8', Digit9: '9', Digit0: '0',
+                Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+                Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.',
+                Slash: '/', Backquote: '`'
+            };
+            var _natGLM = navigator.keyboard.getLayoutMap;
+            var _fakeGLM = _mn(function getLayoutMap() {
+                return _natGLM.call(navigator.keyboard).then(function (m) {
+                    // Already a US layout? Hand the native object straight back. Replacing a
+                    // correct map with an equal one can only lose — the object's own class
+                    // included.
+                    var differs = false;
+                    m.forEach(function (v, k) {
+                        if (Object.prototype.hasOwnProperty.call(_usValues, k) && _usValues[k] !== v) differs = true;
+                    });
+                    if (!differs) return m;
+                    var out = new Map();
+                    m.forEach(function (v, k) {
+                        out.set(k, Object.prototype.hasOwnProperty.call(_usValues, k) ? _usValues[k] : v);
+                    });
+                    return out;
+                });
+            });
+            try { Object.defineProperty(Object.getPrototypeOf(navigator.keyboard), 'getLayoutMap', { value: _fakeGLM, configurable: true }); } catch (e) {}
+        } catch (_) {}
     })();
+
 
 
     // ===== WEBGPU adapter.info — согласован с WebGL-профилем =====

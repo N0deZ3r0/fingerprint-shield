@@ -7,7 +7,7 @@
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
 ![версия](https://img.shields.io/badge/version-2.5.26-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
-![сьютов](https://img.shields.io/badge/сьютов-55-2f9e44)
+![сьютов](https://img.shields.io/badge/сьютов-56-2f9e44)
 ![зависимостей в рантайме](https://img.shields.io/badge/зависимостей_в_рантайме-0-2f9e44)
 
 [English](README.md) · **Русский**
@@ -81,10 +81,10 @@
 ```bash
 npm ci
 npm test           # 9 узловых сьютов — секунды, без браузера
-npm run test:all   # добавляет 46 браузерных сьютов — шесть-восемь минут
+npm run test:all   # добавляет 47 браузерных сьютов — шесть-восемь минут
 ```
 
-Всего **55 сьютов**. Узловая половина идёт на каждый push и каждый pull request; в неё
+Всего **56 сьютов**. Узловая половина идёт на каждый push и каждый pull request; в неё
 входит `test/parity-static.mjs`, который заново прогоняет оба генератора в памяти и падает,
 если `mw-bundle.js` или `dyn/` на диске устарели. Браузерная половина по-настоящему грузит
 расширение в Chromium и запускается вручную — её утверждения состоят из фактов о Windows:
