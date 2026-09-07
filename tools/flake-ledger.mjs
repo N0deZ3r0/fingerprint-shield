@@ -32,27 +32,54 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNS = Math.max(1, Number(process.argv[2] || 5));
 const OUT = process.argv.includes('--json') ? 'flake-ledger.json' : null;
+// [FIX chasing-one-flake-cost-the-whole-set] The first ledger named `cold start` at 1/5 and
+// eight local runs could not reproduce it — the flake belongs to the two-core runner. Going
+// back for its assertion text meant another ninety minutes of the WHOLE set for one suite
+// worth forty seconds. One suite, N times, is the same evidence for a fiftieth of the cost.
+const only = (process.argv.find((a) => a.startsWith('--suite=')) || '').slice(8);
+const TARGET = only ? ['test/' + only.replace(/^test\//, '').replace(/\.mjs$/, '') + '.mjs'] : null;
 
-console.log(`running the browser set ${RUNS}x over one unchanged tree\n`);
+console.log(only
+  ? `running ${TARGET[0]} ${RUNS}x over one unchanged tree\n`
+  : `running the browser set ${RUNS}x over one unchanged tree\n`);
 
 /** One run: the suite names that failed, or null if the runner itself did not finish. */
 function once(n) {
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [join(root, 'test', 'all.mjs'), '--browser'],
+  const argv = TARGET ? [join(root, TARGET[0])] : [join(root, 'test', 'all.mjs'), '--browser'];
+  const r = spawnSync(process.execPath, argv,
     { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   const out = (r.stdout || '') + (r.stderr || '');
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
   // test/all.mjs's own summary line names them; falling back to the per-suite FAIL lines
   // keeps this working if the run died before printing it.
   const summary = out.split(/\r?\n/).find((l) => /^\d+ of \d+ suites failed:/.test(l.trim()));
-  const failed = summary
-    ? summary.slice(summary.indexOf(':') + 1).split(',').map((s) => s.trim()).filter(Boolean)
-    : out.split(/\r?\n/).filter((l) => /^FAIL /.test(l))
-      .map((l) => l.replace(/^FAIL\s+/, '').replace(/\s{2,}.*$/, '').trim());
-  const finished = /all \d+ suites passed/.test(out) || !!summary;
+  let failed, finished;
+  if (TARGET) {
+    // One suite: it reports "N passed, M failed" in its own words, and the exit code is the
+    // authority — a suite that dies before printing its summary has still failed.
+    const m = out.match(/^(\d+) passed, (\d+) failed$/m);
+    failed = (r.status !== 0 || (m && Number(m[2]) > 0)) ? [TARGET[0]] : [];
+    finished = !!m;
+  } else {
+    failed = summary
+      ? summary.slice(summary.indexOf(':') + 1).split(',').map((s) => s.trim()).filter(Boolean)
+      : out.split(/\r?\n/).filter((l) => /^FAIL /.test(l))
+        .map((l) => l.replace(/^FAIL\s+/, '').replace(/\s{2,}.*$/, '').trim());
+    finished = /all \d+ suites passed/.test(out) || !!summary;
+  }
+  // [FIX the-ledger-said-which-and-never-why] The first version kept only the suite names,
+  // so "cold start 1/5" said a suite flakes and nothing about how — and the next step after
+  // a ledger is always to fix the flake, which needs the assertion that failed. A rare
+  // failure is also the expensive kind to reproduce: an hour and a half of runner time went
+  // into that one line, and throwing away the reason meant spending it again to learn it.
+  const why = out.split(/\r?\n/).filter((l) => /^\s*FAIL: /.test(l))
+    .map((l) => l.trim().replace(/^FAIL:\s*/, ''));
   console.log(`  run ${n}/${RUNS}  ${secs}s  ${finished ? (failed.length || 'none') : 'DID NOT FINISH'}` +
     (failed.length ? `: ${failed.join(', ')}` : ''));
-  return { finished, failed };
+  for (const w of why.slice(0, 12)) console.log(`      ${w.slice(0, 160)}`);
+  if (why.length > 12) console.log(`      … and ${why.length - 12} more`);
+  return { finished, failed, why };
 }
 
 const runs = [];
@@ -89,7 +116,8 @@ console.log(clean === RUNS
 if (OUT) {
   writeFileSync(join(root, OUT), JSON.stringify({
     at: new Date().toISOString(), runs: RUNS, cleanRuns: clean,
-    perSuite: Object.fromEntries(rows), sets: runs.map((r) => r.failed)
+    perSuite: Object.fromEntries(rows), sets: runs.map((r) => r.failed),
+    why: runs.map((r) => r.why)
   }, null, 2));
   console.log(`written: ${OUT}`);
 }

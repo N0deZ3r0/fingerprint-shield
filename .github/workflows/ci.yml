@@ -45,6 +45,13 @@ on:
         description: 'Browser suites: run the set N times and print a flake ledger'
         required: false
         default: '1'
+      # Chasing ONE flaky suite through the whole set costs ninety minutes for a suite
+      # worth forty seconds — measured, after the first ledger named cold start at 1/5 and
+      # eight local runs could not reproduce it. Name it here and only it is run.
+      suite:
+        description: "Browser suites: run only this one (bare name, e.g. coldstart)"
+        required: false
+        default: ""
 
 # The actions are pinned to v7 and not v4. v4 declares `using: node20`, and GitHub
 # deprecated that action runtime in September 2025 — it still runs them, forced onto Node 24,
@@ -249,8 +256,9 @@ jobs:
         shell: bash
         run: |
           n="${{ github.event.inputs.repeat }}"
+          SUITE="${{ github.event.inputs.suite }}"
           if [ -n "$n" ] && [ "$n" != "1" ]; then
-            node tools/flake-ledger.mjs "$n" --json
+            node tools/flake-ledger.mjs "$n" --json ${SUITE:+--suite=$SUITE}
           else
             node test/all.mjs --browser
           fi
