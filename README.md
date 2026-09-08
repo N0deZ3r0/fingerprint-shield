@@ -5,7 +5,7 @@
 **One coherent invented machine — the same one in the window, in every frame and in every worker.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-2.5.27-3b5bdb)
+![version](https://img.shields.io/badge/version-2.5.28-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
 ![suites](https://img.shields.io/badge/suites-57-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
@@ -25,7 +25,7 @@ browser rather than against an assumption.
 
 <div align="center">
 
-<img src="docs/ui-whoami.png?v=2.5.27" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
+<img src="docs/ui-whoami.png?v=2.5.28" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
 
 <sub><b>Who Am I</b> — the machine as a site reads it. Every value on this page is the
 claim, not the host, and the fingerprint hash at the top is what a tracker would key on.</sub>
@@ -53,14 +53,14 @@ To run from source instead, point **Load unpacked** at a clone of this repositor
 <tr>
 <td width="38%" valign="top" align="center">
 
-<img src="docs/ui-popup.png?v=2.5.27" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
+<img src="docs/ui-popup.png?v=2.5.28" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
 
 <sub>The popup: country, per-site switches, device profile.</sub>
 
 </td>
 <td width="62%" valign="top" align="center">
 
-<img src="docs/ui-modules.png?v=2.5.27" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
+<img src="docs/ui-modules.png?v=2.5.28" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
 
 <sub>Thirteen modules, switched one by one. `ClientRects` ships off — it is
 the one that makes CreepJS go red.</sub>
