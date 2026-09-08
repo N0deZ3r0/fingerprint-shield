@@ -1716,9 +1716,22 @@
     // against the ~618 ns a wrapped call already costs, i.e. under half a percent. A loop
     // cycling seven different shapes reaches 30 ns, and that is the upper bound rather than
     // the case: a given wrapper returns one shape, so the lookup stays monomorphic.
+    // [FIX every-wrapped-read-boxed-its-own-answer]
+    //
+    // This runs on the way out of EVERY wrapper in the extension, and almost every one of them
+    // returns a primitive — a number from hardwareConcurrency, a string from language, an hour
+    // from getHours. `r && typeof r.then === 'function'` on a primitive is not free: V8 boxes
+    // it and walks the wrapper prototype for a property that is not there, once per read, and
+    // the enclosing try/catch is paid for as well. Only an object or a function can carry a
+    // meaningful `then`, so ask what r IS before touching it.
+    //
+    // It is also the more correct test. A page that assigns Number.prototype.then makes the
+    // old line true for the integer navigator.deviceMemory hands back, and the wrapper would
+    // then call it and return a promise where a clean browser returns 8.
     function _stripThenable(r) {
+        if (r === null || (typeof r !== 'object' && typeof r !== 'function')) return r;
         try {
-            if (r && typeof r.then === 'function') {
+            if (typeof r.then === 'function') {
                 return r.then(undefined, function (e) { throw _stripOwnFrames(e); });
             }
         } catch (eT) {}
@@ -1791,8 +1804,16 @@
         proxy = new Proxy(_freshTarget(name), {
             apply: function(_t, thisArg, args) {
                 // see [FIX extension-id-leaked-through-error-stacks] at _stripOwnFrames
+                //
+                // The zero-argument call is not a special case worth avoiding: every accessor
+                // in the extension takes that path, Reflect.apply has to read the length of
+                // the list and unpack it, and .call does neither. The primitive test inlines
+                // the first line of _stripThenable so that a getter returning a number makes
+                // no call at all on the way out — see the note there.
                 try {
-                    return _stripThenable(Reflect.apply(fn, thisArg, args));
+                    var r = args.length === 0 ? fn.call(thisArg) : Reflect.apply(fn, thisArg, args);
+                    return (r !== null && (typeof r === 'object' || typeof r === 'function'))
+                        ? _stripThenable(r) : r;
                 } catch (e) { throw _stripOwnFrames(e); }
             },
             construct: function() {
@@ -3186,20 +3207,58 @@
                 try { Object.defineProperty(g, 'length', { value: nat.length, configurable: true }); } catch (eL) {}
                 OrigDateProto[name] = _mn(g);
             }
+            // The record form, for the callers that want the zone NAME as well as the offset.
+            // It resolves the offset through the same _offAt the hot getters use rather than
+            // repeating the fallback arithmetic: `off === zd.base - 60` is what the ICU branch
+            // already tested, and it is exactly equivalent on the rule branch, where off is
+            // base - 60 when and only when _dstAt said so.
             function zoneAt(utcDate) {
-                var zd = getZoneData(), ts = _instantOf(utcDate);
-                var o = _icuZoneAt(_getTimezone(), ts);
-                if (o !== null) return { zd: zd, dst: o === zd.base - 60, off: o };
-                var dst = _dstAt(zd, ts);
-                return { zd: zd, dst: dst, off: zd.base + (dst ? -60 : 0) };
+                var ts = _instantOf(utcDate), tz = _getTimezone();
+                var zd = ZONE_DATA[tz] || ZONE_DATA['America/New_York'];
+                var off = _offAt(tz, ts);
+                return { zd: zd, dst: off === zd.base - 60, off: off };
+            }
+            // [FIX the-hot-getters-paid-for-a-record-they-threw-away]
+            //
+            // Eight local getters — getHours, getDate, getDay and the rest — want ONE number,
+            // the offset, and every one of them went through zoneAt(), which builds a record:
+            //
+            //   getZoneData()            _getTimezone() + a ZONE_DATA lookup, for a field
+            //                            (.zd) only the fallback and the string methods read
+            //   _instantOf(utcDate)      then getLocalFromUTC calls it a second time
+            //   _icuZoneAt(_getTimezone(), ts)   _getTimezone() AGAIN
+            //   { zd: …, dst: …, off: … }        an object allocated to be read once
+            //
+            // so a getHours() cost two calls into the profile, two reads of the instant, a
+            // table lookup and two allocations, to return an hour. Measured against a stock
+            // browser by tools/probe-timing.mjs, in units of a platform property NEITHER
+            // browser substitutes (navigator.onLine), this getter ran 87x native while the
+            // patched-Chromium build that claims the same zone ran at 0.7x — it changes the
+            // zone ICU resolves and leaves the intrinsic alone, so it pays nothing at all.
+            // That gap is readable from any page with no permission and no reference browser:
+            // a native getHours can be hoisted out of a loop and a JS one cannot.
+            //
+            // The record is still built where it is genuinely wanted (toString and friends
+            // need .zd and .dst for the zone NAME), so zoneAt stays exactly as it was and
+            // this is the numeric door beside it. _icuZoneAt already holds the interval that
+            // contains the last instant asked about, so the steady-state cost here is one
+            // profile read and three comparisons.
+            function _offAt(tz, ts) {
+                var o = _icuZoneAt(tz, ts);
+                if (o !== null) return o;
+                var zd = ZONE_DATA[tz] || ZONE_DATA['America/New_York'];
+                return zd.base + (_dstAt(zd, ts) ? -60 : 0);
             }
             function getLocalFromUTC(utcDate) {
                 // [FIX #1] Вычисляем offset динамически для конкретной даты —
                 // статичный currentOffset неверен для дат в другом DST-периоде.
                 // The shifted instant as a plain Date: its UTC getters are the local fields,
                 // and they are native — nothing here patches getUTC*.
-                var off = zoneAt(utcDate).off;
-                return new OrigDate(_instantOf(utcDate) - off * 60000);
+                //
+                // _instantOf first, so a receiver the platform refuses throws the platform's
+                // own error before anything here touches the profile — the order zoneAt had.
+                var ts = _instantOf(utcDate);
+                return new OrigDate(ts - _offAt(_getTimezone(), ts) * 60000);
             }
             
 
@@ -3449,7 +3508,7 @@
             
             // Whole minutes, toward zero, as V8 answers for an LMT offset with seconds
             // (Kolkata 1900, +05:21:10: -321, not -321.1667) — the shift itself keeps them.
-            OrigDateProto.getTimezoneOffset = _mn(function getTimezoneOffset() { if (new.target) throw new TypeError('Date.prototype.getTimezoneOffset is not a constructor'); return Math.trunc(zoneAt(this).off); });
+            OrigDateProto.getTimezoneOffset = _mn(function getTimezoneOffset() { if (new.target) throw new TypeError('Date.prototype.getTimezoneOffset is not a constructor'); var _t = _instantOf(this); return Math.trunc(_offAt(_getTimezone(), _t)); });
             _markStatus('tz');
 
             // [FIX tolocalestring-bypassed-the-zone] These three do NOT go through the

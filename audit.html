@@ -150,6 +150,19 @@
       verdict for the same route is what stops the proxies installing on a repeat load
       &mdash; and hiding it would mean five more wrapped doors that must agree with each
       other, to conceal a build whose presence <code>__t0</code> already announces.</li>
+    <li><b>A wrapped property costs more to read than a native one, and they all cost the
+      same.</b> By shape this extension is indistinguishable from a patched engine &mdash; 132
+      of 149 readings match across a clean Chromium, a patched build claiming the same
+      machine, and this extension. Timing separates them. Natively these properties cost
+      different amounts, because <code>deviceMemory</code> hands back a cached integer while
+      <code>platform</code> builds a string; through one JS closure the call is the whole cost
+      and 9 of the 12 substitutable <code>navigator</code>/<code>screen</code> properties land
+      within 10% of each other, against 3 of 12 in either browser without wrappers. A page
+      needs no permission and no reference browser to read that. The price is the Proxy in
+      <code>_mn</code>, which is what makes <code>String(getter)</code> say
+      <code>[native code]</code>; the one alternative measured worse by a wide margin. Date is
+      structurally worse still: a native <code>getHours</code> is an intrinsic the JIT hoists
+      out of a loop and a JS function never will be.</li>
   </ul>
   <!-- defaults.js for afpCspScope / afpCspScopeMatches: the lists are per route now. -->
   <script src="defaults.js"></script>

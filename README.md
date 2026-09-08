@@ -181,6 +181,22 @@ from the audit page, so they are not renumbered.
     reading 1 instead of 0 finds it without guessing the name. It stays because it has to
     survive navigation: a previous document's verdict for the same route is what keeps the
     proxies from installing on a repeat load.
+22. **A wrapped property costs more to read than a native one, and they all cost the same.**
+    By shape this extension is indistinguishable from a patched engine. Of 149 facts read in
+    three browsers — a clean Chromium, a patched Chromium claiming the same machine, and this
+    extension — 132 match in all three: descriptor shape, the getter's name, length and
+    `toString`, what it does with a foreign receiver, own-key sets, redefinability. Timing is
+    what separates them. Read natively these properties cost different amounts, because
+    `deviceMemory` hands back a cached integer while `platform` builds a string; read through
+    one JS closure the call is the whole cost and does not care which property it stands in
+    front of, so 9 of the 12 substitutable `navigator`/`screen` properties land within 10% of
+    each other, against 3 of 12 in either browser without wrappers. That needs no permission,
+    no second browser and no reference measurement — a page computes it about itself in a few
+    milliseconds. `Date.prototype.getHours` costs 88 times native. The price is the Proxy that
+    makes `String(getter)` answer `[native code]`, and the one alternative to it measured far
+    worse. Date is structurally worse still: a native `getHours` is an intrinsic the JIT
+    hoists out of a loop, and a JavaScript function never will be. This is the boundary of
+    wrapping in the page's own world rather than a defect in one wrapper.
 
 The extension's own audit page carries the same list beside its verdict, because a green
 verdict is only ever as broad as the questions asked.

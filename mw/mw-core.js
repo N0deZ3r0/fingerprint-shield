@@ -1126,9 +1126,22 @@
     // against the ~618 ns a wrapped call already costs, i.e. under half a percent. A loop
     // cycling seven different shapes reaches 30 ns, and that is the upper bound rather than
     // the case: a given wrapper returns one shape, so the lookup stays monomorphic.
+    // [FIX every-wrapped-read-boxed-its-own-answer]
+    //
+    // This runs on the way out of EVERY wrapper in the extension, and almost every one of them
+    // returns a primitive — a number from hardwareConcurrency, a string from language, an hour
+    // from getHours. `r && typeof r.then === 'function'` on a primitive is not free: V8 boxes
+    // it and walks the wrapper prototype for a property that is not there, once per read, and
+    // the enclosing try/catch is paid for as well. Only an object or a function can carry a
+    // meaningful `then`, so ask what r IS before touching it.
+    //
+    // It is also the more correct test. A page that assigns Number.prototype.then makes the
+    // old line true for the integer navigator.deviceMemory hands back, and the wrapper would
+    // then call it and return a promise where a clean browser returns 8.
     function _stripThenable(r) {
+        if (r === null || (typeof r !== 'object' && typeof r !== 'function')) return r;
         try {
-            if (r && typeof r.then === 'function') {
+            if (typeof r.then === 'function') {
                 return r.then(undefined, function (e) { throw _stripOwnFrames(e); });
             }
         } catch (eT) {}
@@ -1201,8 +1214,16 @@
         proxy = new Proxy(_freshTarget(name), {
             apply: function(_t, thisArg, args) {
                 // see [FIX extension-id-leaked-through-error-stacks] at _stripOwnFrames
+                //
+                // The zero-argument call is not a special case worth avoiding: every accessor
+                // in the extension takes that path, Reflect.apply has to read the length of
+                // the list and unpack it, and .call does neither. The primitive test inlines
+                // the first line of _stripThenable so that a getter returning a number makes
+                // no call at all on the way out — see the note there.
                 try {
-                    return _stripThenable(Reflect.apply(fn, thisArg, args));
+                    var r = args.length === 0 ? fn.call(thisArg) : Reflect.apply(fn, thisArg, args);
+                    return (r !== null && (typeof r === 'object' || typeof r === 'function'))
+                        ? _stripThenable(r) : r;
                 } catch (e) { throw _stripOwnFrames(e); }
             },
             construct: function() {
