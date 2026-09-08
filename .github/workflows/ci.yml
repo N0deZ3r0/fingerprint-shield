@@ -138,7 +138,20 @@ jobs:
     # [FIX a-release-shipped-without-the-browser-suites] This was `needs: node`. See the
     # browser job below, which now runs on a tag so that a release can wait for it.
     needs: [node, browser]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # [FIX the-ledger-could-publish-a-release] The ref test alone was satisfied by a
+    # workflow_dispatch aimed at a tag, which is not the same event. In `repeat` mode the
+    # browser job does not run the suites as a gate — it runs them N times and writes
+    # flake-ledger.json, and tools/flake-ledger.mjs exits 0 whatever the table says, because
+    # the table is its result. Step green, job green, release published. That is how v2.5.28
+    # was published here on 2026-09-08, off a ledger whose own table recorded four of five
+    # passes with a red suite in them.
+    #
+    # The release was sound — 57/57 on this tree locally, 57/57 on the other runner for the
+    # same code, and no suite in that ledger failed more than 1 of 5 with the failure sets
+    # not overlapping — but it was sound by evidence gathered beside CI, which is what the
+    # fix above exists to stop relying on. A tag PUSH runs the single full pass whose exit
+    # code means something; nothing else may publish.
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
     runs-on: ubuntu-latest
     # The only job that writes anything. The rest of the workflow stays read-only.
     permissions:
