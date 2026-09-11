@@ -228,7 +228,7 @@ node test/hostleak.mjs        # хозяйские значения, котор�
 
 ```bash
 npm run build         # пересобирает dyn/ и mw-bundle.js
-node tools/pack.mjs   # собирает dist/ — только расширение, 249 файлов
+node tools/pack.mjs   # собирает dist/ — только расширение, 248 файлов
 node tools/shots.mjs  # переснимает скриншоты выше с работающего расширения
 ```
 

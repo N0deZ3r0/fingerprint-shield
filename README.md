@@ -227,7 +227,7 @@ node test/hostleak.mjs        # host values that make it through
 
 ```bash
 npm run build         # regenerates dyn/ and mw-bundle.js
-node tools/pack.mjs   # builds dist/ — the extension only, 249 files
+node tools/pack.mjs   # builds dist/ — the extension only, 248 files
 node tools/shots.mjs  # retakes the screenshots above from the running extension
 ```
 
