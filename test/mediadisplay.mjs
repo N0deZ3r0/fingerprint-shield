@@ -43,7 +43,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import { root } from './harness.mjs';
+import { BROWSER, root } from './harness.mjs';
 
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
@@ -85,7 +85,10 @@ const SCENARIOS = [
     context: { hasTouch: true, isMobile: true, viewport: { width: 412, height: 915 } } }
 ];
 
-const browser = await chromium.launch({ headless: !headed });
+// [FIX the-dev-page-runner-drove-a-browser-nobody-chose] The second site that skipped
+// BROWSER, and the same cost: this suite reads media queries and display capabilities,
+// which is exactly the axis on which the bundled shell and channel:'chromium' differ.
+const browser = await chromium.launch({ ...BROWSER, headless: !headed });
 try {
   for (const sc of SCENARIOS) {
     const ctx = await browser.newContext(sc.context || {});
@@ -95,7 +98,7 @@ try {
       if (sc.features.length) await cdp.send('Emulation.setEmulatedMedia', { features: sc.features });
 
       // -- the control: a browser with none of our code, under the same condition --
-      await page.goto(`http://127.0.0.1:${port}/dev-blank.html`, { waitUntil: 'load' });
+      await page.goto(`http://127.0.0.1:${port}/devpages/dev-blank.html`, { waitUntil: 'load' });
       const clean = await page.evaluate((q) => {
         if (!q) return null;
         const st = document.createElement('style'); document.head.appendChild(st);
@@ -113,7 +116,7 @@ try {
       }
 
       // -- the page under test --
-      await page.goto(`http://127.0.0.1:${port}/dev-mediaparity.html`, { waitUntil: 'load' });
+      await page.goto(`http://127.0.0.1:${port}/devpages/dev-mediaparity.html`, { waitUntil: 'load' });
       await page.waitForFunction(() => {
         const el = document.getElementById('out');
         return el && el.textContent && !/^\s*running/i.test(el.textContent);

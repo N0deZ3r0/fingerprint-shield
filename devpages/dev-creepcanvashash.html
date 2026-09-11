@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>CreepJS canvas row: window vs worker, verbatim</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// The detector's "canvas" row comes from getWorkerData().canvas, and that runs the
+// SAME function in both scopes — an OffscreenCanvas + convertToBlob. dev-enc.html
+// compared the window through HTMLCanvasElement.toDataURL instead, so it could not
+// see a divergence that only affects OffscreenCanvas.convertToBlob. Replicate the
+// real probe in both scopes.
+const F = {canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  // ?allow=Tahoma drops Arial from the profile list. The detector draws its emoji
+  // with '14px Arial', so if Arial is not allowed the font patch normalises it to a
+  // generic — and if that normalisation reaches only one scope, the canvas row
+  // splits. Arial is in _BASE_FONTS, so it stays allowed either way ONLY as long as
+  // the base list actually reaches the worker (see [FIX base-fonts-lost-to-cleanup]).
+  allowedFonts:(new URLSearchParams(location.search).get('allow')||'Arial,Segoe UI,Tahoma').split(',').filter(Boolean),
+  mediaDevices:[], plugins:[], mimeTypes:[],
+  features:F
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+// mw-cleanup.js MUST be here: it is the last content script in the manifest and it
+// deletes window.__AFP_MW__. The worker payload is assembled later, when the page
+// creates a worker, so anything the payload reads off __AFP_MW__ is already gone by
+// then. Harness pages that omit cleanup silently give the worker data the shipped
+// extension never has — which is exactly why this split never reproduced here.
+const ORDER=['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+ '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js','../mw/mw-geo.js',
+ '../mw/mw-adblock.js','../mw/mw-cleanup.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// hashMini, copied from creepjs/src/utils/crypto — so the numbers are comparable
+// with what the page prints
+const hashMini = (x) => {
+	if (!x) return x
+	const json = `${JSON.stringify(x)}`
+	const hash = json.split('').reduce((hash, char, i) => {
+		return Math.imul(31, hash) + json.charCodeAt(i) | 0
+	}, 0x811c9dc5)
+	return ('0000000' + (hash >>> 0).toString(16)).substr(-8)
+}
+
+// verbatim from creepjs getWorkerData().getCanvas()
+const PROBE = `
+async function getCanvas() {
+  let canvasData
+  try {
+    const canvas = new OffscreenCanvas(500, 200)
+    const context = canvas.getContext('2d')
+    context.font = '14px Arial'
+    context.fillText('\u{1F603}', 0, 20)
+    context.fillStyle = 'rgba(0, 0, 0, 0)'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    const blob = await canvas.convertToBlob()
+    const reader = new FileReader()
+    reader.readAsDataURL(blob)
+    canvasData = await new Promise((resolve) => { reader.onloadend = () => resolve(reader.result) })
+  } finally {
+    return canvasData
+  }
+}`;
+eval(PROBE);
+
+function inWorker(){
+  return new Promise(r=>{
+    const src = PROBE + `\nonmessage=()=>{ getCanvas().then((d)=>postMessage(d),(e)=>postMessage('ERR '+e)); };`;
+    try{
+      const w = new Worker(URL.createObjectURL(new Blob([src],{type:'application/javascript'})));
+      w.onmessage = e => r(e.data); w.onerror = e => r('ERR worker');
+      w.postMessage(1); setTimeout(()=>r('ERR timeout'), 15000);
+    }catch(e){ r('ERR '+e.message); }
+  });
+}
+
+// The shipped extension loads protect.wasm into the page (background.js sets
+// window.__w0), so the WINDOW noises canvas through WASM while the worker payload
+// always uses its own JS port. Without loading it here the probe compares JS
+// against JS and cannot see a WASM/JS divergence. ?wasm=0 skips it.
+async function loadWasm(seed) {
+  const src = await (await fetch('../background.js?x='+Date.now())).text();
+  const marker = 'func: async function(wasmUrl, noiseSeedArg) {';
+  const at = src.indexOf(marker);
+  if (at === -1) throw new Error('loader marker not found');
+  const open = src.indexOf('{', at + marker.length - 1);
+  let depth = 0, end = -1;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  const body = src.slice(src.indexOf('async function', at), end);
+  const loader = new Function('return (' + body + ')')();
+  return loader('../protect.wasm?x='+Date.now(), seed);
+}
+
+(async () => {
+  const L = [];
+  const cleanWin = await getCanvas();
+  const cleanWk  = await inWorker();
+
+  for (const f of ORDER) await load(f);
+
+  const wantWasm = new URLSearchParams(location.search).get('wasm') !== '0';
+  let wasmState = 'skipped (?wasm=0)';
+  if (wantWasm) {
+    try {
+      // ?wasmseed=<n> seeds the WASM with a DIFFERENT value than profile.noiseSeed.
+      // background.js seeds it with deriveDomainSeed(masterSeed, host) while the
+      // worker payload noises with _P().noiseSeed straight from the profile — if
+      // those two ever disagree, the window and the worker noise the same pixels
+      // differently and the canvas row splits no matter what the read path does.
+      const ws = new URLSearchParams(location.search).get('wasmseed');
+      const r = await loadWasm(ws ? (parseInt(ws, 10) >>> 0) : 305419896);
+      wasmState = JSON.stringify(r) + '   __w0.addCanvasNoise: ' + !!(window.__w0 && window.__w0.addCanvasNoise);
+    } catch (e) { wasmState = 'FAILED ' + e.message; }
+  }
+
+  const ourWin = await getCanvas();
+  const ourWk  = await inWorker();
+
+  const short = (u) => typeof u === 'string' ? u.length + 'B' : String(u);
+  L.push('OffscreenCanvas(500,200) → fillText emoji → convertToBlob → data URI');
+  L.push('hashed with the detector\'s own hashMini, so these are the "canvas:" row');
+  L.push('');
+  L.push('WASM in the window: ' + wasmState);
+  L.push('(the worker payload always uses its own JS port of the same formula)');
+  L.push('');
+  L.push('CLEAN (no extension code):');
+  L.push('  window  ' + hashMini(cleanWin) + '   ' + short(cleanWin));
+  L.push('  worker  ' + hashMini(cleanWk)  + '   ' + short(cleanWk));
+  L.push('  → ' + (cleanWin === cleanWk ? 'identical, as a real browser gives' : 'DIFFERENT even clean'));
+  L.push('');
+  L.push('PATCHED:');
+  L.push('  window  ' + hashMini(ourWin) + '   ' + short(ourWin));
+  L.push('  worker  ' + hashMini(ourWk)  + '   ' + short(ourWk));
+  L.push('  → ' + (ourWin === ourWk ? 'identical' : 'DIFFERENT'));
+  L.push('');
+  L.push(ourWin === ourWk
+    ? 'PASS  the canvas row matches Window↔Worker'
+    : 'FAIL  the canvas row splits — this is exactly what the detector prints as\n'
+     +'      two different hashes in the canvas: line.');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Akamai-style multi-signal probe</title>
+  <style>
+    body { font: 13px/1.45 ui-monospace, Consolas, monospace; margin: 16px; max-width: 1100px; }
+    h3 { margin: 0 0 4px; }
+    h4 { margin: 18px 0 6px; font-size: 13px; opacity: .85; }
+    .info { opacity: .65; margin-bottom: 12px; max-width: 900px; }
+    .ok  { color: #137333; font-weight: 700; }
+    .bad { color: #c5221f; font-weight: 700; }
+    .warn { color: #b06000; font-weight: 700; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0 14px; font-size: 12px; }
+    th, td { padding: 3px 8px; text-align: left; border-bottom: 1px solid #8884; vertical-align: top; }
+    th { opacity: .65; }
+    #sum { margin: 12px 0; padding: 10px 12px; border-radius: 6px; font-weight: 700; }
+    .green { background: #e6f4ea; color: #137333; }
+    .red   { background: #fce8e6; color: #c5221f; }
+    .mono { word-break: break-all; }
+    pre { white-space: pre-wrap; font-size: 11px; opacity: .8; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #ddd; }
+      .green { background: #0d2a17; color: #7ee2a8; }
+      .red { background: #2d1210; color: #ffa9a3; }
+    }
+  </style>
+</head>
+<body>
+<h3>Akamai-style multi-signal probe</h3>
+<p class="info">
+  Собирает набор сигналов, типичный для Akamai Bot Manager / похожих anti-bot:
+  navigator, screen, canvas, WebGL, audio, timezone, consistency checks.
+  Под Shield значения должны быть <b>стабильны</b> между прогонами и согласованы между API.
+</p>
+<div id="sum">running…</div>
+
+<h4>Signals</h4>
+<table id="sig"><thead><tr><th>signal</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>Consistency checks</h4>
+<table id="chk"><thead><tr><th>check</th><th>verdict</th><th>detail</th></tr></thead><tbody></tbody></table>
+
+<pre id="log"></pre>
+
+<script>
+// ── bootstrap profile for extension content scripts ─────────
+const F = {
+  canvas:true, audio:true, webgl:true, webrtc:true, navigator:true,
+  screen:true, timezone:true, geolocation:true, battery:true, fonts:true,
+  clientRects:false, plugins:true, network:true, hideAdBlocker:true
+};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode: 'normal',
+  platform: 'Win32', hwConcurrency: 8, deviceMemory: 8,
+  language: 'et-EE', locale: 'et-EE', countryCode: 'EE',
+  languages: ['et-EE','et','en','en-US'],
+  timezone: 'Europe/Tallinn',
+  noiseSeed: 0x12345678,
+  webglVendor: 'Google Inc. (Intel)',
+  webglRenderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+  features: F
+}));
+sessionStorage.setItem('v.ui.m', 'normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER = [
+  '../profile-injector.js', '../mw/mw-bag.js', '../mw/mw-core.js',
+  '../mw/mw-timezone-screen.js', '../mw/mw-navigator.js', '../mw/mw-canvas-audio.js',
+  '../mw/mw-misc.js', '../mw/mw-workers.js', '../mw/mw-geo.js',
+  '../mw/mw-adblock.js', '../mw/mw-cleanup.js'
+];
+function load(src) {
+  return new Promise(r => {
+    const s = document.createElement('script');
+    s.src = src + '?t=' + Date.now();
+    s.onload = () => r(true); s.onerror = () => r(false);
+    document.head.appendChild(s);
+  });
+}
+
+function fnv1a(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+function fnvBytes(arr) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < arr.length; i++) {
+    h ^= arr[i];
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+function fnvFloat(arr) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < arr.length; i++) {
+    const q = Math.round(arr[i] * 1e6);
+    h ^= (q >>> 0);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+// ── Collectors (Akamai-like surface) ────────────────────────
+function collectNavigator() {
+  const n = navigator;
+  return {
+    userAgent: n.userAgent,
+    platform: n.platform,
+    language: n.language,
+    languages: Array.from(n.languages || []),
+    hardwareConcurrency: n.hardwareConcurrency,
+    deviceMemory: n.deviceMemory,
+    maxTouchPoints: n.maxTouchPoints,
+    webdriver: n.webdriver,
+    vendor: n.vendor,
+    cookieEnabled: n.cookieEnabled,
+    doNotTrack: n.doNotTrack,
+    pdfViewerEnabled: n.pdfViewerEnabled,
+    pluginsLength: n.plugins ? n.plugins.length : -1,
+    mimeTypesLength: n.mimeTypes ? n.mimeTypes.length : -1
+  };
+}
+
+function collectScreen() {
+  return {
+    width: screen.width,
+    height: screen.height,
+    availWidth: screen.availWidth,
+    availHeight: screen.availHeight,
+    colorDepth: screen.colorDepth,
+    pixelDepth: screen.pixelDepth,
+    devicePixelRatio: window.devicePixelRatio
+  };
+}
+
+function collectIntl() {
+  let tz = null, locale = null, offset = null;
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) {}
+  try { locale = Intl.DateTimeFormat().resolvedOptions().locale; } catch (e) {}
+  try { offset = new Date().getTimezoneOffset(); } catch (e) {}
+  return { timeZone: tz, locale, timezoneOffset: offset };
+}
+
+function collectCanvas() {
+  const c = document.createElement('canvas');
+  c.width = 280; c.height = 60;
+  const ctx = c.getContext('2d');
+  ctx.textBaseline = 'top';
+  ctx.font = '14px Arial';
+  ctx.fillStyle = '#f60';
+  ctx.fillRect(125, 1, 62, 20);
+  ctx.fillStyle = '#069';
+  ctx.fillText('Akamai probe Cwm fjord 😀', 2, 15);
+  ctx.fillStyle = 'rgba(102,204,0,0.7)';
+  ctx.fillText('Akamai probe Cwm fjord 😀', 4, 17);
+  const url = c.toDataURL();
+  const pixels = ctx.getImageData(0, 0, c.width, c.height).data;
+  return {
+    dataUrlHash: fnv1a(url),
+    pixelsHash: fnvBytes(pixels),
+    dataUrlLen: url.length
+  };
+}
+
+function collectWebGL() {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+  if (!gl) return { supported: false };
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const out = {
+    supported: true,
+    vendor: gl.getParameter(gl.VENDOR),
+    renderer: gl.getParameter(gl.RENDERER),
+    version: gl.getParameter(gl.VERSION),
+    shadingLanguage: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+    unmaskedVendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null,
+    unmaskedRenderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null,
+    maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+    maxRenderbufferSize: gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),
+    maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
+    extensionsCount: (gl.getSupportedExtensions() || []).length
+  };
+  // tiny draw + readPixels hash
+  try {
+    gl.clearColor(0.1, 0.2, 0.3, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const px = new Uint8Array(4);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    out.readPixelsHash = fnvBytes(px);
+  } catch (e) {
+    out.readPixelsHash = 'err';
+  }
+  return out;
+}
+
+async function collectAudio() {
+  const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!AC) return { supported: false };
+  const ctx = new AC(1, 5000, 44100);
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.value = 10000;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -50;
+  comp.knee.value = 40;
+  comp.ratio.value = 12;
+  comp.attack.value = 0;
+  comp.release.value = 0.25;
+  osc.connect(comp);
+  comp.connect(ctx.destination);
+  osc.start(0);
+  const buf = await ctx.startRendering();
+  const data = buf.getChannelData(0);
+  let sum = 0;
+  for (let i = 4500; i < 5000; i++) sum += Math.abs(data[i]);
+  return {
+    supported: true,
+    sum4500: sum,
+    fullHash: fnvFloat(data),
+    length: data.length
+  };
+}
+
+function collectWorkerNav() {
+  return new Promise(resolve => {
+    const code = `
+      self.onmessage = function() {
+        var o = {
+          platform: navigator.platform,
+          hardwareConcurrency: navigator.hardwareConcurrency,
+          language: navigator.language,
+          userAgent: navigator.userAgent.slice(0, 80),
+          webdriver: navigator.webdriver
+        };
+        try {
+          o.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        } catch (e) { o.timeZone = null; }
+        try {
+          var off = new OffscreenCanvas(8, 8);
+          var gl = off.getContext('webgl');
+          if (gl) {
+            var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+            o.webglRenderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null;
+          }
+        } catch (e) {}
+        self.postMessage(o);
+      };
+    `;
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([code], { type: 'application/javascript' })));
+      const t = setTimeout(() => { w.terminate(); resolve({ error: 'timeout' }); }, 2500);
+      w.onmessage = e => { clearTimeout(t); w.terminate(); resolve(e.data); };
+      w.onerror = () => { clearTimeout(t); w.terminate(); resolve({ error: 'worker error' }); };
+      w.postMessage({});
+    } catch (e) {
+      resolve({ error: String(e) });
+    }
+  });
+}
+
+const checks = [];
+const logs = [];
+function addCheck(name, pass, detail) {
+  checks.push({ name, pass, detail });
+  logs.push((pass ? 'PASS  ' : 'FAIL  ') + name + (detail ? '  —  ' + detail : ''));
+}
+
+function row(tableId, k, v) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${k}</td><td class="mono">${v}</td>`;
+  document.querySelector('#' + tableId + ' tbody').appendChild(tr);
+}
+
+(async () => {
+  for (const f of ORDER) await load(f);
+  await new Promise(r => setTimeout(r, 150));
+
+  // ── Collect twice for stability ───────────────────────────
+  const nav1 = collectNavigator();
+  const scr1 = collectScreen();
+  const intl1 = collectIntl();
+  const can1 = collectCanvas();
+  const gl1 = collectWebGL();
+  const aud1 = await collectAudio();
+  const wrk = await collectWorkerNav();
+
+  // second pass
+  const can2 = collectCanvas();
+  const gl2 = collectWebGL();
+  const aud2 = await collectAudio();
+  const nav2 = collectNavigator();
+  const intl2 = collectIntl();
+
+  // ── Display signals ───────────────────────────────────────
+  const signals = {
+    'nav.userAgent': nav1.userAgent,
+    'nav.platform': nav1.platform,
+    'nav.languages': JSON.stringify(nav1.languages),
+    'nav.hardwareConcurrency': nav1.hardwareConcurrency,
+    'nav.deviceMemory': nav1.deviceMemory,
+    'nav.webdriver': String(nav1.webdriver),
+    'nav.pluginsLength': nav1.pluginsLength,
+    'screen': `${scr1.width}×${scr1.height} dpr=${scr1.devicePixelRatio} depth=${scr1.colorDepth}`,
+    'intl.timeZone': intl1.timeZone,
+    'intl.locale': intl1.locale,
+    'intl.timezoneOffset': intl1.timezoneOffset,
+    'canvas.dataUrlHash': can1.dataUrlHash,
+    'canvas.pixelsHash': can1.pixelsHash,
+    'webgl.unmaskedVendor': gl1.unmaskedVendor,
+    'webgl.unmaskedRenderer': gl1.unmaskedRenderer,
+    'webgl.maxTextureSize': gl1.maxTextureSize,
+    'webgl.extensionsCount': gl1.extensionsCount,
+    'webgl.readPixelsHash': gl1.readPixelsHash,
+    'audio.sum4500': aud1.supported ? aud1.sum4500 : 'n/a',
+    'audio.fullHash': aud1.supported ? aud1.fullHash : 'n/a',
+    'worker.platform': wrk.platform,
+    'worker.hardwareConcurrency': wrk.hardwareConcurrency,
+    'worker.timeZone': wrk.timeZone,
+    'worker.webglRenderer': wrk.webglRenderer
+  };
+  for (const [k, v] of Object.entries(signals)) row('sig', k, v);
+
+  // ── Consistency checks (what Akamai-like systems look for) ─
+
+  // 1. webdriver must be false
+  addCheck('webdriver === false', nav1.webdriver === false, String(nav1.webdriver));
+
+  // 2. canvas stable across two runs
+  addCheck(
+    'canvas hash stable (2 runs)',
+    can1.dataUrlHash === can2.dataUrlHash && can1.pixelsHash === can2.pixelsHash,
+    can1.dataUrlHash === can2.dataUrlHash
+      ? can1.dataUrlHash
+      : can1.dataUrlHash + ' vs ' + can2.dataUrlHash
+  );
+
+  // 3. canvas dataUrl hash == pixels path related (both stable; exact match of hashes not required across encodings)
+  addCheck(
+    'canvas pixelsHash stable',
+    can1.pixelsHash === can2.pixelsHash,
+    can1.pixelsHash
+  );
+
+  // 4. audio stable
+  if (aud1.supported && aud2.supported) {
+    addCheck(
+      'audio sum4500 stable (2 runs)',
+      aud1.sum4500 === aud2.sum4500,
+      aud1.sum4500 === aud2.sum4500 ? String(aud1.sum4500) : aud1.sum4500 + ' vs ' + aud2.sum4500
+    );
+    addCheck(
+      'audio fullHash stable',
+      aud1.fullHash === aud2.fullHash,
+      aud1.fullHash
+    );
+  } else {
+    addCheck('audio sum4500 stable (2 runs)', false, 'audio unavailable');
+  }
+
+  // 5. WebGL renderer stable
+  addCheck(
+    'webgl UNMASKED_RENDERER stable',
+    gl1.unmaskedRenderer === gl2.unmaskedRenderer,
+    (gl1.unmaskedRenderer || '').slice(0, 70)
+  );
+
+  // 6. Worker platform == main platform
+  addCheck(
+    'worker.platform == main.platform',
+    wrk.platform === nav1.platform,
+    `worker=${wrk.platform} main=${nav1.platform}`
+  );
+
+  // 7. Worker cores == main cores
+  addCheck(
+    'worker.hardwareConcurrency == main',
+    wrk.hardwareConcurrency === nav1.hardwareConcurrency,
+    `worker=${wrk.hardwareConcurrency} main=${nav1.hardwareConcurrency}`
+  );
+
+  // 8. Worker timezone == main
+  addCheck(
+    'worker.timeZone == main.timeZone',
+    wrk.timeZone === intl1.timeZone,
+    `worker=${wrk.timeZone} main=${intl1.timeZone}`
+  );
+
+  // 9. Worker WebGL renderer == main (CreepJS hasBadWebGL)
+  if (wrk.webglRenderer && gl1.unmaskedRenderer) {
+    addCheck(
+      'worker.webglRenderer == main (hasBadWebGL)',
+      wrk.webglRenderer === gl1.unmaskedRenderer,
+      wrk.webglRenderer === gl1.unmaskedRenderer
+        ? 'match'
+        : `worker=${(wrk.webglRenderer || '').slice(0, 40)} main=${(gl1.unmaskedRenderer || '').slice(0, 40)}`
+    );
+  } else {
+    addCheck('worker.webglRenderer == main (hasBadWebGL)', true, 'skipped (no gl in worker)', );
+    checks[checks.length - 1].pass = true;
+  }
+
+  // 10. platform looks Windows if profile is Win32
+  addCheck(
+    'platform coherent with UA',
+    !(nav1.platform === 'Win32' && /Linux/i.test(nav1.userAgent) && !/Win/i.test(nav1.userAgent)),
+    `platform=${nav1.platform}`
+  );
+
+  // 11. languages[0] roughly matches language
+  addCheck(
+    'languages[0] ~ language',
+    !nav1.languages.length || nav1.languages[0] === nav1.language ||
+      nav1.languages[0].split('-')[0] === (nav1.language || '').split('-')[0],
+    `${nav1.language} / ${JSON.stringify(nav1.languages)}`
+  );
+
+  // 12. timezone stable
+  addCheck(
+    'timezone stable (2 reads)',
+    intl1.timeZone === intl2.timeZone,
+    intl1.timeZone
+  );
+
+  // 13. deviceMemory / cores present and sane
+  addCheck(
+    'cores & memory sane',
+    typeof nav1.hardwareConcurrency === 'number' && nav1.hardwareConcurrency > 0 &&
+      (nav1.deviceMemory === undefined || (nav1.deviceMemory > 0 && nav1.deviceMemory <= 128)),
+    `cores=${nav1.hardwareConcurrency} mem=${nav1.deviceMemory}`
+  );
+
+  // 14. screen positive
+  addCheck(
+    'screen size positive',
+    scr1.width > 0 && scr1.height > 0,
+    `${scr1.width}×${scr1.height}`
+  );
+
+  // 15. not obvious headless UA marker in webdriver sense already checked;
+  //     HeadlessChrome in UA is often present even with spoof — soft check
+  const uaHeadless = /HeadlessChrome/i.test(nav1.userAgent);
+  addCheck(
+    'UA not HeadlessChrome (soft)',
+    !uaHeadless,
+    uaHeadless ? 'HeadlessChrome present in UA' : 'ok'
+  );
+
+  // ── Summary ───────────────────────────────────────────────
+  const passed = checks.filter(c => c.pass).length;
+  const total = checks.length;
+  const allOk = passed === total;
+  const sumEl = document.getElementById('sum');
+  sumEl.textContent = allOk
+    ? `ALL ${total} CHECKS PASSED`
+    : `${passed}/${total} passed — ${total - passed} FAILED`;
+  sumEl.className = allOk ? 'green' : 'red';
+
+  const tbody = document.querySelector('#chk tbody');
+  for (const c of checks) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td>${c.name}</td>` +
+      `<td class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'PASS' : 'FAIL'}</td>` +
+      `<td class="mono">${c.detail || ''}</td>`;
+    tbody.appendChild(tr);
+  }
+  document.getElementById('log').textContent = logs.join('\n');
+})();
+</script>
+</body>
+</html>

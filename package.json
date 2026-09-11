@@ -7,6 +7,7 @@
     "build": "node tools/gen-dyn.mjs && node tools/gen-bundle.mjs"
   },
   "devDependencies": {
+    "acorn": "^8.18.0",
     "eslint": "^10.8.1",
     "playwright": "^1.62.1"
   }

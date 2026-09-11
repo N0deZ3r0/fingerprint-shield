@@ -22,7 +22,7 @@
  */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BROWSER, root, loadBackground, loadPopup, bootSettled } from './harness.mjs';
@@ -197,6 +197,23 @@ window.__worker = new Promise(function (res) {
 });
 </script></head><body>probe</body></html>`;
 
+/**
+ * The first ordinary Latin TTF this host has, or null. Preferred names first so the face is
+ * the same on every run of a given OS; the recursive scan is the fallback.
+ */
+function probeFace() {
+  const roots = ['C:/Windows/Fonts', '/usr/share/fonts', '/System/Library/Fonts'];
+  const preferred = ['arial.ttf', 'DejaVuSans.ttf', 'LiberationSans-Regular.ttf', 'Arial.ttf'];
+  for (const dir of roots) {
+    let names;
+    try { names = readdirSync(dir, { recursive: true }).map(String); } catch (e) { continue; }
+    const hit = names.find((n) => preferred.includes(n.split(/[\\/]/).pop())) ||
+      names.find((n) => /\.ttf$/i.test(n));
+    if (hit) { try { return readFileSync(join(dir, hit)); } catch (e) { /* raced */ } }
+  }
+  return null;
+}
+
 function serve() {
   return new Promise((ok) => {
     const s = createServer((req, res) => {
@@ -304,10 +321,18 @@ function serve() {
         // genuine file makes the @font-face exemption observable: a declared family
         // shadows the local font of the same name, so a broken src always measures as the
         // fallback whether we exempted it or not.
-        try {
-          const buf = readFileSync('C:/Windows/Fonts/arial.ttf');
-          res.writeHead(200, { 'content-type': 'font/ttf', 'cache-control': 'no-store' }).end(buf);
-        } catch { res.writeHead(404).end(); }
+        //
+        // [FIX the-webfont-fixture-was-a-windows-path] This read C:/Windows/Fonts/arial.ttf
+        // and 404'd anywhere else, so `webFontKept` came back false and one assertion of
+        // 160 was red for the RIG rather than for the build — measured on Ubuntu 24.04,
+        // `159 passed, 1 failed`, "fonts: a family registered via @font-face is never
+        // blocked". Which face it is does not matter to what is asked here: the probe only
+        // wants to know whether a family the PAGE declares is exempt from the allowlist. So
+        // the first ordinary Latin face on disk is served, and a host with none 404s
+        // exactly as before rather than pretending to have one.
+        const buf = probeFace();
+        if (buf) res.writeHead(200, { 'content-type': 'font/ttf', 'cache-control': 'no-store' }).end(buf);
+        else res.writeHead(404).end();
         return;
       }
       if (req.url.startsWith('/fonts')) {

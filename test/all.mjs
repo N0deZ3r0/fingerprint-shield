@@ -32,6 +32,22 @@ const SUITES = [
   // suite instead of reaching a user who cannot act on it. Node-only.
   ['profile coherence', ['test/profilecoherence.mjs']],
   ['background.js functions', ['test/background-fns.mjs']],
+  // protect.wasm is the one shipped artifact nothing here re-derives: no generator writes
+  // it, no CI step rebuilds it, and tools/pack.mjs only asserts it EXISTS. The two dev
+  // pages that do compare it against JS compare it against formulas retyped into the HTML
+  // (dev-wasm.html:16-28, dev-textwidth-port.html:21-46), so they can catch the wasm
+  // drifting away from the page and not mw/*.js drifting away from the wasm — and both run
+  // only in the browser set, which fires on dispatch, schedule and tags. The nearest
+  // neighbour is test/canvasmode.mjs, whose own header opens "DO THE TWO CANVAS NOISE
+  // PATHS AGREE?" and which forces js and wasm on one origin under one profile in a real
+  // browser — that is section 3's window-side claim. It is ruled out for three reasons,
+  // not for being missed: it is not in the SUITES array at all, so nothing runs it; it
+  // compares ONE toDataURL hash of one 240x60 drawing, which is blind to per-pixel and
+  // per-offset drift; and it compares nothing against mw/mw-workers.js, against the
+  // text-width export, against the export list or against the bytes. This one lifts the
+  // loader out of background.js and compares the binary against mw/mw-canvas-audio.js and
+  // mw/mw-workers.js themselves, plus a sha256 pin, in a tenth of a second with no browser.
+  ['wasm ↔ JS parity', ['test/wasmparity.mjs']],
   // Static, and it belongs with the cheap set: it opens no browser, it only asks whether
   // the extension SHIPPABLE from this tree is complete. Every path the manifest names,
   // every path background.js names, every src/href in every shipped page, dyn/ whole, and
@@ -306,6 +322,65 @@ if (withBrowser) SUITES.push(['dpr vs the CSS engine (Chromium)', ['test/dprpari
 if (withBrowser) SUITES.push(['keyboard layout (Chromium)', ['test/kblayout.mjs']]);
 
 /**
+ * [FIX nothing-had-ever-run-the-suites-off-windows] The set above is written for the host
+ * the profile CLAIMS. Nothing had ever run it anywhere else — and the extension installs
+ * on Linux, where somebody runs it today. Measured, two full passes over one unchanged
+ * tree on Ubuntu 24.04 / Chromium 141: `6 of 58 suites failed`, then `7 of 58` — the same
+ * six both times plus one that appeared once. Every one of the six reproduces standalone.
+ * They split in two.
+ *
+ * THREE ARE FINDINGS, and they are the whole argument for a second host. `mode claims` and
+ * `worker-gap coherence` independently report that the stand-down never completes — see
+ * the open-work list item 8b, which this host is what found. `clean vs ours` queues an ACCEPTED
+ * matcher that cannot be missed on a host already matching the claim. None of them can be
+ * produced on a Windows runner, because there the claim and the host agree.
+ *
+ * THREE ARE FACTS OF THE MACHINE UNDERNEATH, and this is that list. FPS_PORTABLE=1 leaves
+ * out exactly these and runs everything else.
+ *
+ * AN ENV VAR RATHER THAN A FLAG BESIDE `--browser`: tools/flake-ledger.mjs spawns this file
+ * with a FIXED argv, so a flag could never reach a LEDGER run — and a ledger is the one
+ * thing a second host is really worth. It is also the convention test/harness.mjs already
+ * uses (FPS_CHROME picks the binary, FPS_LANG the interface language).
+ *
+ * THIS IS NOT A LIST OF SUITES THAT MAY FAIL. A suite that goes red on Linux for any other
+ * reason is a finding, and hiding one here throws away the point of the second host. Two
+ * candidates were deliberately NOT added. `exit country` is the seventh suite above: it
+ * passed in pass 1 and failed in pass 2, where its four seeded rows all read back the same
+ * country — one in two is a flake, and a flake belongs in tools/flake-ledger.mjs, not in a
+ * map that says "this is the host". And `cold start`, whose single red was a fixture
+ * reading C:/Windows/Fonts/arial.ttf, is FIXED rather than excused — it is 160/0 here now.
+ *
+ * A THIRD, FOUND BY THE RUN THAT VERIFIED THIS FLAG, and recorded so that nobody adds it
+ * on one red: `accessor receivers` went red in the FPS_PORTABLE run and was green in both
+ * full passes before it. Standalone it is 28,117 passed / 0 failed, three times out of
+ * three. So it is one red in three set-runs and none in three solo runs — the set under
+ * load, not the suite. Same verdict as `exit country`: measure it with a ledger, do not
+ * put it in the map. The map is for a suite whose ASSERTION is about Windows, which is a
+ * property of its text and not of how busy the machine was.
+ */
+const PORTABLE = process.env.FPS_PORTABLE === '1';
+const WINDOWS_HOST = new Map([
+  ['test/popupfit.mjs',
+    'a TEXT WIDTH in the host UI font. The two notes fit on one 400px line in the ' +
+    "runner's font and do not in the Linux default sans — 65 passed / 1 failed, \"and " +
+    'both notes FIT on it rather than relying on the title (clipped true)". ' +
+    'test/popupkeys.mjs still drives the popup here and is green.'],
+  ['test/btreadback.mjs',
+    'Chromium implements no Web Bluetooth on Linux: a CLEAN browser on this host answers ' +
+    'navigator.bluetooth undefined with no Bluetooth constructor, so the shape rows have ' +
+    'nothing to read — 98 passed / 8 failed, "navigator.bluetooth is an object, not ' +
+    'undefined — got \"undefined\", want \"[object Bluetooth]\"". Those rows are written ' +
+    'as literals rather than against a clean browser, which is what makes them a host ' +
+    'fact; the GL readback half of the file is portable and is lost with it.'],
+  ['test/i18n.mjs',
+    '`--lang=ru` reaches chrome.i18n.getMessage() on Linux — the ru browser really does ' +
+    'render the Russian strings — but not chrome.i18n.getUILanguage(), which is where ' +
+    'i18n.js takes <html lang> from — 43 passed / 1 failed, "<html lang> follows the UI ' +
+    'language (en-US / en-US)".']
+]);
+
+/**
  * The one-line-per-suite summary. Each suite states its own count in its own words, so
  * this looks for the shapes actually in use — and looks for them from the top, since
  * test/run.mjs prints a "not covered by this runner" list AFTER its verdict and a
@@ -328,6 +403,7 @@ function verdict(out) {
 }
 
 const results = [];
+const skipped = [];
 let failed = 0;
 
 /**
@@ -366,6 +442,11 @@ async function browsersGone(budgetMs = 8000) {
 
 let settleMs = 0;
 for (const [name, argv] of SUITES) {
+  if (PORTABLE && WINDOWS_HOST.has(argv[0])) {
+    skipped.push(name);
+    console.log(`skip ${name.padEnd(24)}     -  a fact of a Windows host — see WINDOWS_HOST above`);
+    continue;
+  }
   // Only when a human is watching: piped into a file or another process, a \r does not
   // erase anything and every result line ends up with the progress line glued in front.
   if (process.stdout.isTTY) process.stdout.write(`…   ${name}\r`);
@@ -391,6 +472,12 @@ for (const [name, argv] of SUITES) {
 if (settleMs) console.log(`waited ${(settleMs / 1000).toFixed(1)}s in total for browsers to exit`);
 
 console.log('');
+// Before the count: "all 55 suites passed" reads exactly like "all 58 suites passed"
+// to anything that only greps for green, so what was left out says so on its own line.
+if (skipped.length) {
+  console.log(`FPS_PORTABLE=1 left out ${skipped.length} suite(s) whose assertions are facts of a `
+    + `Windows host: ${skipped.join(', ')}`);
+}
 if (failed) {
   console.log(`${failed} of ${results.length} suites failed: ${results.filter((r) => !r.ok).map((r) => r.name).join(', ')}`);
 } else {

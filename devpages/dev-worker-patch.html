@@ -1,0 +1,394 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — worker patch end-to-end</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, monospace; padding: 16px; }
+  table { border-collapse: collapse; margin-top: 12px; }
+  td, th { border: 1px solid #ccc; padding: 3px 8px; text-align: left; }
+  .ok { color: #0a0; } .bad { color: #c00; font-weight: bold; }
+  #sum { font-size: 15px; margin-top: 14px; }
+  p.why { max-width: 70em; }
+</style>
+<h1 style="font-size:15px">Worker patch — end to end</h1>
+<p class="why">The injected worker patch is ~240 lines of JavaScript living inside a string
+in <code>_buildPatchCode()</code>. ESLint cannot see into it, and the whole thing is wrapped
+in <code>try{}catch{}</code> — so a syntax error there does not throw anywhere visible, it
+just silently leaves every worker unpatched. This page loads the real
+<code>mw/mw-workers.js</code> and lets its own <code>Worker</code> override build and inject
+the code, then asks the worker what it sees. If the generated script failed to parse, every
+row below goes red at once.</p>
+<div id="out"></div>
+<div id="sum"></div>
+
+<script>
+  var PROF = {
+    mode: 'normal',
+    hwConcurrency: 8,
+    deviceMemory: 8,
+    platform: 'Win32',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+    language: 'et-EE',
+    languages: ['et-EE', 'et', 'en-US', 'en'],
+    locale: 'et-EE',
+    timezone: 'Europe/Tallinn',
+    noiseSeed: 0x1234ABCD,
+    webglVendor: 'Google Inc. (Intel)',
+    webglRenderer: 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0)',
+    webglParams: { 0x0D33: 16384, 0x8DFC: 30, 0x8869: 16, 0x0D56: 24, 0x8B4D: 192 },
+    allowedFonts: ['segoe ui', 'arial', 'tahoma']
+  };
+  sessionStorage.setItem('v.ui.s', JSON.stringify(PROF));
+</script>
+
+<script src="../mw/mw-bag.js"></script>
+<script src="../mw/mw-core.js"></script>
+<!-- window-side text + UA-CH patches, so both can be compared across scopes -->
+<script src="../mw/mw-canvas-audio.js"></script>
+<script src="../mw/mw-navigator.js"></script>
+<script src="../mw/mw-timezone-screen.js"></script>
+<script src="../mw/mw-workers.js"></script>
+
+<script>
+(async function () {
+  var rows = [], pass = 0, fail = 0;
+  function check(name, actual, expected) {
+    var ok = String(actual) === String(expected);
+    ok ? pass++ : fail++;
+    rows.push({ name: name, actual: actual, expected: expected, ok: ok });
+  }
+  function render(note) {
+    var html = '<table><tr><th></th><th>check</th><th>worker sees</th><th>profile says</th></tr>';
+    rows.forEach(function (r) {
+      html += '<tr><td class="' + (r.ok ? 'ok' : 'bad') + '">' + (r.ok ? 'PASS' : 'FAIL') +
+        '</td><td>' + r.name + '</td><td>' + String(r.actual) + '</td><td>' + String(r.expected) + '</td></tr>';
+    });
+    // [FIX verdict-lived-only-in-sum] test/run.mjs reads #out first and this page put its
+    // verdict in #sum, so the runner found a table of PASS/FAIL cells whose textContent
+    // has no line breaks, matched none of its patterns, waited out the full 45s timeout
+    // and reported a FAIL — which is why this page sat outside CHECKS. The verdict now
+    // goes in #out in the shape the rest of the suite uses. A note means the worker never
+    // answered at all, which is a failure whatever the row counts say.
+    var total = fail + (note ? 1 : 0);
+    document.getElementById('out').innerHTML = html + '</table>' +
+      '<p class="' + (total ? 'bad' : 'ok') + '">FAILURES: ' + total +
+      (note ? ' — ' + note : total ? '' : ' — worker matches the window on every signal') + '</p>';
+    document.getElementById('sum').innerHTML = '<span class="' + (fail || note ? 'bad' : 'ok') + '">' +
+      pass + ' passed, ' + fail + ' failed' + (note ? ' — ' + note : '') + '</span>';
+    window.__RESULT__ = { pass: pass, fail: fail, note: note || null,
+      failed: rows.filter(function (r) { return !r.ok; })
+        .map(function (r) { return r.name + ' → ' + r.actual + ' (want ' + r.expected + ')'; }) };
+  }
+
+  check('Worker constructor was overridden',
+    /native code/.test(String(Worker)) && Worker !== window.__nativeWorkerProbe, true);
+
+  // The body below is the PAGE's worker script. mw-workers.js prepends the generated
+  // patch to it, exactly as it does for a real site.
+  var body = `
+    self.onmessage = async function () {
+      function val(fn) { try { var v = fn(); return v === undefined ? '<undefined>' : v; }
+                         catch (e) { return 'ERR ' + e.message; } }
+      function brandStr(list) {
+        try { return (list || []).map(function (b) { return b.brand + '@' + b.version; }).sort().join(','); }
+        catch (e) { return 'ERR'; }
+      }
+      var he = null;
+      try {
+        he = await navigator.userAgentData.getHighEntropyValues(
+          ['platformVersion', 'architecture', 'bitness', 'uaFullVersion', 'fullVersionList', 'model']);
+      } catch (e) { he = { err: String(e) }; }
+      var ctors = ['Collator','DateTimeFormat','DisplayNames','ListFormat','NumberFormat','PluralRules','RelativeTimeFormat'];
+      var locs = [], skipped = [], explicitDeAll = [];
+      ctors.forEach(function (n) {
+        try { locs.push(new Intl[n]().resolvedOptions().locale); } catch (e) { skipped.push(n); }
+        try {
+          var o = n === 'DisplayNames' ? { type: 'language' } : undefined;
+          explicitDeAll.push(new Intl[n]('de', o).resolvedOptions().locale);
+        } catch (e) { explicitDeAll.push('ERR'); }
+      });
+      self.postMessage({
+        hc:    val(function () { return navigator.hardwareConcurrency; }),
+        mem:   val(function () { return navigator.deviceMemory; }),
+        plat:  val(function () { return navigator.platform; }),
+        lang:  val(function () { return navigator.language; }),
+        tz:    val(function () { return Intl.DateTimeFormat().resolvedOptions().timeZone; }),
+        locale: val(function () { return Intl.DateTimeFormat().resolvedOptions().locale; }),
+        localeSetSize: locs.filter(function (v, i, a) { return a.indexOf(v) === i; }).length,
+        skipped: skipped.join(','),
+        explicitDeAll: explicitDeAll.join(','),
+        roundTrip: val(function () { return new Intl.Collator(navigator.language).resolvedOptions().locale; }),
+        lfLen: val(function () { return Intl.ListFormat.length; }),
+        dnName: val(function () { return Intl.DisplayNames.name; }),
+        slName: val(function () { return Intl.NumberFormat.supportedLocalesOf.name; }),
+        // [FIX probe-relied-on-answers-no-real-context-gives] Both of these used to work
+        // only because the patch answered from its table before consulting the driver.
+        //   * UNMASKED_RENDERER was read WITHOUT enabling WEBGL_debug_renderer_info. A real
+        //     context returns null until the extension is enabled, so this asked a question
+        //     no browser answers and the old patch answered it anyway.
+        //   * getParameter was called on a plain object. Natively that is a brand-check
+        //     failure — "Illegal invocation" — and the old patch returned a number instead,
+        //     which turns a tampering probe into a positive result.
+        // Both are fixed in mw/*.js; the probe now asks the way a real site does, and the
+        // brand check is asserted as the throw it is.
+        wgr:   val(function () {
+          var gl = new OffscreenCanvas(1, 1).getContext('webgl');
+          if (!gl) return '<no gl>';
+          gl.getExtension('WEBGL_debug_renderer_info');
+          return gl.getParameter(0x9246);
+        }),
+        wgpMaxTex: val(function () {
+          var gl = new OffscreenCanvas(1, 1).getContext('webgl');
+          return gl ? gl.getParameter(0x0D33) : '<no gl>';
+        }),
+        wgpVarying: val(function () {
+          var gl = new OffscreenCanvas(1, 1).getContext('webgl');
+          return gl ? gl.getParameter(0x8DFC) : '<no gl>';
+        }),
+        wgpBrandCheck: val(function () {
+          try {
+            WebGLRenderingContext.prototype.getParameter.call({}, 0x0D33);
+            return 'returned instead of throwing';
+          } catch (e) {
+            return e instanceof TypeError && !/chrome-extension:/.test(String(e.stack || ''))
+              ? 'TypeError, no extension frames' : 'wrong error: ' + e.message;
+          }
+        }),
+        dtfToString: val(function () { return String(Intl.DateTimeFormat); }),
+        // Fonts. 'MS Gothic' is outside the allowlist, so it must be measured through
+        // its generic fallback. 'Impact' IS on _BASE_FONTS and must NOT be normalised —
+        // it doubles as the positive control proving this probe can tell fonts apart,
+        // otherwise "blocked === generic" could pass just because nothing was installed.
+        fontBlocked: val(function () {
+          var c = new OffscreenCanvas(200, 50).getContext('2d');
+          c.font = '16px "MS Gothic", monospace';
+          return c.measureText('AFP-fonts').width;
+        }),
+        fontAllowedNotNormalised: val(function () {
+          var c = new OffscreenCanvas(200, 50).getContext('2d');
+          c.font = '16px Impact, monospace';
+          return c.measureText('AFP-fonts').width;
+        }),
+        fontGeneric: val(function () {
+          var c = new OffscreenCanvas(200, 50).getContext('2d');
+          c.font = '16px monospace';
+          return c.measureText('AFP-fonts').width;
+        }),
+        fontAllowed: val(function () {
+          var c = new OffscreenCanvas(200, 50).getContext('2d');
+          c.font = '16px arial';
+          return c.measureText('AFP-fonts').width;
+        }),
+        tmShape: val(function () {
+          var m = new OffscreenCanvas(10, 10).getContext('2d').measureText('x');
+          return (m instanceof TextMetrics) + '/' + Object.getOwnPropertyNames(m).length;
+        }),
+        tmBoxInt: val(function () {
+          var m = new OffscreenCanvas(10, 10).getContext('2d').measureText('mwmwmwmwlli');
+          return Number.isInteger(m.fontBoundingBoxAscent) && Number.isInteger(m.actualBoundingBoxAscent);
+        }),
+        fontRestored: val(function () {
+          var c = new OffscreenCanvas(50, 20).getContext('2d');
+          c.font = '16px Impact, monospace';
+          var before = c.font;
+          c.fillText('x', 1, 10);
+          return c.font === before;
+        }),
+        // UA-CH
+        uadPlatform: val(function () { return navigator.userAgentData.platform; }),
+        uadMobile: val(function () { return navigator.userAgentData.mobile; }),
+        uadBrands: brandStr(navigator.userAgentData && navigator.userAgentData.brands),
+        hePlatformVersion: (he && he.platformVersion) || '<none>',
+        heArchitecture: (he && he.architecture) || '<none>',
+        heBitness: (he && he.bitness) || '<none>',
+        heUaFull: (he && he.uaFullVersion) || '<none>',
+        heFvl: brandStr(he && he.fullVersionList),
+        heModel: (he && he.model === '') ? '<empty>' : String(he && he.model),
+        // [FIX worker-uad-sync-getters-on-prototype] the PROTOTYPE getter must stay
+        // native — the substitution belongs on the instance, as in the window.
+        uadProtoBrandsGetter: val(function () {
+          return String(Object.getOwnPropertyDescriptor(NavigatorUAData.prototype, 'brands').get);
+        }),
+        connEffectiveType: val(function () {
+          var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+          return c ? c.effectiveType : '<no connection>';
+        }),
+        // Timezone. The dates straddle the EU DST transitions (last Sunday of March and
+        // of October, 01:00 UTC) so the offset must FLIP mid-probe — a single "now"
+        // snapshot, which is what this code used to be, would return one value for all
+        // six. See [FIX worker-tz-staleness] and [FIX dst-threshold-sign].
+        tzOffsets: val(function () {
+          return ['2025-01-15T12:00:00Z', '2025-07-15T12:00:00Z',
+                  '2025-03-30T00:30:00Z', '2025-03-30T01:30:00Z',
+                  '2025-10-26T00:30:00Z', '2025-10-26T01:30:00Z']
+            .map(function (s) { return new Date(s).getTimezoneOffset(); }).join(',');
+        }),
+        tzOffsetMasked: val(function () { return String(Date.prototype.getTimezoneOffset); }),
+        // [FIX worker-date-api-parity] local getters + toString must match window
+        dateHours: val(function () {
+          return ['2025-01-15T12:00:00Z', '2025-07-15T12:00:00Z']
+            .map(function (s) { return new Date(s).getHours(); }).join(',');
+        }),
+        dateFullYearMonth: val(function () {
+          var d = new Date('2025-07-15T12:00:00Z');
+          return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
+        }),
+        dateToStringHasZone: val(function () {
+          // Raw toString only. Page normalises "(…zone…)" → "(ZONE)" for compare.
+          // Previous "bad:" prefix caused a false FAIL when the string was already correct.
+          return new Date('2025-07-15T12:00:00Z').toString();
+        }),
+        dateToStringMasked: val(function () { return String(Date.prototype.toString); }),
+        dateGetHoursMasked: val(function () { return String(Date.prototype.getHours); })
+      });
+    };`;
+
+  var url = URL.createObjectURL(new Blob([body], { type: 'application/javascript' }));
+  var res = await new Promise(function (resolve, reject) {
+    var w = new Worker(url);
+    var t = setTimeout(function () { try { w.terminate(); } catch (e) {} reject(new Error('timeout')); }, 6000);
+    w.onmessage = function (ev) { clearTimeout(t); try { w.terminate(); } catch (e) {} resolve(ev.data); };
+    // A parse failure in the generated patch surfaces here, before onmessage ever fires.
+    w.onerror = function (ev) { clearTimeout(t); reject(new Error(ev.message || 'worker script failed to load/parse')); };
+    w.postMessage(1);
+  }).catch(function (e) { return { __err: e.message }; });
+  URL.revokeObjectURL(url);
+
+  if (res.__err) { render('worker: ' + res.__err); return; }
+
+  check('navigator.hardwareConcurrency', res.hc, PROF.hwConcurrency);
+  check('navigator.deviceMemory', res.mem, PROF.deviceMemory);
+  check('navigator.platform', res.plat, PROF.platform);
+  check('navigator.language', res.lang, PROF.language);
+  check('Intl timeZone', res.tz, PROF.timezone);
+  check('Intl default locale', res.locale, PROF.locale);
+  check('getLocale() set size', res.localeSetSize, 1);
+  // DisplayNames must still throw without options, or it would ADD an entry to a set
+  // that has none in a real browser.
+  check('DisplayNames skipped (throws w/o options)', res.skipped, 'DisplayNames');
+  check('explicit "de" echoed by all 7', res.explicitDeAll, 'de,de,de,de,de,de,de');
+  check('profile tag round-trip normalised', res.roundTrip, PROF.locale);
+  check('Intl.ListFormat.length', res.lfLen, 0);
+  check('Intl.DisplayNames.name', res.dnName, 'DisplayNames');
+  check('supportedLocalesOf.name', res.slName, 'supportedLocalesOf');
+  check('UNMASKED_RENDERER', res.wgr, PROF.webglRenderer);
+  check('webglParams MAX_TEXTURE_SIZE', res.wgpMaxTex, PROF.webglParams[0x0D33]);
+  check('webglParams MAX_VARYING_VECTORS', res.wgpVarying, PROF.webglParams[0x8DFC]);
+  check('getParameter brand check still throws', res.wgpBrandCheck, 'TypeError, no extension frames');
+  check('Intl.DateTimeFormat masked', res.dtfToString, 'function DateTimeFormat() { [native code] }');
+
+  // --- fonts: normalisation, and the same width in both scopes ---------------------
+  function winWidth(font, text) {
+    var c = document.createElement('canvas').getContext('2d');
+    c.font = font;
+    return c.measureText(text).width;
+  }
+  // A font outside allowedFonts must measure exactly like its generic fallback —
+  // that is what stops canvas-based font detection.
+  check('blocked font measures as its generic', res.fontBlocked, res.fontGeneric);
+  // Positive control: an ALLOWED, installed font must keep its own metrics. If this
+  // ever equals the generic, the check above has stopped proving anything.
+  check('allowed font NOT normalised', res.fontAllowedNotNormalised !== res.fontGeneric, true);
+  // [FIX worker-fonts-window-only] the worker used to have no text patches at all, and
+  // later a different width formula; both scopes now run the same port.
+  check('measureText width window===worker (blocked)', res.fontBlocked, winWidth('16px "MS Gothic", monospace', 'AFP-fonts'));
+  check('measureText width window===worker (allowed)', res.fontAllowed, winWidth('16px arial', 'AFP-fonts'));
+  // Real TextMetrics, no own properties — a literal would break instanceof.
+  check('TextMetrics instanceof / own props', res.tmShape, 'true/0');
+  // [FIX integer-metrics-turned-into-floats] CreepJS rejects the Canvas section if any
+  // bounding-box metric is fractional.
+  check('bounding-box metrics stay integers', res.tmBoxInt, true);
+  check('ctx.font restored after fillText', res.fontRestored, true);
+
+  // --- UA-CH: worker must say exactly what the window says -------------------------
+  var winUad = navigator.userAgentData;
+  function brandStr(list) {
+    try { return (list || []).map(function (b) { return b.brand + '@' + b.version; }).sort().join(','); }
+    catch (e) { return 'ERR'; }
+  }
+  var winHe = null;
+  try {
+    winHe = await winUad.getHighEntropyValues(
+      ['platformVersion', 'architecture', 'bitness', 'uaFullVersion', 'fullVersionList', 'model']);
+  } catch (e) { winHe = {}; }
+
+  check('userAgentData.platform', res.uadPlatform, 'Windows');
+  check('userAgentData.mobile', res.uadMobile, false);
+  // [FIX worker-uad-diverged-from-main] the worker used to rewrite brands only when the
+  // native list was empty, so it kept the native major and never added "Google Chrome":
+  // window [Not/A)Brand 99, Chromium 151, Google Chrome 151] vs worker
+  // [Not/A)Brand 99, Chromium 148]. CreepJS compares the two scopes directly.
+  check('userAgentData.brands window===worker', res.uadBrands, brandStr(winUad && winUad.brands));
+  check('platformVersion window===worker', res.hePlatformVersion, winHe.platformVersion || '<none>');
+  check('architecture window===worker', res.heArchitecture, winHe.architecture || '<none>');
+  check('bitness window===worker', res.heBitness, winHe.bitness || '<none>');
+  check('uaFullVersion window===worker', res.heUaFull, winHe.uaFullVersion || '<none>');
+  check('fullVersionList window===worker', res.heFvl, brandStr(winHe.fullVersionList));
+  check('model stays empty', res.heModel, '<empty>');
+  // The prototype getter must look native in BOTH scopes — patching it in the worker
+  // only is what made the two signatures differ in the first place.
+  check('NavigatorUAData.prototype.brands getter native', res.uadProtoBrandsGetter,
+    String(Object.getOwnPropertyDescriptor(NavigatorUAData.prototype, 'brands').get));
+  // [FIX invented-connection-type] type is NOT patched (desktop Chrome has none);
+  // effectiveType is native and spoofed to 4g in both scopes.
+  check('connection.effectiveType', res.connEffectiveType, '4g');
+
+  // --- timezone / DST --------------------------------------------------------------
+  var winOffsets = ['2025-01-15T12:00:00Z', '2025-07-15T12:00:00Z',
+                    '2025-03-30T00:30:00Z', '2025-03-30T01:30:00Z',
+                    '2025-10-26T00:30:00Z', '2025-10-26T01:30:00Z']
+    .map(function (s) { return new Date(s).getTimezoneOffset(); }).join(',');
+  check('getTimezoneOffset window===worker (6 dates)', res.tzOffsets, winOffsets);
+  // Europe/Tallinn is UTC+2 standard, UTC+3 in summer → -120 / -180. If DST were a
+  // one-shot "now" snapshot all six would be identical, and if the threshold sign were
+  // wrong the two transition pairs would not straddle it.
+  check('DST actually flips across the transitions',
+    (function () { var o = res.tzOffsets.split(',');
+      return o[0] === '-120' && o[1] === '-180' && o[2] === '-120' && o[3] === '-180' &&
+             o[4] === '-180' && o[5] === '-120'; })(), true);
+  check('getTimezoneOffset masked', res.tzOffsetMasked, 'function getTimezoneOffset() { [native code] }');
+  // --- Date API parity (local getters / toString) --------------------------------
+  var winHours = ['2025-01-15T12:00:00Z', '2025-07-15T12:00:00Z']
+    .map(function (s) { return new Date(s).getHours(); }).join(',');
+  check('getHours window===worker (2 dates)', res.dateHours, winHours);
+  var _wd = new Date('2025-07-15T12:00:00Z');
+  check('getFullYear/Month/Date window===worker', res.dateFullYearMonth,
+    _wd.getFullYear() + '-' + _wd.getMonth() + '-' + _wd.getDate());
+  var winTs = new Date('2025-07-15T12:00:00Z').toString();
+  check('toString GMT+zone shape window===worker',
+    String(res.dateToStringHasZone).replace(/\([^)]*\)/, '(ZONE)'),
+    winTs.replace(/\([^)]*\)/, '(ZONE)'));
+  check('Date.toString masked', res.dateToStringMasked, 'function toString() { [native code] }');
+  check('Date.getHours masked', res.dateGetHoursMasked, 'function getHours() { [native code] }');
+
+  // --- module worker: the first message must not vanish ----------------------------
+  // [FIX module-worker-dropped-the-first-message] The module path wraps the child in a
+  // blob that runs the patch and then `await import()`s the real script — and that await
+  // costs a turn of the event loop. A message posted in the SAME TICK as `new Worker`,
+  // which is how nearly all code uses one, was delivered while the imported module had
+  // not registered its handler yet, and a message event with no listener is dropped, not
+  // queued. Measured against a clean browser on the same page: clean replied, the
+  // extension did not, and the same message sent 700 ms later did. So the check has to
+  // post immediately — a delayed postMessage passes on the broken build.
+  var modUrl = URL.createObjectURL(new Blob([
+    'self.onmessage=function(){postMessage("pong "+navigator.hardwareConcurrency)};'
+  ], { type: 'application/javascript' }));
+  var modRes = await new Promise(function (resolve) {
+    var mw;
+    try { mw = new Worker(modUrl, { type: 'module' }); } catch (e) { return resolve('threw ' + e.message); }
+    var t = setTimeout(function () { try { mw.terminate(); } catch (e) {} resolve('NO REPLY'); }, 6000);
+    mw.onmessage = function (ev) { clearTimeout(t); try { mw.terminate(); } catch (e) {} resolve(String(ev.data)); };
+    mw.onerror = function (ev) { clearTimeout(t); resolve('error ' + (ev.message || 'load/parse')); };
+    mw.postMessage(1);
+  });
+  URL.revokeObjectURL(modUrl);
+  check('module worker answers a same-tick message', modRes, 'pong ' + PROF.hwConcurrency);
+
+  render(null);
+})().catch(function (e) {
+  // Without this the page throws, states nothing, and the runner can only report a
+  // timeout — the same silent-red shape the verdict fix above is about.
+  document.getElementById('out').innerHTML =
+    '<p class="bad">threw before stating a verdict: ' +
+    String((e && e.message) || e).replace(/</g, '&lt;') + '</p><p class="bad">FAILURES: 1</p>';
+});
+</script>

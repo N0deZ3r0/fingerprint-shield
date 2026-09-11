@@ -18,10 +18,15 @@
 #            loads the extension for real. NOT on every push, deliberately — see the note
 #            on that job.
 #
-# Node is pinned to 24 rather than "latest". test/tz-icu.mjs compares 845 timezone
-# assertions against the ICU that Node bundles, so the runtime's version is part of the
-# measurement; a floating major would turn an ICU data update into a red build that has
-# nothing to do with this code.
+# Node is pinned to 24.19.0 — the exact release, not the major. test/tz-icu.mjs compares 941
+# timezone assertions against the ICU that Node bundles, and test/tz-oracle.mjs takes Node as
+# the oracle for a browser in the claimed zone, so the runtime's tzdata is part of the
+# measurement. Pinning only the major was meant to stop an ICU data update turning the build
+# red for reasons unrelated to this code, and a MINOR did exactly that: on 2026-09-11 the
+# runner images moved from 24.19.0 to 24.20.0, which carries tzdata 2026c, and the Morocco
+# profile's DST edges went red with no change to the code — Africa/Casablanca answers UTC+0
+# from the autumn of 2026 in that Node and UTC+1 in Playwright's Chromium 141. Move the pin
+# when the browser's tzdata moves, not before.
 name: CI
 
 on:
@@ -83,7 +88,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: npm
       # `npm ci` and not `npm install`: it installs exactly what package-lock.json pins and
       # fails instead of quietly updating it. It also does NOT download browser binaries —
@@ -107,7 +112,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: npm
       - run: npm ci
       - run: node tools/pack.mjs
@@ -160,7 +165,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: npm
       - run: npm ci
       # THE TAG MUST AGREE WITH THE MANIFEST. Publishing v2.3.5 whose manifest.json says
@@ -264,7 +269,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: npm
       - run: npm ci
       # Only chromium. test/harness.mjs defaults to channel:'chromium', and installing

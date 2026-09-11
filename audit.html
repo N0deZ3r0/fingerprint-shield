@@ -88,6 +88,11 @@
       ratio half is CLOSED since 2.5.27, and not by patching: a claimed dpr the engine
       disproves is refutable in two lines, so the ratio yields to the host exactly as the
       screen does above.</li>
+    <li><b>A <code>Critical-CH</code> retry on a brand-new origin goes out without the OS
+      build.</b> The opt-in can only be observed, never blocked, and Chrome reissues the
+      request from the network stack in 4-7 ms — faster than any rule can be written. The
+      other four hints are native on a matching host, so nothing is absent but
+      <code>sec-ch-ua-platform-version</code>, and no true build is ever sent.</li>
     <li><b>The install window sends the host's <code>user-agent</code>.</b> Free on Chrome,
       where the real and spoofed strings are identical; on Edge it carries
       <code>Edg/</code>.</li>

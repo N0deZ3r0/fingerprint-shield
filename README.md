@@ -5,9 +5,9 @@
 **One coherent invented machine — the same one in the window, in every frame and in every worker.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-2.5.28-3b5bdb)
+![version](https://img.shields.io/badge/version-2.5.29-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
-![suites](https://img.shields.io/badge/suites-57-2f9e44)
+![suites](https://img.shields.io/badge/suites-58-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
 
 **English** · [Русский](README.ru.md)
@@ -25,7 +25,7 @@ browser rather than against an assumption.
 
 <div align="center">
 
-<img src="docs/ui-whoami.png?v=2.5.28" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
+<img src="docs/ui-whoami.png?v=2.5.29" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
 
 <sub><b>Who Am I</b> — the machine as a site reads it. Every value on this page is the
 claim, not the host, and the fingerprint hash at the top is what a tracker would key on.</sub>
@@ -53,14 +53,14 @@ To run from source instead, point **Load unpacked** at a clone of this repositor
 <tr>
 <td width="38%" valign="top" align="center">
 
-<img src="docs/ui-popup.png?v=2.5.28" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
+<img src="docs/ui-popup.png?v=2.5.29" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
 
 <sub>The popup: country, per-site switches, device profile.</sub>
 
 </td>
 <td width="62%" valign="top" align="center">
 
-<img src="docs/ui-modules.png?v=2.5.28" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
+<img src="docs/ui-modules.png?v=2.5.29" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
 
 <sub>Thirteen modules, switched one by one. `ClientRects` ships off — it is
 the one that makes CreepJS go red.</sub>
@@ -81,11 +81,11 @@ showing one language twice.
 
 ```bash
 npm ci
-npm test           # the 9 Node suites — seconds, no browser
+npm test           # the 10 Node suites — seconds, no browser
 npm run test:all   # adds the 48 Playwright suites — six to eight minutes
 ```
 
-**57 suites** in total. The Node half runs on every push and every pull request; it includes
+**58 suites** in total. The Node half runs on every push and every pull request; it includes
 `test/parity-static.mjs`, which re-runs both generators in memory and fails if
 `mw-bundle.js` or `dyn/` on disk are stale. The Playwright half loads the extension for real
 in Chromium and is triggered manually, because its assertions are Windows facts — the ANGLE
@@ -198,6 +198,18 @@ from the audit page, so they are not renumbered.
     hoists out of a loop, and a JavaScript function never will be. This is the boundary of
     wrapping in the page's own world rather than a defect in one wrapper.
 
+23. **A `Critical-CH` retry on a brand-new origin goes out without the OS build.** A site asks
+    for the high-entropy client hints in a response header, so the extension learns of the
+    request only by observing that response, and only then can it write a DNR rule.
+    `Critical-CH` makes Chrome reissue the request from its network stack 4-7 ms later —
+    faster than any rule can be written, because MV3 has no blocking `webRequest` to sit in
+    front of it. Measured on a new host: a clean browser's retry carries arch, bitness, model,
+    wow64 and platform-version; ours carries the first four, native, because on a host that
+    matches the claim the extension no longer touches them. Only
+    `sec-ch-ua-platform-version` is absent, and the host's real build is never sent. The rest
+    of the first visit is closed since 2.5.29: a new host's rules are written at once instead
+    of after a 300 ms coalescing timer, which had made the whole first visit go out stripped.
+
 The extension's own audit page carries the same list beside its verdict, because a green
 verdict is only ever as broad as the questions asked.
 
@@ -215,7 +227,7 @@ node test/hostleak.mjs        # host values that make it through
 
 ```bash
 npm run build         # regenerates dyn/ and mw-bundle.js
-node tools/pack.mjs   # builds dist/ — the extension only, 243 files
+node tools/pack.mjs   # builds dist/ — the extension only, 249 files
 node tools/shots.mjs  # retakes the screenshots above from the running extension
 ```
 

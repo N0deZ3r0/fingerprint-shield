@@ -317,7 +317,27 @@ async function collect(withExtension) {
   });
   try {
     if (withExtension) {
-      ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
+      const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
+      await bootSettled(ctx);
+      // [FIX the-frame-answered-the-tag-where-the-window-answered-icu] THE COUNTRY IS PART
+      // OF THE INSTRUMENT. This file planted none, so it ran on the default US row — and
+      // on that row `loc` and `intlLocale` are the same string, 'en-US'. The `locale` axis
+      // below therefore could not fail no matter what any realm answered: the tag a wrong
+      // code path substitutes and the ICU default a right one substitutes are identical
+      // there. 57 of the 67 country rows differ; 10 do not, and this suite was standing on
+      // one of the 10.
+      //
+      // It cost a real defect. Reported from a user's own Chrome 153, country EE, by the
+      // parity table on the Who Am I page — one axis, three realms:
+      //
+      //     signal        window   worker   iframe
+      //     Intl locale   et       et       et-EE
+      //
+      // EE is planted here for exactly that reason: 'et-EE' is the tag and 'et' is what a
+      // browser forced to Estonian actually reports, so the two are distinguishable and
+      // rule 1 above can see the difference. Any of the 57 would do; this one is the one
+      // that was measured.
+      await sw.evaluate(async () => { await chrome.storage.local.set({ afp_country_code: 'EE' }); });
       await bootSettled(ctx);
     }
     const p = await ctx.newPage();

@@ -1,4 +1,4 @@
-Fingerprint Shield 2.5.28 — release package
+Fingerprint Shield 2.5.29 — release package
 ==========================================
 
   This is the document that ships INSIDE the package: structure, CI, and the suites that
@@ -17,7 +17,7 @@ Load in Chrome:
   `npm test`, so a file that stops shipping turns the suite red rather than an install.
 
 Continuous integration (.github/workflows/ci.yml):
-  node      lint + the 9 Node suites + the package check. Seconds, every push and PR.
+  node      lint + the 10 Node suites + the package check. Seconds, every push and PR.
             This is the one worth gating on: it includes test/parity-static.mjs, which
             re-runs both generators in memory, so a module edited without re-running
             tools/gen-bundle.mjs fails here instead of shipping.
@@ -48,10 +48,17 @@ Structure matches manifest.json:
                    frame on purpose. Measured on a page with five such frames: 78 errors
                    with eleven MAIN files, 48 with one. On youtube.com, 27 against 1 for a
                    clean browser.
+                   It also ships with NO COMMENTS. The modules keep every one; the
+                   concatenation does not, because that text is scanned once per FRAME on
+                   every page, and 654,685 of its 1,075,029 bytes were comment. Measured
+                   by tools/probe-bundlecost.mjs, Chromium 141, three runs: 6.4/7.8/7.8 ms
+                   per frame with them in, 5.2/6.4/6.5 ms as shipped. Lines are blanked
+                   rather than deleted, so a stack frame at mw-bundle.js:N still divides
+                   back into a module and a line in it.
                    After editing ANY module:
                      node tools/gen-bundle.mjs
                    (test/parity-static.mjs fails if you forget — it compares byte for byte,
-                    the same guard dyn/ has. dev-*.html still loads the modules one by one,
+                    the same guard dyn/ has. devpages/dev-*.html still loads the modules one by one,
                     so the browser suite keeps exercising the unbundled path.)
   rules/static.json  DNR static rules — the identity/locale strip, on in every mode
   rules/static-hw.json  the hardware-hint strip (OS build, device-memory, dpr); background.js

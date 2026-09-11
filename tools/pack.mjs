@@ -52,7 +52,7 @@ const DIST = path.join(root, 'dist');
 // mentions of them outside tools/ and test/ are in comments — checked, not assumed.
 const SKIP_DIRS = new Set([
   'node_modules', '_metadata', '.git', '.github', '.claude', 'dist',
-  'test', 'tools', 'mw', 'docs',
+  'devpages', 'test', 'tools', 'mw', 'docs',
 ]);
 
 // Individual files that never ship. profile-injector.js is the twelfth bundle input, not a

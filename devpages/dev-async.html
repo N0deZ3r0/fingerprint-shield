@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>async behaviour: clean realm vs patched window</title></head>
+<body><pre id="out">running…</pre>
+<script>
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0, pdfViewerEnabled:true,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  speechVoices:[{name:'Microsoft Kaia - Estonian',lang:'et-EE',localService:true,default:true}],
+  features:{canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true}
+}));
+sessionStorage.setItem('v.ui.m','normal');
+
+const ORDER=['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+ '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js','../mw/mw-geo.js','../mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+const ifr=document.createElement('iframe'); ifr.style.display='none';
+document.body.appendChild(ifr);
+const CLEAN=ifr.contentWindow, CLEANDOC=ifr.contentDocument;
+
+// ASYNC-aware: a native rejection must stay a rejection. My previous probe only
+// caught synchronous throws, so swallowed Promise rejections went unnoticed.
+async function probes(W, D){
+  const P={};
+  const A=async(k,fn)=>{
+    try { const v = await fn(); P[k]='RESOLVED '+(typeof v==='object'&&v?JSON.stringify(v).slice(0,80):String(v).slice(0,60)); }
+    catch(e){ P[k]='REJECTED '+(e&&e.constructor?e.constructor.name:'?')+': '+String(e&&e.message).slice(0,70); }
+  };
+
+  // ── permissions.query: native rejects for unknown / malformed descriptors ──
+  const pq=(d)=>W.navigator.permissions.query(d);
+  await A('permissions geolocation',   ()=>pq({name:'geolocation'}));
+  await A('permissions notifications', ()=>pq({name:'notifications'}));
+  await A('permissions camera',        ()=>pq({name:'camera'}));
+  await A('permissions local-fonts',   ()=>pq({name:'local-fonts'}));
+  await A('permissions bogus-name',    ()=>pq({name:'totally-bogus-xyz'}));
+  await A('permissions empty object',  ()=>pq({}));
+  await A('permissions no arg',        ()=>pq());
+  await A('permissions null',          ()=>pq(null));
+  await A('permissions string arg',    ()=>pq('geolocation'));
+  await A('permissions midi sysex',    ()=>pq({name:'midi', sysex:true}));
+  await A('permissions push no userVisibleOnly', ()=>pq({name:'push'}));
+
+  // ── userAgentData high-entropy: native rejects unknown hints ──
+  await A('GHEV valid hints', ()=>W.navigator.userAgentData.getHighEntropyValues(['platform']));
+  await A('GHEV bogus hint',  ()=>W.navigator.userAgentData.getHighEntropyValues(['bogusHintXyz']));
+  await A('GHEV not array',   ()=>W.navigator.userAgentData.getHighEntropyValues('platform'));
+
+  // ── battery ──
+  await A('getBattery', ()=>W.navigator.getBattery ? W.navigator.getBattery() : Promise.resolve('absent'));
+
+  // ── mediaDevices ──
+  await A('enumerateDevices', ()=>W.navigator.mediaDevices
+      ? W.navigator.mediaDevices.enumerateDevices().then(a=>'len='+a.length)
+      : Promise.resolve('absent'));
+
+  // ── fonts.load: native rejects unparseable ──
+  await A('fonts.load valid',   ()=>D.fonts.load('12px Arial').then(a=>'len='+a.length));
+  await A('fonts.load garbage', ()=>D.fonts.load('!!!').then(a=>'len='+a.length));
+  await A('fonts.load bold',    ()=>D.fonts.load('bold').then(a=>'len='+a.length));
+  await A('fonts.ready',        ()=>D.fonts.ready.then(()=>'ok'));
+
+  // ── keyboard layout map ──
+  await A('keyboard.getLayoutMap', ()=>W.navigator.keyboard
+      ? W.navigator.keyboard.getLayoutMap().then(m=>'size='+m.size)
+      : Promise.resolve('absent'));
+
+  // ── geolocation (callback API, wrapped as a promise) ──
+  await A('geolocation getCurrentPosition', ()=>new Promise((res,rej)=>{
+      if(!W.navigator.geolocation) return res('absent');
+      let done=false;
+      W.navigator.geolocation.getCurrentPosition(
+        p=>{ if(!done){done=true;res('lat='+p.coords.latitude.toFixed(2));} },
+        e=>{ if(!done){done=true;rej(new Error('geo err code '+e.code));} },
+        {timeout:1500});
+      setTimeout(()=>{ if(!done){done=true;res('no callback in 2s');} },2000);
+  }));
+
+  // ── storage estimate (the "gb" field) ──
+  await A('storage.estimate', ()=>W.navigator.storage && W.navigator.storage.estimate
+      ? W.navigator.storage.estimate().then(e=>'quotaGB='+Math.round(e.quota/1073741824))
+      : Promise.resolve('absent'));
+
+  // ── OffscreenCanvas convertToBlob rejections ──
+  await A('convertToBlob 0x0', ()=>{
+      const c=new W.OffscreenCanvas(0,0); c.getContext('2d');
+      return c.convertToBlob().then(b=>'size='+b.size); });
+  await A('convertToBlob bad type', ()=>{
+      const c=new W.OffscreenCanvas(8,8); c.getContext('2d');
+      return c.convertToBlob({type:'image/notreal'}).then(b=>b.type); });
+  return P;
+}
+
+(async()=>{
+  const clean = await probes(CLEAN, CLEANDOC);
+  for(const f of ORDER) await load(f);
+  const ours = await probes(window, document);
+  const L=[];
+  const keys=Object.keys(clean);
+  const diffs=keys.filter(k=>clean[k]!==ours[k]);
+  // Swallowing a native rejection is normally a defect — it makes something the browser
+  // cannot do look supported. Geolocation is the one deliberate exception: the extension
+  // answers getCurrentPosition with a country centroid ON PURPOSE, and mw/mw-misc.js
+  // reports permissions.query({name:'geolocation'}).state === 'granted' to match. A clean
+  // realm rejects here only because nobody granted the permission, so "resolves" is not a
+  // lie about capability — it is the same pair of answers a browser gives once the user
+  // has allowed location. Rejecting instead would contradict the permission state we
+  // report, which is the louder inconsistency. Listed by name so the exemption stays
+  // deliberate rather than becoming a blanket rule.
+  const EXPECTED_RESOLVE={'geolocation getCurrentPosition':
+    'spoofed on purpose; permissions.state is reported as granted to match'};
+  const swallowedAll=diffs.filter(k=>clean[k].startsWith('REJECTED') && ours[k].startsWith('RESOLVED'));
+  const swallowed=swallowedAll.filter(k=>!EXPECTED_RESOLVE[k]);
+  const expected=swallowedAll.filter(k=>EXPECTED_RESOLVE[k]);
+  const added=diffs.filter(k=>clean[k].startsWith('RESOLVED') && ours[k].startsWith('REJECTED'));
+  const valueOnly=diffs.filter(k=>!swallowedAll.includes(k)&&!added.includes(k));
+  L.push('async probes: '+keys.length+'   differing: '+diffs.length);
+  L.push('');
+  L.push('### WE SWALLOW A NATIVE REJECTION ('+swallowed.length+') — makes unsupported things look supported');
+  swallowed.forEach(k=>L.push('   '+k+'\n      clean = '+clean[k]+'\n      ours  = '+ours[k]));
+  L.push('');
+  L.push('### resolved on purpose ('+expected.length+') — by design, not counted');
+  expected.forEach(k=>L.push('   '+k+'\n      clean = '+clean[k]+'\n      ours  = '+ours[k]+
+    '\n      why   = '+EXPECTED_RESOLVE[k]));
+  L.push('');
+  L.push('### WE REJECT WHERE NATIVE RESOLVES ('+added.length+')');
+  added.forEach(k=>L.push('   '+k+'\n      clean = '+clean[k]+'\n      ours  = '+ours[k]));
+  L.push('');
+  L.push('### value differences ('+valueOnly.length+')');
+  valueOnly.forEach(k=>L.push('   '+k+'\n      clean = '+clean[k]+'\n      ours  = '+ours[k]));
+  // Same omission as dev-lies.html: plenty of detail, no verdict test/run.mjs could
+  // match, so the runner timed out and called it FAILED regardless of the counts.
+  // Only the two "we disagree with native about whether a thing WORKS" buckets are
+  // failures; plain value differences are what the extension is for.
+  L.push('');
+  L.push('FAILURES: ' + (swallowed.length + added.length) +
+    ((swallowed.length + added.length) ? '' :
+      ' — no swallowed rejections, no added rejections ('+valueOnly.length+' value diffs)'));
+  document.getElementById('out').textContent=L.join('\n');
+})();
+</script>
+</body></html>

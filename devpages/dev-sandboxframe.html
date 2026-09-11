@@ -1,0 +1,172 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — scriptless sandbox frames: is protection actually lost?</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, monospace; padding: 16px; }
+  table { border-collapse: collapse; margin-top: 12px; }
+  td, th { border: 1px solid #ccc; padding: 3px 8px; text-align: left; vertical-align: top; }
+  .ok { color: #0a0; } .bad { color: #c00; font-weight: bold; }
+  #sum { font-size: 15px; margin-top: 14px; }
+</style>
+<h1 style="font-size:15px">Scriptless sandbox frames — protection coverage</h1>
+<p>
+  Chrome logs <em>"Blocked script execution in 'about:blank' because the document's frame is
+  sandboxed and the 'allow-scripts' permission is not set"</em> for every MAIN-world script it
+  refuses to run in such a frame — and this extension's MAIN-world content script is declared
+  <code>all_frames</code> + <code>match_about_blank</code>, so it is one of the things being
+  refused. The message is therefore expected. The question that matters is whether the frame
+  ends up UNPROTECTED, because a detector's whole point in creating one
+  (SannySoft uses <code>sandbox="allow-same-origin"</code>) is to read a canvas from a realm
+  our scripts could not reach.
+  <br><br>
+  <code>mw-canvas-audio.js</code> claims to cover exactly this by patching such frames
+  <strong>from the parent</strong> (<code>_installFrameCanvasBridge</code> /
+  <code>_isScriptlessSandbox</code>). This page verifies that claim, and also demonstrates
+  that a page can produce the same console message entirely on its own.
+</p>
+<div id="out"></div>
+<div id="sum"></div>
+
+<script>
+  sessionStorage.setItem('v.ui.s', JSON.stringify({
+    locale: 'et-EE', language: 'et-EE', timezone: 'Europe/Tallinn', mode: 'normal',
+    noiseSeed: 987654321, screenWidth: 1920, screenHeight: 1080, colorDepth: 32,
+    devicePixelRatio: 1, hwConcurrency: 8, deviceMemory: 8, platform: 'Win32',
+    allowedFonts: ['Arial', 'Segoe UI', 'Tahoma'], webglParams: {},
+    features: { canvas: true, audio: true, webgl: true, webrtc: true, navigator: true,
+      screen: true, timezone: true, geolocation: true, battery: true, fonts: true,
+      clientRects: false, plugins: true, network: true, hideAdBlocker: true }
+  }));
+  // Captured BEFORE the modules load — the only reliable pristine reference on this page.
+  // A second sandboxed iframe does NOT work as a control: _installFrameCanvasBridge wraps
+  // Node.prototype.appendChild and patches such a frame synchronously as it is inserted,
+  // so reading "native" toDataURL out of a freshly created frame reads the PATCHED one and
+  // the control silently agrees with the subject.
+  var NATIVE_TDU = HTMLCanvasElement.prototype.toDataURL;
+  function drawScene(doc) {
+    var c = doc.createElement('canvas');
+    c.width = 220; c.height = 60;
+    var x = c.getContext('2d');
+    x.textBaseline = 'top';
+    x.font = '14px Arial';
+    x.fillStyle = '#f60';
+    x.fillRect(0, 0, 120, 30);
+    x.fillStyle = '#069';
+    x.fillText('Sandbox parity ✅ АБВ', 2, 15);
+    x.fillStyle = 'rgba(102,204,0,0.7)';
+    x.fillText('Sandbox parity ✅ АБВ', 4, 25);
+    return c;
+  }
+  // Draw the same scene in any document and return its data URL.
+  function scene(doc) {
+    var c = doc.createElement('canvas');
+    c.width = 220; c.height = 60;
+    var x = c.getContext('2d');
+    x.textBaseline = 'top';
+    x.font = '14px Arial';
+    x.fillStyle = '#f60';
+    x.fillRect(0, 0, 120, 30);
+    x.fillStyle = '#069';
+    x.fillText('Sandbox parity ✅ АБВ', 2, 15);
+    x.fillStyle = 'rgba(102,204,0,0.7)';
+    x.fillText('Sandbox parity ✅ АБВ', 4, 25);
+    return c.toDataURL();
+  }
+</script>
+<script src="../mw/mw-core.js"></script>
+<script src="../mw/mw-timezone-screen.js"></script>
+<script src="../mw/mw-navigator.js"></script>
+<script src="../mw/mw-canvas-audio.js"></script>
+<script src="../mw/mw-misc.js"></script>
+<script>
+(function () {
+  var rows = [], fails = 0;
+  function check(name, got, want, note) {
+    var ok = (got === want);
+    if (!ok) fails++;
+    rows.push('<tr><td>' + name + '</td><td>' + String(got).slice(0, 60) + '</td><td>' +
+      String(want).slice(0, 60) + '</td><td class="' + (ok ? 'ok' : 'bad') + '">' +
+      (ok ? 'ok' : 'FAIL') + '</td><td>' + (note || '') + '</td></tr>');
+  }
+
+  var parentHash = scene(document);
+
+  // The frame a detector actually builds: same-origin so it can be read, no allow-scripts
+  // so our content scripts cannot run inside it.
+  var f = document.createElement('iframe');
+  f.setAttribute('sandbox', 'allow-same-origin');
+  document.body.appendChild(f);
+
+  var fdoc = null, reachable = false;
+  try { fdoc = f.contentDocument; reachable = !!fdoc; } catch (e) { reachable = false; }
+  check('parent can reach the sandboxed frame document', reachable, true,
+    'allow-same-origin keeps the origin, so the parent-side bridge is possible at all');
+
+  if (reachable) {
+    var W = f.contentWindow;
+    // Was the frame's own realm patched from the parent?
+    var patchedTDU = false, patchedGID = false, noAttrs = false;
+    try {
+      patchedTDU = /\[native code\]/.test(String(W.HTMLCanvasElement.prototype.toDataURL)) &&
+        W.HTMLCanvasElement.prototype.toDataURL !== HTMLCanvasElement.prototype.toDataURL.constructor;
+      // the real signal: the frame's fn is not the same object the frame started with
+      patchedGID = typeof W.CanvasRenderingContext2D.prototype.getImageData === 'function';
+      noAttrs = W.document.documentElement.attributes.length === 0;
+    } catch (e) {}
+    // [FIX bridge-attributes-were-an-extension-detector] This used to assert a data-v-cv
+    // attribute the bridge wrote on the frame. That attribute is gone — a clean browser
+    // leaves NO attributes on <html>, so ours was a one-line extension detector — and the
+    // marker is now __p0, which the parent reads but never writes into the frame. The
+    // inverse is asserted instead: the bridge must leave the frame's DOM untouched. What
+    // proves the patch landed is the byte-identical canvas below, which is the better test.
+    check('the bridge leaves no attribute on the frame', noAttrs, true,
+      'a clean browser has none; any of ours would announce the extension');
+
+    // The decisive one: identical scene, identical bytes in both realms.
+    var frameHash = 'ERROR';
+    try { frameHash = scene(fdoc); } catch (e) { frameHash = 'THREW ' + e.message; }
+    check('sandboxed frame canvas === parent canvas', frameHash === parentHash, true,
+      frameHash === parentHash ? 'same noised bytes in both realms'
+                               : 'frame len ' + String(frameHash).length + ' vs parent ' + parentHash.length);
+
+    // And it must not be the CLEAN value — otherwise "equal" would only mean
+    // "neither was noised". The reference is the toDataURL captured before the modules
+    // loaded, applied to the same scene.
+    var nativeHash = 'ERROR';
+    try { nativeHash = NATIVE_TDU.call(drawScene(document)); }
+    catch (e) { nativeHash = 'THREW ' + e.message; }
+    check('the shared value is actually noised, not just equal-because-native',
+      parentHash !== nativeHash, true,
+      parentHash === nativeHash ? 'both realms returned the NATIVE bytes — no protection'
+                                : 'differs from a pristine read, as it should');
+    // The frame's value must equal the parent's noised value, not the pristine one.
+    check('sandboxed frame does not leak the pristine canvas', frameHash !== nativeHash, true,
+      frameHash === nativeHash ? 'frame returned NATIVE bytes — the bridge did not take'
+                               : 'frame is noised like the parent');
+  }
+  f.remove();
+
+  // Demonstrate that the console message is not exclusive to us: a page that puts its own
+  // script into a scriptless sandbox frame gets the identical message.
+  var own = document.createElement('iframe');
+  own.setAttribute('sandbox', 'allow-same-origin');
+  document.body.appendChild(own);
+  var ranInside = 'no';
+  try {
+    own.contentDocument.open();
+    own.contentDocument.write('<script>window.__ran = 1;<\/script>');
+    own.contentDocument.close();
+    ranInside = own.contentWindow.__ran ? 'yes' : 'no';
+  } catch (e) { ranInside = 'threw'; }
+  check('a script the PAGE itself puts in such a frame is blocked too', ranInside, 'no',
+    'same console line, nothing to do with this extension');
+  own.remove();
+
+  var verdict = 'FAILURES: ' + fails + (fails ? '' : ' — sandboxed frames stay covered by the parent bridge');
+  document.getElementById('out').innerHTML =
+    '<table><tr><th>check</th><th>got</th><th>want</th><th></th><th>note</th></tr>' +
+    rows.join('') + '</table>' +
+    '<p class="' + (fails ? 'bad' : 'ok') + '">' + verdict + '</p>';
+  document.getElementById('sum').textContent = verdict;
+})();
+</script>

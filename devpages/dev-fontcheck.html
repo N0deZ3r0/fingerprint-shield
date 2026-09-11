@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>FontFaceSet.check as an oracle</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// "font B" is unsupported in a clean browser and in every worker, and becomes
+// "Windows" only in OUR window and only with the fonts flag on. So the method
+// behind B must be one that carries ZERO information in clean Chrome and starts
+// working because of us. Prime suspect: document.fonts.check(), which in Chrome
+// answers true for anything that parses — a detector gets no signal from it.
+// If our override answers false for non-allowlisted families, we hand that
+// detector a working font oracle that no real Chrome provides.
+const ON = new URLSearchParams(location.search).get('fonts') !== '0';
+const F = {canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:ON,clientRects:true,plugins:true,network:true,hideAdBlocker:true};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:F
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER=['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+ '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js','../mw/mw-geo.js','../mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// Windows-exclusive, Apple-exclusive, and pure fiction. A detector that can tell
+// these apart has a working oracle; one that gets "true" for all of them has none.
+const PROBE = ['Segoe UI','Calibri','Consolas','MS Gothic','Sylfaen','Marlett',
+  'Helvetica Neue','Lucida Grande','Menlo','Skia',
+  'DejaVu Sans','Ubuntu','Cantarell',
+  'Arial','Tahoma',
+  'NoSuchFontQwerty','ZZZ Not A Font 12345'];
+
+function survey(D){
+  const f = D.fonts, out = {};
+  for (const name of PROBE){
+    try { out[name] = f.check('12px "' + name + '"'); }
+    catch (e) { out[name] = 'THROW ' + e.name; }
+  }
+  return out;
+}
+
+(async()=>{
+  const ifr=document.createElement('iframe'); ifr.style.display='none';
+  document.body.appendChild(ifr);
+  const clean = survey(ifr.contentDocument);
+
+  for (const f of ORDER) await load(f);
+  const ours = survey(document);
+
+  const L=[];
+  L.push('fonts flag: '+(ON?'ON':'OFF'));
+  L.push('');
+  L.push('document.fonts.check("12px <family>")');
+  L.push('  '+'family'.padEnd(20)+'clean'.padEnd(10)+'ours');
+  let diff=0;
+  for (const name of PROBE){
+    const c=String(clean[name]), o=String(ours[name]);
+    if (c!==o) diff++;
+    L.push('  '+(c!==o?'≠ ':'  ')+name.padEnd(18)+c.padEnd(10)+o);
+  }
+  const cleanVals=new Set(PROBE.map(n=>String(clean[n])));
+  const oursVals =new Set(PROBE.map(n=>String(ours[n])));
+  L.push('');
+  L.push('distinct answers — clean: '+[...cleanVals].join('/')+'   ours: '+[...oursVals].join('/'));
+  L.push('');
+  L.push(cleanVals.size===1
+    ? 'clean Chrome answers the SAME for every family → check() carries no information,\n'
+     +'      which is exactly why a detector reports that method as "unsupported".'
+    : 'clean Chrome already discriminates ('+cleanVals.size+' distinct answers) — hypothesis wrong.');
+  L.push(oursVals.size>1 && cleanVals.size===1
+    ? 'FAIL  our check() discriminates ('+oursVals.size+' distinct answers) → we HAND the detector\n'
+     +'      a font oracle that no real Chrome has. '+diff+' of '+PROBE.length+' families answered differently.'
+    : 'PASS  our check() is as uninformative as clean Chrome.');
+  document.getElementById('out').textContent=L.join('\n');
+})();
+</script>
+</body></html>

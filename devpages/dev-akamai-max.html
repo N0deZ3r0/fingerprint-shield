@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Akamai-style MAX multi-signal probe</title>
+  <style>
+    body { font: 12px/1.45 ui-monospace, Consolas, monospace; margin: 14px; max-width: 1200px; }
+    h3 { margin: 0 0 4px; font-size: 15px; }
+    h4 { margin: 16px 0 6px; font-size: 12px; opacity: .8; border-bottom: 1px solid #8883; padding-bottom: 2px; }
+    .info { opacity: .65; margin-bottom: 10px; max-width: 960px; }
+    .ok  { color: #137333; font-weight: 700; }
+    .bad { color: #c5221f; font-weight: 700; }
+    .warn { color: #b06000; }
+    table { border-collapse: collapse; width: 100%; margin: 4px 0 10px; }
+    th, td { padding: 2px 8px; text-align: left; border-bottom: 1px solid #8883; vertical-align: top; }
+    th { opacity: .6; font-weight: 600; }
+    #sum { margin: 10px 0; padding: 10px 12px; border-radius: 6px; font-weight: 700; font-size: 13px; }
+    .green { background: #e6f4ea; color: #137333; }
+    .red   { background: #fce8e6; color: #c5221f; }
+    .mono { word-break: break-all; }
+    pre { white-space: pre-wrap; font-size: 11px; opacity: .75; max-height: 280px; overflow: auto; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #ddd; }
+      .green { background: #0d2a17; color: #7ee2a8; }
+      .red { background: #2d1210; color: #ffa9a3; }
+    }
+  </style>
+</head>
+<body>
+<h3>Akamai-style MAX multi-signal probe</h3>
+<p class="info">
+  Расширенный набор сигналов anti-bot уровня: navigator + UA-CH, screen/window,
+  canvas, WebGL, audio, fonts, WebRTC, permissions, voices, math, performance,
+  storage, CSS media, worker parity, consistency.
+</p>
+<div id="sum">running…</div>
+
+<h4>1. Navigator / UA-CH</h4>
+<table id="t-nav"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>2. Screen / Window</h4>
+<table id="t-scr"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>3. Intl / Time</h4>
+<table id="t-intl"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>4. Canvas / WebGL / Audio</h4>
+<table id="t-gfx"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>5. Fonts / Voices / Math</h4>
+<table id="t-misc"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>6. Storage / Permissions / Network</h4>
+<table id="t-sys"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>7. Worker parity</h4>
+<table id="t-wrk"><thead><tr><th>key</th><th>value</th></tr></thead><tbody></tbody></table>
+
+<h4>Consistency checks</h4>
+<table id="t-chk"><thead><tr><th>check</th><th>verdict</th><th>detail</th></tr></thead><tbody></tbody></table>
+<pre id="log"></pre>
+
+<script>
+const F = {
+  canvas:true, audio:true, webgl:true, webrtc:true, navigator:true,
+  screen:true, timezone:true, geolocation:true, battery:true, fonts:true,
+  clientRects:false, plugins:true, network:true, hideAdBlocker:true
+};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode: 'normal',
+  platform: 'Win32', hwConcurrency: 8, deviceMemory: 8,
+  language: 'et-EE', locale: 'et-EE', countryCode: 'EE',
+  languages: ['et-EE','et','en','en-US'],
+  timezone: 'Europe/Tallinn',
+  noiseSeed: 0x12345678,
+  webglVendor: 'Google Inc. (Intel)',
+  webglRenderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+  features: F
+}));
+sessionStorage.setItem('v.ui.m', 'normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER = [
+  '../profile-injector.js', '../mw/mw-bag.js', '../mw/mw-core.js',
+  '../mw/mw-timezone-screen.js', '../mw/mw-navigator.js', '../mw/mw-canvas-audio.js',
+  '../mw/mw-misc.js', '../mw/mw-workers.js', '../mw/mw-geo.js',
+  '../mw/mw-adblock.js', '../mw/mw-cleanup.js'
+];
+function load(src) {
+  return new Promise(r => {
+    const s = document.createElement('script');
+    s.src = src + '?t=' + Date.now();
+    s.onload = () => r(true); s.onerror = () => r(false);
+    document.head.appendChild(s);
+  });
+}
+
+function fnv1a(str) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+function fnvBytes(u8) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < u8.length; i++) { h ^= u8[i]; h = Math.imul(h, 16777619) >>> 0; }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+function fnvFloat(a) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < a.length; i++) {
+    const q = Math.round(a[i] * 1e6);
+    h ^= (q >>> 0); h = Math.imul(h, 16777619) >>> 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function put(tableId, k, v) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${k}</td><td class="mono">${v === undefined || v === null ? 'null' : String(v)}</td>`;
+  document.querySelector('#' + tableId + ' tbody').appendChild(tr);
+}
+
+const checks = [];
+const logs = [];
+function check(name, pass, detail) {
+  checks.push({ name, pass: !!pass, detail: detail || '' });
+  logs.push((pass ? 'PASS  ' : 'FAIL  ') + name + (detail ? '  —  ' + detail : ''));
+}
+
+// ── collectors ──────────────────────────────────────────────
+function getNav() {
+  const n = navigator;
+  const o = {
+    userAgent: n.userAgent,
+    appVersion: n.appVersion,
+    platform: n.platform,
+    vendor: n.vendor,
+    language: n.language,
+    languages: Array.from(n.languages || []),
+    hardwareConcurrency: n.hardwareConcurrency,
+    deviceMemory: n.deviceMemory,
+    maxTouchPoints: n.maxTouchPoints,
+    webdriver: n.webdriver,
+    cookieEnabled: n.cookieEnabled,
+    doNotTrack: n.doNotTrack,
+    pdfViewerEnabled: n.pdfViewerEnabled,
+    onLine: n.onLine,
+    pluginsLength: n.plugins ? n.plugins.length : -1,
+    mimeTypesLength: n.mimeTypes ? n.mimeTypes.length : -1,
+    product: n.product,
+    productSub: n.productSub,
+    vendorSub: n.vendorSub
+  };
+  // plugin names sample
+  try {
+    const names = [];
+    for (let i = 0; i < Math.min(n.plugins.length, 8); i++) names.push(n.plugins[i].name);
+    o.pluginNames = names;
+  } catch (e) { o.pluginNames = []; }
+  return o;
+}
+
+async function getUAData() {
+  const out = { supported: !!navigator.userAgentData };
+  if (!navigator.userAgentData) return out;
+  try {
+    out.mobile = navigator.userAgentData.mobile;
+    out.platform = navigator.userAgentData.platform;
+    out.brands = (navigator.userAgentData.brands || []).map(b => b.brand + '/' + b.version);
+    const high = await navigator.userAgentData.getHighEntropyValues([
+      'architecture', 'bitness', 'model', 'platformVersion',
+      'fullVersionList', 'wow64', 'formFactors'
+    ]);
+    out.architecture = high.architecture;
+    out.bitness = high.bitness;
+    out.model = high.model;
+    out.platformVersion = high.platformVersion;
+    out.wow64 = high.wow64;
+    out.formFactors = high.formFactors;
+    out.fullVersionList = (high.fullVersionList || []).map(b => b.brand + '/' + b.version);
+  } catch (e) {
+    out.error = String(e.message || e);
+  }
+  return out;
+}
+
+function getScreen() {
+  return {
+    width: screen.width, height: screen.height,
+    availWidth: screen.availWidth, availHeight: screen.availHeight,
+    colorDepth: screen.colorDepth, pixelDepth: screen.pixelDepth,
+    orientation: screen.orientation ? screen.orientation.type : null,
+    devicePixelRatio: window.devicePixelRatio,
+    innerWidth: window.innerWidth, innerHeight: window.innerHeight,
+    outerWidth: window.outerWidth, outerHeight: window.outerHeight,
+    screenX: window.screenX, screenY: window.screenY
+  };
+}
+
+function getIntl() {
+  const o = {};
+  try {
+    const r = Intl.DateTimeFormat().resolvedOptions();
+    o.timeZone = r.timeZone;
+    o.locale = r.locale;
+    o.calendar = r.calendar;
+    o.numberingSystem = r.numberingSystem;
+  } catch (e) {}
+  try { o.timezoneOffset = new Date().getTimezoneOffset(); } catch (e) {}
+  try {
+    o.dateLocaleString = new Date(Date.UTC(2020, 0, 1, 12, 0, 0)).toLocaleString();
+  } catch (e) {}
+  try {
+    o.numberFormat = new Intl.NumberFormat().format(123456.789);
+  } catch (e) {}
+  return o;
+}
+
+function getCanvas() {
+  const c = document.createElement('canvas');
+  c.width = 280; c.height = 60;
+  const ctx = c.getContext('2d');
+  ctx.textBaseline = 'top';
+  ctx.font = '14px Arial';
+  ctx.fillStyle = '#f60';
+  ctx.fillRect(125, 1, 62, 20);
+  ctx.fillStyle = '#069';
+  ctx.fillText('Cwm fjord banks 😀', 2, 15);
+  ctx.fillStyle = 'rgba(102,204,0,0.7)';
+  ctx.fillText('Cwm fjord banks 😀', 4, 17);
+  const url = c.toDataURL();
+  const pix = ctx.getImageData(0, 0, c.width, c.height).data;
+  // winding winding rule probe (used by some FP)
+  ctx.rect(0, 0, 10, 10);
+  ctx.rect(2, 2, 6, 6);
+  const winding = ctx.isPointInPath(5, 5, 'evenodd');
+  return {
+    dataUrlHash: fnv1a(url),
+    pixelsHash: fnvBytes(pix),
+    dataUrlLen: url.length,
+    windingEvenOdd: winding
+  };
+}
+
+function getWebGL() {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+  if (!gl) return { supported: false };
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const exts = gl.getSupportedExtensions() || [];
+  const o = {
+    supported: true,
+    vendor: gl.getParameter(gl.VENDOR),
+    renderer: gl.getParameter(gl.RENDERER),
+    version: gl.getParameter(gl.VERSION),
+    shadingLanguage: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+    unmaskedVendor: dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null,
+    unmaskedRenderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null,
+    maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE),
+    maxCubeMap: gl.getParameter(gl.MAX_CUBE_MAP_TEXTURE_SIZE),
+    maxRenderbuffer: gl.getParameter(gl.MAX_RENDERBUFFER_SIZE),
+    maxVertexAttribs: gl.getParameter(gl.MAX_VERTEX_ATTRIBS),
+    maxVertexUniformVectors: gl.getParameter(gl.MAX_VERTEX_UNIFORM_VECTORS),
+    maxFragmentUniformVectors: gl.getParameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS),
+    maxVaryingVectors: gl.getParameter(gl.MAX_VARYING_VECTORS),
+    aliasedLineWidthRange: String(gl.getParameter(gl.ALIASED_LINE_WIDTH_RANGE)),
+    aliasedPointSizeRange: String(gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)),
+    extensionsCount: exts.length,
+    extensionsHash: fnv1a(exts.slice().sort().join(',')),
+  };
+  try {
+    const p = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+    o.fragHighFloat = p ? `${p.rangeMin}/${p.rangeMax}/${p.precision}` : null;
+  } catch (e) {}
+  try {
+    gl.clearColor(0.1, 0.2, 0.3, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const px = new Uint8Array(4);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    o.readPixels = Array.from(px).join(',');
+  } catch (e) { o.readPixels = 'err'; }
+  return o;
+}
+
+async function getAudio() {
+  const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!AC) return { supported: false };
+  const ctx = new AC(1, 5000, 44100);
+  const osc = ctx.createOscillator();
+  osc.type = 'triangle';
+  osc.frequency.value = 10000;
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -50;
+  comp.knee.value = 40;
+  comp.ratio.value = 12;
+  comp.attack.value = 0;
+  comp.release.value = 0.25;
+  osc.connect(comp);
+  comp.connect(ctx.destination);
+  osc.start(0);
+  const buf = await ctx.startRendering();
+  const data = buf.getChannelData(0);
+  let sum = 0;
+  for (let i = 4500; i < 5000; i++) sum += Math.abs(data[i]);
+  return { supported: true, sum4500: sum, fullHash: fnvFloat(data) };
+}
+
+function getFonts() {
+  // CSS font detection via measureText width
+  const base = ['monospace', 'sans-serif', 'serif'];
+  const candidates = [
+    'Arial', 'Arial Black', 'Calibri', 'Cambria', 'Comic Sans MS', 'Consolas',
+    'Courier New', 'Georgia', 'Helvetica', 'Impact', 'Lucida Console',
+    'Segoe UI', 'Tahoma', 'Times New Roman', 'Trebuchet MS', 'Verdana',
+    'Wingdings', 'Webdings', 'MS Gothic', 'Noto Sans', 'Roboto'
+  ];
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d');
+  const testStr = 'mmmmmmmmmmlli';
+  const baseW = {};
+  for (const b of base) {
+    ctx.font = '72px ' + b;
+    baseW[b] = ctx.measureText(testStr).width;
+  }
+  const found = [];
+  for (const f of candidates) {
+    let detected = false;
+    for (const b of base) {
+      ctx.font = '72px "' + f + '",' + b;
+      if (ctx.measureText(testStr).width !== baseW[b]) { detected = true; break; }
+    }
+    if (detected) found.push(f);
+  }
+  return { count: found.length, list: found, listHash: fnv1a(found.join(',')) };
+}
+
+function getVoices() {
+  return new Promise(resolve => {
+    const synth = window.speechSynthesis;
+    if (!synth) return resolve({ supported: false });
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      const voices = synth.getVoices() || [];
+      resolve({
+        supported: true,
+        count: voices.length,
+        sample: voices.slice(0, 5).map(v => v.name + '|' + v.lang),
+        hash: fnv1a(voices.map(v => v.name + v.lang).join(','))
+      });
+    };
+    const vs = synth.getVoices();
+    if (vs && vs.length) return finish();
+    synth.onvoiceschanged = finish;
+    setTimeout(finish, 800);
+  });
+}
+
+function getMath() {
+  // classic math fingerprint bits
+  const vals = {
+    tanAsin: Math.tan(Math.asin(1) / 2) + '',
+    exp1: Math.exp(1) + '',
+    log10e: Math.LOG10E + '',
+    sinPi: Math.sin(Math.PI) + '',
+    acos05: Math.acos(0.5) + '',
+    powPiE: Math.pow(Math.PI, Math.E) + '',
+  };
+  return { ...vals, hash: fnv1a(Object.values(vals).join('|')) };
+}
+
+function getCSSMedia() {
+  const queries = [
+    '(prefers-color-scheme: dark)',
+    '(prefers-reduced-motion: reduce)',
+    '(hover: hover)',
+    '(pointer: fine)',
+    '(any-pointer: fine)',
+    '(display-mode: browser)',
+    '(min-resolution: 2dppx)',
+    '(orientation: landscape)',
+    '(prefers-contrast: more)',
+    '(forced-colors: active)'
+  ];
+  const out = {};
+  for (const q of queries) {
+    try { out[q] = matchMedia(q).matches; } catch (e) { out[q] = null; }
+  }
+  return out;
+}
+
+function getStorage() {
+  const o = {};
+  try { o.localStorage = !!window.localStorage; localStorage.setItem('__t', '1'); localStorage.removeItem('__t'); o.localStorageWrite = true; }
+  catch (e) { o.localStorage = false; o.localStorageWrite = false; }
+  try { o.sessionStorage = !!window.sessionStorage; } catch (e) { o.sessionStorage = false; }
+  try { o.indexedDB = !!window.indexedDB; } catch (e) { o.indexedDB = false; }
+  try { o.openDatabase = typeof window.openDatabase === 'function'; } catch (e) { o.openDatabase = false; }
+  try { o.caches = typeof window.caches !== 'undefined'; } catch (e) { o.caches = false; }
+  try { o.cookieEnabled = navigator.cookieEnabled; } catch (e) {}
+  return o;
+}
+
+async function getPermissions() {
+  const names = ['notifications', 'geolocation', 'camera', 'microphone', 'clipboard-read'];
+  const out = {};
+  if (!navigator.permissions || !navigator.permissions.query) {
+    return { supported: false };
+  }
+  out.supported = true;
+  for (const n of names) {
+    try {
+      const s = await navigator.permissions.query({ name: n });
+      out[n] = s.state;
+    } catch (e) {
+      out[n] = 'err';
+    }
+  }
+  return out;
+}
+
+function getConnection() {
+  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!c) return { supported: false };
+  return {
+    supported: true,
+    effectiveType: c.effectiveType,
+    downlink: c.downlink,
+    rtt: c.rtt,
+    saveData: c.saveData,
+    type: c.type
+  };
+}
+
+async function getWebRTC() {
+  // ICE candidates without permission dialog when possible
+  return new Promise(resolve => {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [] });
+      const ips = [];
+      const t = setTimeout(() => {
+        try { pc.close(); } catch (e) {}
+        resolve({ supported: true, candidates: ips, count: ips.length, hash: fnv1a(ips.join(',')) });
+      }, 900);
+      pc.onicecandidate = e => {
+        if (!e.candidate) return;
+        const s = e.candidate.candidate || '';
+        // extract ip-like tokens
+        const m = s.match(/([0-9]{1,3}(?:\.[0-9]{1,3}){3})|([0-9a-f:]{3,})/i);
+        if (m) ips.push(m[0]);
+      };
+      pc.createDataChannel('x');
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {});
+    } catch (e) {
+      resolve({ supported: false, error: String(e.message || e) });
+    }
+  });
+}
+
+function getPerformance() {
+  const o = {};
+  try {
+    o.timeOrigin = performance.timeOrigin;
+    o.now = performance.now();
+  } catch (e) {}
+  try {
+    const entries = performance.getEntriesByType('navigation');
+    if (entries && entries[0]) {
+      o.navType = entries[0].type;
+      o.domContentLoaded = Math.round(entries[0].domContentLoadedEventEnd);
+    }
+  } catch (e) {}
+  try {
+    // memory (Chrome)
+    if (performance.memory) {
+      o.jsHeapLimit = performance.memory.jsHeapSizeLimit;
+      o.totalJSHeap = performance.memory.totalJSHeapSize;
+    }
+  } catch (e) {}
+  return o;
+}
+
+function getWorkerBundle() {
+  return new Promise(resolve => {
+    const code = `
+      self.onmessage = async function() {
+        var o = {};
+        try {
+          o.platform = navigator.platform;
+          o.hardwareConcurrency = navigator.hardwareConcurrency;
+          o.deviceMemory = navigator.deviceMemory;
+          o.language = navigator.language;
+          o.languages = Array.from(navigator.languages || []);
+          o.userAgent = navigator.userAgent;
+          o.webdriver = navigator.webdriver;
+        } catch (e) {}
+        try { o.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) {}
+        try {
+          var off = new OffscreenCanvas(16, 16);
+          var gl = off.getContext('webgl');
+          if (gl) {
+            var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+            o.webglVendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : null;
+            o.webglRenderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null;
+            o.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+          }
+        } catch (e) {}
+        try {
+          var c = new OffscreenCanvas(64, 32);
+          var ctx = c.getContext('2d');
+          ctx.fillStyle = '#069';
+          ctx.fillRect(0, 0, 64, 32);
+          ctx.fillStyle = '#f60';
+          ctx.font = '12px Arial';
+          ctx.fillText('wk', 2, 14);
+          var blob = await c.convertToBlob({ type: 'image/png' });
+          var buf = await blob.arrayBuffer();
+          var u8 = new Uint8Array(buf);
+          var h = 2166136261 >>> 0;
+          for (var i = 0; i < u8.length; i++) { h ^= u8[i]; h = Math.imul(h, 16777619) >>> 0; }
+          o.canvasHash = (h >>> 0).toString(16).padStart(8, '0');
+        } catch (e) { o.canvasHash = null; }
+        self.postMessage(o);
+      };
+    `;
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob([code], { type: 'application/javascript' })));
+      const t = setTimeout(() => { w.terminate(); resolve({ error: 'timeout' }); }, 3000);
+      w.onmessage = e => { clearTimeout(t); w.terminate(); resolve(e.data); };
+      w.onerror = e => { clearTimeout(t); w.terminate(); resolve({ error: e.message }); };
+      w.postMessage({});
+    } catch (e) {
+      resolve({ error: String(e) });
+    }
+  });
+}
+
+(async () => {
+  for (const f of ORDER) await load(f);
+  await new Promise(r => setTimeout(r, 180));
+
+  const nav = getNav();
+  const uach = await getUAData();
+  const scr = getScreen();
+  const intl = getIntl();
+  const can1 = getCanvas();
+  const can2 = getCanvas();
+  const gl = getWebGL();
+  const aud1 = await getAudio();
+  const aud2 = await getAudio();
+  const fonts = getFonts();
+  const voices = await getVoices();
+  const math = getMath();
+  const css = getCSSMedia();
+  const stor = getStorage();
+  const perms = await getPermissions();
+  const conn = getConnection();
+  const rtc = await getWebRTC();
+  const perf = getPerformance();
+  const wrk = await getWorkerBundle();
+
+  // ── fill tables ──
+  put('t-nav', 'userAgent', nav.userAgent);
+  put('t-nav', 'platform', nav.platform);
+  put('t-nav', 'languages', JSON.stringify(nav.languages));
+  put('t-nav', 'hardwareConcurrency', nav.hardwareConcurrency);
+  put('t-nav', 'deviceMemory', nav.deviceMemory);
+  put('t-nav', 'maxTouchPoints', nav.maxTouchPoints);
+  put('t-nav', 'webdriver', nav.webdriver);
+  put('t-nav', 'plugins', nav.pluginsLength + ' — ' + JSON.stringify(nav.pluginNames));
+  put('t-nav', 'vendor', nav.vendor);
+  put('t-nav', 'uaCH.mobile', uach.mobile);
+  put('t-nav', 'uaCH.platform', uach.platform);
+  put('t-nav', 'uaCH.architecture', uach.architecture);
+  put('t-nav', 'uaCH.bitness', uach.bitness);
+  put('t-nav', 'uaCH.platformVersion', uach.platformVersion);
+  put('t-nav', 'uaCH.brands', JSON.stringify(uach.brands));
+  put('t-nav', 'uaCH.fullVersionList', JSON.stringify(uach.fullVersionList));
+
+  put('t-scr', 'screen', `${scr.width}×${scr.height} avail=${scr.availWidth}×${scr.availHeight}`);
+  put('t-scr', 'depth / dpr', `${scr.colorDepth}/${scr.pixelDepth} dpr=${scr.devicePixelRatio}`);
+  put('t-scr', 'window inner/outer', `${scr.innerWidth}×${scr.innerHeight} / ${scr.outerWidth}×${scr.outerHeight}`);
+  put('t-scr', 'orientation', scr.orientation);
+
+  put('t-intl', 'timeZone', intl.timeZone);
+  put('t-intl', 'locale', intl.locale);
+  put('t-intl', 'offset', intl.timezoneOffset);
+  put('t-intl', 'dateLocaleString', intl.dateLocaleString);
+  put('t-intl', 'numberFormat', intl.numberFormat);
+
+  put('t-gfx', 'canvas.dataUrlHash', can1.dataUrlHash);
+  put('t-gfx', 'canvas.pixelsHash', can1.pixelsHash);
+  put('t-gfx', 'canvas.windingEvenOdd', can1.windingEvenOdd);
+  put('t-gfx', 'webgl.unmaskedVendor', gl.unmaskedVendor);
+  put('t-gfx', 'webgl.unmaskedRenderer', gl.unmaskedRenderer);
+  put('t-gfx', 'webgl.maxTextureSize', gl.maxTextureSize);
+  put('t-gfx', 'webgl.extensions', gl.extensionsCount + ' hash=' + gl.extensionsHash);
+  put('t-gfx', 'webgl.fragHighFloat', gl.fragHighFloat);
+  put('t-gfx', 'webgl.readPixels', gl.readPixels);
+  put('t-gfx', 'audio.sum4500', aud1.sum4500);
+  put('t-gfx', 'audio.fullHash', aud1.fullHash);
+
+  put('t-misc', 'fonts.count', fonts.count);
+  put('t-misc', 'fonts.list', fonts.list.join(', '));
+  put('t-misc', 'fonts.hash', fonts.listHash);
+  put('t-misc', 'voices.count', voices.count);
+  put('t-misc', 'voices.sample', JSON.stringify(voices.sample));
+  put('t-misc', 'math.hash', math.hash);
+  put('t-misc', 'math.tanAsin', math.tanAsin);
+
+  put('t-sys', 'storage', JSON.stringify(stor));
+  put('t-sys', 'permissions', JSON.stringify(perms));
+  put('t-sys', 'connection', JSON.stringify(conn));
+  put('t-sys', 'webrtc.candidates', rtc.count + ' ' + JSON.stringify(rtc.candidates));
+  put('t-sys', 'webrtc.hash', rtc.hash);
+  put('t-sys', 'cssMedia', JSON.stringify(css));
+  put('t-sys', 'performance', JSON.stringify(perf));
+
+  put('t-wrk', 'platform', wrk.platform);
+  put('t-wrk', 'hardwareConcurrency', wrk.hardwareConcurrency);
+  put('t-wrk', 'deviceMemory', wrk.deviceMemory);
+  put('t-wrk', 'language', wrk.language);
+  put('t-wrk', 'timeZone', wrk.timeZone);
+  put('t-wrk', 'webdriver', wrk.webdriver);
+  put('t-wrk', 'webglRenderer', wrk.webglRenderer);
+  put('t-wrk', 'maxTextureSize', wrk.maxTextureSize);
+  put('t-wrk', 'canvasHash', wrk.canvasHash);
+
+  // ── consistency checks ──
+  check('webdriver === false', nav.webdriver === false, String(nav.webdriver));
+  check('canvas stable 2×', can1.dataUrlHash === can2.dataUrlHash && can1.pixelsHash === can2.pixelsHash, can1.dataUrlHash);
+  check('audio sum stable 2×', aud1.sum4500 === aud2.sum4500, String(aud1.sum4500));
+  check('audio hash stable 2×', aud1.fullHash === aud2.fullHash, aud1.fullHash);
+  check('worker.platform == main', wrk.platform === nav.platform, `${wrk.platform} / ${nav.platform}`);
+  check('worker.cores == main', wrk.hardwareConcurrency === nav.hardwareConcurrency, `${wrk.hardwareConcurrency} / ${nav.hardwareConcurrency}`);
+  check('worker.tz == main', wrk.timeZone === intl.timeZone, `${wrk.timeZone} / ${intl.timeZone}`);
+  check('worker.webgl == main', !wrk.webglRenderer || wrk.webglRenderer === gl.unmaskedRenderer, wrk.webglRenderer === gl.unmaskedRenderer ? 'match' : String(wrk.webglRenderer).slice(0, 50));
+  check('worker.webdriver == main', wrk.webdriver === nav.webdriver, String(wrk.webdriver));
+  check('worker.language ~ main', !wrk.language || wrk.language === nav.language, `${wrk.language} / ${nav.language}`);
+  check('languages[0] ~ language', !nav.languages.length || nav.languages[0] === nav.language || nav.languages[0].split('-')[0] === (nav.language || '').split('-')[0], nav.language);
+  check('platform coherent UA', !(nav.platform === 'Win32' && /Linux/i.test(nav.userAgent) && !/Windows/i.test(nav.userAgent)), nav.platform);
+  check('uaCH.platform ~ nav.platform', !uach.platform || (nav.platform === 'Win32' && /Windows/i.test(uach.platform)) || uach.platform === nav.platform, `${uach.platform} / ${nav.platform}`);
+  check('cores & memory sane', nav.hardwareConcurrency > 0 && (nav.deviceMemory == null || (nav.deviceMemory > 0 && nav.deviceMemory <= 128)), `c=${nav.hardwareConcurrency} m=${nav.deviceMemory}`);
+  check('screen positive', scr.width > 0 && scr.height > 0, `${scr.width}×${scr.height}`);
+  check('inner ≤ outer (soft)', scr.innerWidth <= scr.outerWidth + 50 && scr.innerHeight <= scr.outerHeight + 100, `inner ${scr.innerWidth}×${scr.innerHeight} outer ${scr.outerWidth}×${scr.outerHeight}`);
+  check('timezone present', !!intl.timeZone, intl.timeZone);
+  check('webgl supported', gl.supported, gl.supported ? gl.unmaskedRenderer : 'no');
+  check('audio supported', aud1.supported, aud1.supported ? 'ok' : 'no');
+  check('fonts detected > 0', fonts.count > 0, String(fonts.count));
+  check('not HeadlessChrome UA', !/HeadlessChrome/i.test(nav.userAgent), /HeadlessChrome/i.test(nav.userAgent) ? 'present' : 'ok');
+  check('storage localStorage', stor.localStorage && stor.localStorageWrite, JSON.stringify(stor));
+  check('maxTouchPoints sane', typeof nav.maxTouchPoints === 'number' && nav.maxTouchPoints >= 0 && nav.maxTouchPoints < 40, String(nav.maxTouchPoints));
+  check('colorDepth in {24,30,32}', [24, 30, 32].indexOf(scr.colorDepth) !== -1, String(scr.colorDepth));
+  check('worker maxTexture == main', wrk.maxTextureSize == null || wrk.maxTextureSize === gl.maxTextureSize, `${wrk.maxTextureSize} / ${gl.maxTextureSize}`);
+
+  // summary
+  const passed = checks.filter(c => c.pass).length;
+  const total = checks.length;
+  const allOk = passed === total;
+  const sumEl = document.getElementById('sum');
+  sumEl.textContent = allOk ? `ALL ${total} CHECKS PASSED` : `${passed}/${total} passed — ${total - passed} FAILED`;
+  sumEl.className = allOk ? 'green' : 'red';
+
+  const tb = document.querySelector('#t-chk tbody');
+  for (const c of checks) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${c.name}</td><td class="${c.pass ? 'ok' : 'bad'}">${c.pass ? 'PASS' : 'FAIL'}</td><td class="mono">${c.detail}</td>`;
+    tb.appendChild(tr);
+  }
+  document.getElementById('log').textContent = logs.join('\n');
+})();
+</script>
+</body>
+</html>

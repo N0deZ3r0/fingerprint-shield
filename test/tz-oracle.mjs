@@ -26,6 +26,17 @@
  * profiles, because a half-hour zone (Asia/Kolkata) breaks arithmetic that a whole-hour
  * zone hides.
  *
+ * [FIX the-oracle-moved-under-a-minor-release] "The same engines" holds only while the two
+ * carry the same tzdata. Node 24.20.0 ("deps: update timezone to 2026c") moves
+ * Africa/Casablanca to UTC+0 somewhere between 2026-07-01 and 2026-10-03, the two nearest
+ * instants probed below, while Playwright's Chromium 141 and Chromium 153 still answer UTC+1.
+ * Profile MA's dstEdges went red on 2026-09-11 on both CI hosts with nothing changed here:
+ * under Node 24.19.0 (tz 2026b) this suite is 461/0 on 2.5.28 and 2.5.29 alike, measured.
+ * So CI pins the exact Node release (see ci.yml). When the browser's tzdata catches up this
+ * goes red again from the other side, and the fix then is to move the pin — the date layer
+ * answers whatever the browser's own ICU answers, which is what a real browser in the zone
+ * would say.
+ *
  * Whitespace inside Intl output is normalised before comparing: ICU puts U+202F before
  * AM/PM and the exact code point has moved between releases.
  */

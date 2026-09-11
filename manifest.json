@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "default_locale": "en",
-  "version": "2.5.28",
+  "version": "2.5.29",
   "minimum_chrome_version": "119",
   "description": "__MSG_extDescription__",
   "icons": {
@@ -76,6 +76,11 @@
         "id": "ruleset_static_hw",
         "enabled": true,
         "path": "rules/static-hw.json"
+      },
+      {
+        "id": "ruleset_static_arch",
+        "enabled": true,
+        "path": "rules/static-arch.json"
       }
     ]
   },

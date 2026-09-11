@@ -1,0 +1,173 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — Intl locale coverage</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, monospace; padding: 16px; }
+  table { border-collapse: collapse; margin-top: 12px; }
+  td, th { border: 1px solid #ccc; padding: 3px 8px; text-align: left; vertical-align: top; }
+  .ok { color: #0a0; } .bad { color: #c00; font-weight: bold; }
+  h2 { margin: 20px 0 4px; font-size: 13px; }
+  #sum { font-size: 15px; margin-top: 14px; }
+</style>
+<h1 style="font-size:15px">Intl locale coverage — window scope</h1>
+<p>Loads the real <code>mw/mw-core.js</code> + <code>mw/mw-timezone-screen.js</code> with a
+stub profile in sessionStorage, then replays the checks CreepJS runs in
+<code>src/intl/index.ts</code>.</p>
+<div id="out"></div>
+<div id="sum"></div>
+
+<script>
+  // Same key + shape profile-injector.js writes; locale is what every Intl wrapper
+  // in mw-timezone-screen.js reads through _dtfLocale().
+  var PROFILE_LOCALE = 'et-EE';
+  sessionStorage.setItem('v.ui.s', JSON.stringify({
+    locale: PROFILE_LOCALE,
+    language: PROFILE_LOCALE,
+    languages: [PROFILE_LOCALE, 'et', 'en-US', 'en'],
+    timezone: 'Europe/Tallinn',
+    mode: 'normal'
+  }));
+
+  // Native readings captured BEFORE the patches load, so the page can show what the
+  // page would have leaked. The host browser's own locale stands in for the 'ru' the
+  // bug was reported against — the invariant under test is
+  // "resolved locale follows the profile", not any one system locale.
+  var NATIVE = {
+    displayNames: (function () {
+      try { return new Intl.DisplayNames(undefined, { type: 'language' }).of('en-US'); }
+      catch (e) { return '<throws>'; }
+    })(),
+    listFormatLocale: (function () {
+      try { return new Intl.ListFormat().resolvedOptions().locale; } catch (e) { return '<throws>'; }
+    })(),
+    // What the profile locale is SUPPOSED to render, for comparison.
+    displayNamesAsProfile: (function () {
+      try { return new Intl.DisplayNames(PROFILE_LOCALE, { type: 'language' }).of('en-US'); }
+      catch (e) { return '<throws>'; }
+    })(),
+    pluralRulesOwnKeys: Object.getOwnPropertyNames(Intl.PluralRules).sort().join(','),
+    slnName: Intl.NumberFormat.supportedLocalesOf.name,
+    slnStr: String(Intl.NumberFormat.supportedLocalesOf)
+  };
+</script>
+
+<script src="../mw/mw-bag.js"></script>
+<script src="../mw/mw-core.js"></script>
+<script src="../mw/mw-timezone-screen.js"></script>
+
+<script>
+(function () {
+  var rows = [], pass = 0, fail = 0, aborted = null;
+  function check(name, actual, expected, note) {
+    var ok = (typeof expected === 'function') ? expected(actual) : (actual === expected);
+    ok ? pass++ : fail++;
+    rows.push({ name: name, actual: actual, expected: (typeof expected === 'function' ? (note || 'predicate') : expected), ok: ok });
+  }
+  try {
+
+  // ---- 1. CreepJS getLocale(), verbatim shape from src/intl/index.ts -------------
+  // const locale = constructors.reduce(...)  →  [...new Set(locale)]
+  // A genuine browser always yields exactly ONE locale here. DisplayNames throws on
+  // `new Intl.DisplayNames()` (options.type is required) and is skipped by the catch —
+  // that must stay true, or we ADD an entry no real browser has.
+  var CTORS = ['Collator','DateTimeFormat','DisplayNames','ListFormat','NumberFormat','PluralRules','RelativeTimeFormat'];
+  var seen = [], skipped = [];
+  CTORS.forEach(function (n) {
+    try { seen.push(new Intl[n]().resolvedOptions().locale); }
+    catch (e) { skipped.push(n); }
+  });
+  var uniq = seen.filter(function (v, i, a) { return a.indexOf(v) === i; });
+
+  check('getLocale() set size', uniq.length, 1, 'exactly one locale');
+  check('getLocale() value', uniq.join('|'), PROFILE_LOCALE);
+  check('DisplayNames still skipped (throws w/o options)', skipped.join(','), 'DisplayNames');
+
+  // ---- 2. The two constructors that were unwrapped -------------------------------
+  check('DisplayNames.resolvedOptions().locale',
+    new Intl.DisplayNames(undefined, { type: 'language' }).resolvedOptions().locale, PROFILE_LOCALE);
+  check('DisplayNames.of("en-US") follows profile',
+    new Intl.DisplayNames(undefined, { type: 'language' }).of('en-US'),
+    NATIVE.displayNamesAsProfile);
+  check('ListFormat.resolvedOptions().locale',
+    new Intl.ListFormat().resolvedOptions().locale, PROFILE_LOCALE);
+  check('ListFormat.format() follows profile',
+    new Intl.ListFormat(undefined, { style: 'long', type: 'disjunction' }).format(['a','b']),
+    new Intl.ListFormat(PROFILE_LOCALE, { style: 'long', type: 'disjunction' }).format(['a','b']));
+
+  // ---- 3. An explicit locale from the page must still win ------------------------
+  // resolvedOptions used to report the profile locale for these too, contradicting the
+  // formatting the very same instance produced.
+  ['Collator','DateTimeFormat','ListFormat','NumberFormat','PluralRules','RelativeTimeFormat'].forEach(function (n) {
+    check('explicit "de" echoed (' + n + ')', new Intl[n]('de').resolvedOptions().locale, 'de');
+  });
+  check('explicit "de" echoed (DisplayNames)',
+    new Intl.DisplayNames('de', { type: 'language' }).resolvedOptions().locale, 'de');
+  check('explicit locale formats AND reports as itself', (function () {
+    var f = new Intl.NumberFormat('de-DE');
+    return f.resolvedOptions().locale + ' ' + f.format(1234.5);
+  })(), 'de-DE ' + new Intl.NumberFormat('de-DE').format(1234.5), 'no self-contradiction');
+  // The page handing our own tag back (navigator.language round-trip) still counts as
+  // ours, so it is normalised to the exact profile string rather than ICU's best fit
+  // ('et' for Collator/PluralRules, which would split the getLocale set).
+  ['Collator','PluralRules','NumberFormat'].forEach(function (n) {
+    check('profile tag round-trip normalised (' + n + ')',
+      new Intl[n](PROFILE_LOCALE).resolvedOptions().locale, PROFILE_LOCALE);
+  });
+  // timeZone is the actual spoof and must survive an explicit foreign locale.
+  check('timeZone forced even with explicit locale',
+    new Intl.DateTimeFormat('de').resolvedOptions().timeZone, 'Europe/Tallinn');
+
+  // ---- 4. The wrappers must not look like wrappers -------------------------------
+  // Each constructor gets options it actually accepts — 'language' is a DisplayNames
+  // type, not a ListFormat one (ListFormat takes conjunction/disjunction/unit).
+  [['DisplayNames', 2, { type: 'language' }], ['ListFormat', 0, { type: 'disjunction' }]].forEach(function (p) {
+    var n = p[0], nativeLen = p[1], opts = p[2], C = Intl[n];
+    check(n + '.name', C.name, n);
+    check(n + '.length', C.length, nativeLen, 'native arity');
+    check('String(' + n + ')', String(C), 'function ' + n + '() { [native code] }');
+    check('String(' + n + '.toString)', String(C.toString), 'function toString() { [native code] }');
+    check(n + ' toString not own', Object.getOwnPropertyNames(C).indexOf('toString'), -1);
+    check('instanceof ' + n, (new Intl[n]('en', opts)) instanceof Intl[n], true);
+  });
+  check('new Intl.DisplayNames() still TypeError', (function () {
+    try { new Intl.DisplayNames(); return 'no throw'; } catch (e) { return e.constructor.name; }
+  })(), 'TypeError');
+
+  // ---- 5. supportedLocalesOf: present, and not renamed by bind ------------------
+  CTORS.forEach(function (n) {
+    var f = Intl[n].supportedLocalesOf;
+    check(n + '.supportedLocalesOf present', typeof f, 'function');
+    if (typeof f === 'function') {
+      check(n + '.supportedLocalesOf.name', f.name, 'supportedLocalesOf', 'not "bound ..."');
+      check(n + '.supportedLocalesOf String()', String(f),
+        'function supportedLocalesOf() { [native code] }');
+      check(n + '.supportedLocalesOf works', f(['et-EE','xx']).join(','), 'et-EE');
+    }
+    check(n + ' own keys include supportedLocalesOf',
+      Object.getOwnPropertyNames(Intl[n]).indexOf('supportedLocalesOf') >= 0, true);
+  });
+
+  } catch (err) { aborted = err && (err.name + ': ' + err.message); }
+
+  // ---- render -------------------------------------------------------------------
+  var html = '<h2>Before the patches (native, this host)</h2><table>' +
+    '<tr><th>reading</th><th>value</th></tr>' +
+    '<tr><td>DisplayNames.of("en-US")</td><td>' + NATIVE.displayNames + '</td></tr>' +
+    '<tr><td>same, rendered as ' + PROFILE_LOCALE + '</td><td>' + NATIVE.displayNamesAsProfile + '</td></tr>' +
+    '<tr><td>ListFormat locale</td><td>' + NATIVE.listFormatLocale + '</td></tr>' +
+    '<tr><td>NumberFormat.supportedLocalesOf.name</td><td>' + NATIVE.slnName + '</td></tr>' +
+    '<tr><td>PluralRules own keys</td><td>' + NATIVE.pluralRulesOwnKeys + '</td></tr>' +
+    '</table><h2>After</h2><table><tr><th></th><th>check</th><th>actual</th><th>expected</th></tr>';
+  rows.forEach(function (r) {
+    html += '<tr><td class="' + (r.ok ? 'ok' : 'bad') + '">' + (r.ok ? 'PASS' : 'FAIL') + '</td>' +
+      '<td>' + r.name + '</td><td>' + String(r.actual) + '</td><td>' + String(r.expected) + '</td></tr>';
+  });
+  document.getElementById('out').innerHTML = html + '</table>';
+  document.getElementById('sum').innerHTML =
+    '<span class="' + (fail || aborted ? 'bad' : 'ok') + '">' + pass + ' passed, ' + fail + ' failed' +
+    (aborted ? ' — ABORTED: ' + aborted : '') + '</span>';
+  window.__RESULT__ = { pass: pass, fail: fail, aborted: aborted,
+    failed: rows.filter(function (r) { return !r.ok; }).map(function (r) {
+      return r.name + ' → ' + String(r.actual) + ' (want ' + String(r.expected) + ')'; }) };
+})();
+</script>

@@ -1,0 +1,137 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — popup preview</title>
+<!--
+  Renders the REAL popup.html / popup.css / popup.js outside the extension, with a
+  chrome.* stub, so the UI can be looked at without reloading the unpacked extension.
+  It deliberately does not copy the markup: it fetches popup.html and injects its body,
+  so what you see here is what ships. popup.js registers its work on DOMContentLoaded,
+  which has already fired by the time the fetch resolves, so the event is re-dispatched
+  after the script is in place.
+-->
+<style>
+  body { margin: 0; background: #2a2d35; font: 13px system-ui, sans-serif; color: #9aa1b0; }
+  .bar { padding: 10px 14px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .bar b { color: #e9edf5; font-size: 13px; }
+  .bar label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+  .stage { display: flex; gap: 22px; padding: 4px 14px 22px; align-items: flex-start; flex-wrap: wrap; }
+  .frame { box-shadow: 0 18px 50px rgba(0,0,0,.55); border-radius: 10px; overflow: hidden; }
+  .cap { font-size: 11px; margin: 0 0 6px 2px; }
+</style>
+<div class="bar">
+  <b>popup preview</b>
+  <label><input type="checkbox" id="optHidden"> скрытый режим</label>
+  <label><input type="checkbox" id="optNone"> модули не найдены</label>
+  <label><input type="checkbox" id="optNoTab"> нет http-вкладки</label>
+  <label><input type="checkbox" id="optWarn"> профиль с предупреждением</label>
+  <span id="state"></span>
+</div>
+<div class="stage">
+  <div><p class="cap">rendered popup</p><div class="frame" id="frame"></div></div>
+</div>
+
+<script>
+const q = new URLSearchParams(location.search);
+const OPT = {
+  hidden: q.has('hidden'), none: q.has('none'), notab: q.has('notab'), warn: q.has('warn')
+};
+for (const k of Object.keys(OPT)) {
+  const el = document.getElementById('opt' + k[0].toUpperCase() + k.slice(1));
+  if (el) {
+    el.checked = OPT[k];
+    el.addEventListener('change', () => {
+      const p = new URLSearchParams();
+      for (const kk of Object.keys(OPT)) {
+        const e2 = document.getElementById('opt' + kk[0].toUpperCase() + kk.slice(1));
+        if (e2 && e2.checked) p.set(kk, '1');
+      }
+      location.search = p.toString();
+    });
+  }
+}
+
+const STORE = {
+  afp_profile_id: OPT.warn ? 'pc_gaming' : 'laptop_mid',
+  afp_country_code: 'EE',
+  afp_mode: OPT.hidden ? 'stealth' : 'normal'
+};
+const TAB = OPT.notab ? { id: 1, url: 'chrome://newtab' }
+                      : { id: 1, url: 'https://creepjs.example.com/tests/fingerprint' };
+
+window.chrome = {
+  storage: {
+    local: {
+      get: async (keys) => {
+        const out = {};
+        (Array.isArray(keys) ? keys : [keys]).forEach(k => { if (k in STORE) out[k] = STORE[k]; });
+        return out;
+      },
+      set: async (obj) => { Object.assign(STORE, obj); }
+    }
+  },
+  tabs: {
+    query: async () => [TAB],
+    reload: async () => {}
+  },
+  runtime: {
+    sendMessage: async (msg) => {
+      if (msg.type === 'getWebrtcStatus') {
+        return OPT.notab ? { host: null, protected: true }
+                         : { host: new URL(TAB.url).hostname, protected: true };
+      }
+      if (msg.type === 'toggleWebrtcForCurrentTab') {
+        return { ok: true, host: new URL(TAB.url).hostname, protected: false };
+      }
+      if (msg.type === 'applyToCurrentTab') return { ok: true, url: TAB.url };
+      return {};
+    }
+  },
+  scripting: {
+    executeScript: async () => [{
+      result: OPT.none
+        ? { canvas: false, audio: false, webgl: false, tz: false, webrtc: false, battery: false, wasm: false }
+        : OPT.hidden
+          ? { canvas: false, audio: false, webgl: true, tz: true, webrtc: false, battery: false, wasm: true }
+          : { canvas: true, audio: true, webgl: true, tz: true, webrtc: true, battery: true, wasm: true }
+    }]
+  }
+};
+
+(async () => {
+  const html = await (await fetch('../popup.html?x=' + Date.now())).text();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const app = doc.querySelector('.app');
+  const host = document.getElementById('frame');
+  // The width and background are NOT set here. They used to be, pinned to '340px', and an
+  // inline style beats the stylesheet — so after popup.css moved to 360px this frame went
+  // on rendering the old width and the preview quietly stopped showing what ships, which
+  // is the one thing it exists to do. The rewrite below re-points popup.css's own
+  // `html, body` rule at #frame, so the shipped width and background apply by themselves.
+  host.appendChild(document.importNode(app, true));
+
+  // Both sheets, in the order popup.html links them: ui.css carries the tokens and
+  // popup.css only adds rules, so loading popup.css alone renders every colour as an
+  // unresolved var() — which is what happened the moment the tokens were factored out.
+  // popup.css is scoped to html/body in the real popup; re-point those rules at the
+  // preview frame so the surrounding harness keeps its own look.
+  for (const sheet of ['../ui.css', '../popup.css']) {
+    const css = await (await fetch(sheet + '?x=' + Date.now())).text();
+    const style = document.createElement('style');
+    style.textContent = css.replace(/^html,\s*body\s*\{/m, '#frame {');
+    document.head.appendChild(style);
+  }
+
+  const s = document.createElement('script');
+  s.src = '../popup.js?x=' + Date.now();
+  s.onload = () => {
+    // popup.js does its work on DOMContentLoaded, long since fired here
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    setTimeout(() => {
+      document.getElementById('state').textContent =
+        'hero: "' + (document.getElementById('heroTitle') || {}).textContent + '" / "' +
+        (document.getElementById('heroSub') || {}).textContent + '"';
+    }, 1500);
+  };
+  document.body.appendChild(s);
+})();
+</script>

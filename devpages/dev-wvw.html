@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>window vs worker</title></head>
+<body><pre id="out">running…</pre>
+<script>
+const PROFILE = {
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0, pdfViewerEnabled:true,
+  userAgent:navigator.userAgent.replace(/Chrome\/[\d.]+/,'Chrome/151.0.0.0'),
+  appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)',
+  webglRenderer:'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+  webglParams:{}, allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  features:{canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true}
+};
+sessionStorage.setItem('v.ui.s', JSON.stringify(PROFILE));
+sessionStorage.setItem('v.ui.m','normal');
+
+const L=[]; const t=(n,p,d)=>L.push((p?'PASS  ':'FAIL  ')+n+(d?'  ::  '+d:''));
+const note=(s)=>L.push('      '+s);
+const ORDER=['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+ '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js','../mw/mw-geo.js','../mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+// hash helper identical on both sides
+const HASH = 'function h32(a){let h=2166136261>>>0;for(let i=0;i<a.length;i++){h^=a[i];h=Math.imul(h,16777619)>>>0}return h.toString(16)}';
+eval(HASH);
+
+// what the worker will run (our Worker patch prepends the spoof code to this)
+const WORKER_SRC = HASH + `
+function minDelta(){ let m=Infinity,p=performance.now();
+  for(let i=0;i<40000;i++){const n=performance.now();const d=n-p;if(d>0&&d<m)m=d;p=n}
+  return m===Infinity?-1:m; }
+function monotonic(){ let bad=0,p=-Infinity;
+  for(let i=0;i<40000;i++){const n=performance.now();if(n<p)bad++;p=n} return bad; }
+async function run(){
+  const o={};
+  o.ua = navigator.userAgent;
+  o.platform = navigator.platform;
+  o.hw = navigator.hardwareConcurrency;
+  o.mem = navigator.deviceMemory;
+  o.langs = (navigator.languages||[]).join(',');
+  // [FIX worker-connection-was-half-patched] The worker used to substitute effectiveType
+  // and leave rtt/downlink at the host's real values, so ONE Worker construction showed a
+  // browser whose network differed by scope: window 4g/50/10, worker 4g/100/8.35.
+  // (No backticks in this comment: the whole block lives inside a template literal.)
+  o.conn = (function(){ try { var c = navigator.connection;
+    return c ? (c.effectiveType + '/' + c.rtt + '/' + c.downlink + '/' + c.saveData) : 'none';
+  } catch(e){ return 'ERR ' + e.message; } })();
+  // And it defined that one property on the INSTANCE, which natively has no own properties
+  // at all — the tell mw-navigator.js already removed on its own side.
+  o.connOwn = (function(){ try { var c = navigator.connection;
+    return c ? (Object.getOwnPropertyNames(c).join(',') || '(none)') : 'none';
+  } catch(e){ return 'ERR'; } })();
+  o.tzOff = new Date(Date.UTC(2026,0,15,12)).getTimezoneOffset();
+  o.tz = (Intl.DateTimeFormat().resolvedOptions()||{}).timeZone;
+  o.locale = (new Intl.NumberFormat().resolvedOptions()||{}).locale;
+  try { o.uad = JSON.stringify(await navigator.userAgentData.getHighEntropyValues(
+    ['architecture','bitness','model','platformVersion','uaFullVersion','fullVersionList','wow64','formFactors'])); }
+  catch(e){ o.uad='ERR '+e.message; }
+  try { const c=new OffscreenCanvas(200,100), x=c.getContext('2d');
+    // flat fill — the flat-region restore is what may differ
+    x.fillStyle='#3366cc'; x.fillRect(0,0,200,100);
+    o.canvasFlat = h32(x.getImageData(0,0,200,100).data);
+    // gradient — deterministic in both scopes, no fonts involved
+    const c2=new OffscreenCanvas(200,100), y=c2.getContext('2d');
+    const g=y.createLinearGradient(0,0,200,100); g.addColorStop(0,'#123456'); g.addColorStop(1,'#abcdef');
+    y.fillStyle=g; y.fillRect(0,0,200,100);
+    o.canvasGrad = h32(y.getImageData(0,0,200,100).data);
+    // single pixel from the gradient, read as 1x1
+    o.canvasPix = Array.from(y.getImageData(37,42,1,1).data).join(',');
+  } catch(e){ o.canvas='ERR '+e.message; }
+  try { const gl=new OffscreenCanvas(8,8).getContext('webgl');
+    const ext=gl.getExtension('WEBGL_debug_renderer_info');
+    o.gpu = ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):'no ext';
+  } catch(e){ o.gpu='ERR '+e.message; }
+  o.timingMin = minDelta();
+  o.timingNonMonotonic = monotonic();
+  postMessage(o);
+}
+run();
+`;
+
+async function windowSide(){
+  const o={};
+  try { o.uad = JSON.stringify(await navigator.userAgentData.getHighEntropyValues(
+    ['architecture','bitness','model','platformVersion','uaFullVersion','fullVersionList','wow64','formFactors'])); }
+  catch(e){ o.uad='ERR '+e.message; }
+  o.ua=navigator.userAgent; o.platform=navigator.platform;
+  o.hw=navigator.hardwareConcurrency; o.mem=navigator.deviceMemory;
+  o.langs=(navigator.languages||[]).join(',');
+  o.conn = (function(){ try { var c = navigator.connection;
+    return c ? (c.effectiveType + '/' + c.rtt + '/' + c.downlink + '/' + c.saveData) : 'none';
+  } catch(e){ return 'ERR ' + e.message; } })();
+  o.connOwn = (function(){ try { var c = navigator.connection;
+    return c ? (Object.getOwnPropertyNames(c).join(',') || '(none)') : 'none';
+  } catch(e){ return 'ERR'; } })();
+  o.tzOff=new Date(Date.UTC(2026,0,15,12)).getTimezoneOffset();
+  o.tz=(Intl.DateTimeFormat().resolvedOptions()||{}).timeZone;
+  o.locale=(new Intl.NumberFormat().resolvedOptions()||{}).locale;
+  const c=document.createElement('canvas'); c.width=200;c.height=100;
+  const x=c.getContext('2d'); x.fillStyle='#3366cc'; x.fillRect(0,0,200,100);
+  o.canvasFlat=h32(x.getImageData(0,0,200,100).data);
+  const c2=document.createElement('canvas'); c2.width=200;c2.height=100;
+  const y=c2.getContext('2d'); const g=y.createLinearGradient(0,0,200,100);
+  g.addColorStop(0,'#123456'); g.addColorStop(1,'#abcdef'); y.fillStyle=g; y.fillRect(0,0,200,100);
+  o.canvasGrad=h32(y.getImageData(0,0,200,100).data);
+  o.canvasPix=Array.from(y.getImageData(37,42,1,1).data).join(',');
+  try{ const gl=document.createElement('canvas').getContext('webgl');
+    const ext=gl.getExtension('WEBGL_debug_renderer_info');
+    o.gpu=ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):'no ext'; }catch(e){o.gpu='ERR';}
+  let m=Infinity,p=performance.now();
+  for(let i=0;i<40000;i++){const n=performance.now();const d=n-p;if(d>0&&d<m)m=d;p=n}
+  o.timingMin=m===Infinity?-1:m;
+  let bad=0,pp=-Infinity;
+  for(let i=0;i<40000;i++){const n=performance.now();if(n<pp)bad++;pp=n}
+  o.timingNonMonotonic=bad;
+  return o;
+}
+
+(async()=>{
+  // ── baseline: measure NATIVE timing before any patching ──
+  let nm=Infinity,np=performance.now();
+  for(let i=0;i<40000;i++){const n=performance.now();const d=n-np;if(d>0&&d<nm)nm=d;np=n}
+  const NATIVE_TIMING_MIN = nm===Infinity?-1:nm;
+  let nbad=0,npp=-Infinity;
+  for(let i=0;i<40000;i++){const n=performance.now();if(n<npp)nbad++;npp=n}
+  const NATIVE_NONMONO = nbad;
+
+  for(const f of ORDER) await load(f);
+
+  const win = await windowSide();
+  const wk = await new Promise((res)=>{
+    let w;
+    try{
+      const url=URL.createObjectURL(new Blob([WORKER_SRC],{type:'application/javascript'}));
+      w=new Worker(url);
+      w.onmessage=(e)=>res(e.data);
+      w.onerror=(e)=>res({__err:'worker error: '+(e.message||'?')});
+      setTimeout(()=>res({__err:'worker timeout'}),12000);
+    }catch(e){ res({__err:'spawn threw: '+e.message}); }
+  });
+
+  if (wk.__err) { t('worker spawned + patched', false, wk.__err);
+    document.getElementById('out').textContent=L.join('\n'); return; }
+  t('worker spawned and our patch code ran', wk.hw===PROFILE.hwConcurrency, 'hw='+wk.hw);
+
+  const cmp=(label,key)=>{
+    const a=String(win[key]), b=String(wk[key]);
+    t(label+' matches Window↔Worker', a===b, a===b ? a.slice(0,60) : 'win=['+a.slice(0,70)+'] worker=['+b.slice(0,70)+']');
+  };
+  cmp('userAgent','ua'); cmp('platform','platform');
+  cmp('hardwareConcurrency','hw'); cmp('deviceMemory','mem');
+  cmp('languages','langs'); cmp('timezone offset','tzOff');
+  cmp('Intl timeZone','tz'); cmp('Intl locale','locale');
+  cmp('WebGL renderer','gpu');
+  cmp('userAgentData high-entropy','uad');
+  cmp('canvas FLAT fill hash','canvasFlat');
+  cmp('canvas GRADIENT hash','canvasGrad');
+  cmp('canvas single pixel (37,42)','canvasPix');
+  cmp('navigator.connection','conn');
+  // Stronger than "the two agree": a real NetworkInformation has NO own properties in
+  // either scope, so agreeing on a wrong shape would still be a tell. The worker used to
+  // define effectiveType on the instance.
+  cmp('connection own properties','connOwn');
+  t('navigator.connection has no own properties in either scope',
+    win.connOwn === '(none)' && wk.connOwn === '(none)',
+    'win=[' + win.connOwn + '] worker=[' + wk.connOwn + ']');
+
+  // timing: compare each side against NATIVE, and against each other
+  L.push('');
+  L.push('=== TIMING ===');
+  note('native (before patching): min delta '+NATIVE_TIMING_MIN+' , non-monotonic '+NATIVE_NONMONO);
+  note('window  (patched):        min delta '+win.timingMin+' , non-monotonic '+win.timingNonMonotonic);
+  note('worker:                   min delta '+wk.timingMin+' , non-monotonic '+wk.timingNonMonotonic);
+  t('window timer resolution equals native Chrome clamp',
+    Math.abs(win.timingMin-NATIVE_TIMING_MIN)<1e-9, 'win='+win.timingMin+' native='+NATIVE_TIMING_MIN);
+  t('window timer resolution matches worker',
+    Math.abs(win.timingMin-wk.timingMin)<1e-9, 'win='+win.timingMin+' worker='+wk.timingMin);
+  t('performance.now() stays monotonic in window', win.timingNonMonotonic===0, String(win.timingNonMonotonic)+' backward steps');
+  t('performance.now() stays monotonic in worker', wk.timingNonMonotonic===0, String(wk.timingNonMonotonic));
+
+  document.getElementById('out').textContent=L.join('\n')+
+    '\n\nFAILURES: '+L.filter(x=>x.startsWith('FAIL')).length;
+})();
+</script>
+</body></html>

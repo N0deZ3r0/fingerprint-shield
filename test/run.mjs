@@ -15,6 +15,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BROWSER } from './harness.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -200,7 +201,20 @@ console.log(`Running ${wanted.length} check(s)${headed ? ' (headed)' : ' (headle
 console.log('(Progress prints per file; up to ~45s each if no verdict.)\n');
 
 const { server, port } = await serve();
-const browser = await chromium.launch({ headless: !headed });
+// [FIX the-dev-page-runner-drove-a-browser-nobody-chose] Every other launch site in test/
+// spreads BROWSER (test/harness.mjs:131). This one did not, so `FPS_CHROME=<path> node
+// test/run.mjs` printed no banner and drove the wrong binary — and with no channel named at
+// all it drove Playwright's BUNDLED shell rather than the channel:'chromium' every other
+// suite measures. The two are not the same browser. Measured here, one page each, same
+// Playwright install:
+//
+//     no channel (bundled shell)   HeadlessChrome/141.0.7390.37   navigator.plugins 0
+//     channel:'chromium'           HeadlessChrome/141.0.0.0       navigator.plugins 5
+//
+// That is the disagreement test/stealth.mjs was built around, and dev-plugins.html is in
+// CHECKS above — so thirty-six green checks were thirty-six green checks about a browser no
+// other suite in this repository runs.
+const browser = await chromium.launch({ ...BROWSER, headless: !headed });
 const ctx = await browser.newContext();
 const rows = [];
 const PAGE_TIMEOUT = 45000;
@@ -223,7 +237,7 @@ for (let i = 0; i < wanted.length; i++) {
   const started = Date.now();
   let result = null;
   try {
-    await page.goto(`http://127.0.0.1:${port}/${check}`, {
+    await page.goto(`http://127.0.0.1:${port}/devpages/${check}`, {
       waitUntil: 'domcontentloaded',
       timeout: 15000,
     });

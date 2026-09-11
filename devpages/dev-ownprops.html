@@ -1,0 +1,187 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — own properties vs a pristine realm</title>
+<style>
+  body { font: 12.5px/1.45 ui-monospace, monospace; padding: 16px; }
+  table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  td, th { border: 1px solid #ccc; padding: 3px 7px; text-align: left; vertical-align: top; }
+  .ok { color: #0a0; } .bad { color: #c00; font-weight: bold; }
+  .k { color: #555; }
+</style>
+<h1 style="font-size:15px">Own properties — patched window vs a pristine iframe realm</h1>
+<p>
+  A patch that lands on an <em>instance</em> instead of its prototype leaves an own property
+  the real object does not have, and enumerating own properties costs a detector one line.
+  CreepJS does exactly this for navigator and screen ("failed undefined properties"), which
+  is why <code>_def()</code> re-targets navigator/screen onto their prototypes and why the
+  <code>userAgentData</code> getter was moved off the instance.
+  <br><br>
+  This page does not take a fixed list of names on trust: it diffs
+  <code>Object.getOwnPropertyNames</code> for a set of objects — and their prototypes —
+  against the same objects in a clean same-origin iframe, so anything the extension adds or
+  removes shows up on its own.
+</p>
+<div id="out">running…</div>
+
+<script>
+  sessionStorage.setItem('v.ui.s', JSON.stringify({
+    locale: 'et-EE', language: 'et-EE', languages: ['et-EE','et','en-US','en'],
+    timezone: 'Europe/Tallinn', mode: 'normal', noiseSeed: 20260813,
+    screenWidth: 1920, screenHeight: 1080, colorDepth: 32, devicePixelRatio: 1,
+    hwConcurrency: 8, deviceMemory: 8, platform: 'Win32',
+    userAgent: navigator.userAgent, allowedFonts: ['Arial','Segoe UI'], webglParams: {},
+    plugins: [{ name:'PDF Viewer', filename:'internal-pdf-viewer', description:'Portable Document Format' }],
+    mimeTypes: [{ type:'application/pdf', description:'Portable Document Format', suffixes:'pdf' }],
+    speechVoices: [{ name:'Microsoft Zira - English (United States)', lang:'en-US', localService:true, default:true }],
+    webrtcProtected: true,
+    features: { canvas:true, audio:true, webgl:true, webrtc:true, navigator:true, screen:true,
+      timezone:true, geolocation:true, battery:true, fonts:true, clientRects:true,
+      plugins:true, network:true, hideAdBlocker:true }
+  }));
+</script>
+<script src="../mw/mw-core.js"></script>
+<script src="../mw/mw-timezone-screen.js"></script>
+<script src="../mw/mw-navigator.js"></script>
+<script src="../mw/mw-canvas-audio.js"></script>
+<script src="../mw/mw-misc.js"></script>
+<script src="../mw/mw-workers.js"></script>
+<script src="../mw/mw-geo.js"></script>
+<script src="../mw/mw-adblock.js"></script>
+<script src="../mw/mw-cleanup.js"></script>
+<script>
+(async () => {
+  // A realm the content scripts never touched. Same origin, so its objects are readable.
+  const f = document.createElement('iframe');
+  f.style.display = 'none';
+  document.documentElement.appendChild(f);
+  const W = f.contentWindow;
+  await new Promise(r => setTimeout(r, 60));
+
+  // path -> how to reach the object from a window. Instances AND the prototypes the
+  // patches are supposed to be landing on.
+  const PATHS = [
+    ['navigator',                       w => w.navigator],
+    ['Navigator.prototype',             w => w.Navigator && w.Navigator.prototype],
+    ['screen',                          w => w.screen],
+    ['Screen.prototype',                w => w.Screen && w.Screen.prototype],
+    ['navigator.geolocation',           w => w.navigator.geolocation],
+    ['Geolocation.prototype',           w => w.Geolocation && w.Geolocation.prototype],
+    ['navigator.connection',            w => w.navigator.connection],
+    ['NetworkInformation.prototype',    w => w.NetworkInformation && w.NetworkInformation.prototype],
+    ['navigator.mediaDevices',          w => w.navigator.mediaDevices],
+    ['MediaDevices.prototype',          w => w.MediaDevices && w.MediaDevices.prototype],
+    ['navigator.serviceWorker',         w => w.navigator.serviceWorker],
+    ['ServiceWorkerContainer.prototype',w => w.ServiceWorkerContainer && w.ServiceWorkerContainer.prototype],
+    ['navigator.keyboard',              w => w.navigator.keyboard],
+    ['navigator.gpu',                   w => w.navigator.gpu],
+    ['GPU.prototype',                   w => w.GPU && w.GPU.prototype],
+    ['speechSynthesis',                 w => w.speechSynthesis],
+    ['SpeechSynthesis.prototype',       w => w.SpeechSynthesis && w.SpeechSynthesis.prototype],
+    ['document.fonts',                  w => w.document.fonts],
+    ['FontFaceSet.prototype',           w => w.FontFaceSet && w.FontFaceSet.prototype],
+    ['RTCPeerConnection.prototype',     w => w.RTCPeerConnection && w.RTCPeerConnection.prototype],
+    ['OfflineAudioContext.prototype',   w => w.OfflineAudioContext && w.OfflineAudioContext.prototype],
+    ['AnalyserNode.prototype',          w => w.AnalyserNode && w.AnalyserNode.prototype],
+    ['Node.prototype',                  w => w.Node && w.Node.prototype],
+    ['Element.prototype',               w => w.Element && w.Element.prototype],
+    ['CanvasRenderingContext2D.prototype', w => w.CanvasRenderingContext2D && w.CanvasRenderingContext2D.prototype],
+    ['HTMLCanvasElement.prototype',     w => w.HTMLCanvasElement && w.HTMLCanvasElement.prototype],
+    ['TextMetrics.prototype',           w => w.TextMetrics && w.TextMetrics.prototype],
+    ['MediaQueryList.prototype',        w => w.MediaQueryList && w.MediaQueryList.prototype],
+    ['PermissionStatus.prototype',      w => w.PermissionStatus && w.PermissionStatus.prototype],
+    ['BatteryManager.prototype',        w => w.BatteryManager && w.BatteryManager.prototype],
+    ['Date.prototype',                  w => w.Date.prototype],
+    ['Intl.DateTimeFormat.prototype',   w => w.Intl.DateTimeFormat.prototype],
+    ['Error.prototype',                 w => w.Error.prototype],
+    ['Window (self)',                   w => w],
+  ];
+
+  // Window own-props legitimately differ between two documents (page globals, timers,
+  // named elements), so only names that look like ours are interesting there.
+  const WINDOW_OURS = /^(__|afp|AFP)/;
+
+  // One accepted difference, named so it stays deliberate.
+  // __p0 is mw-core's "this realm is already patched" guard. It is defined
+  // NON-ENUMERABLE, so it does not appear in Object.keys(window) — which is the
+  // enumeration CreepJS's getClientCode actually performs — only in
+  // getOwnPropertyNames. Dropping it would let the whole module set apply twice in one
+  // realm, and there is nowhere else to keep the flag: a Symbol is just as visible, and
+  // a WeakSet cannot survive between two separate executions of the same script.
+  // Every page also adds its own globals here, so a single extra non-enumerable name is
+  // not attributable without knowing it in advance.
+  // __t0 is the protection-status set. [FIX status-was-a-page-readable-key] moved it here
+  // out of sessionStorage['v.ui.t'], where it was self-describing JSON —
+  // {"canvas":true,"webgl":true,…} — naming every active module on an origin where a clean
+  // Chrome stores NOTHING (measured, extension off: zero keys). That was readable through
+  // sessionStorage.key(i), an ordinary API a page uses for its own data; this is one more
+  // non-enumerable name next to __p0, invisible to Object.keys, and the argument above
+  // applies unchanged. Stated plainly because it IS a trade and not a pure win: the
+  // property is here for the life of the page, where the storage key also was.
+  const WINDOW_EXEMPT = {
+    __p0: 'mw-core re-entry guard, non-enumerable, invisible to Object.keys',
+    __t0: 'protection status set, non-enumerable, read only by the popup probe'
+  };
+
+  // The baseline is only a baseline if nothing patched it. Opened by hand in a browser
+  // where this extension is ENABLED, the iframe gets the same content scripts the top
+  // window does (all_frames + match_about_blank), so the "pristine" realm is nothing of
+  // the sort and every comparison below is meaningless — it reported navigator as having
+  // NINE own properties we supposedly delete, when stock Chromium gives it none at all.
+  // Detect that instead of printing nonsense: run this page through test/run.mjs, which
+  // drives a stock Chromium with no extensions loaded.
+  const baselineOwn = Object.getOwnPropertyNames(W.navigator).length;
+  if (baselineOwn > 0) {
+    f.remove();
+    document.getElementById('out').innerHTML =
+      '<p class="bad">BASELINE NOT CLEAN — the reference iframe already has ' + baselineOwn +
+      ' own properties on navigator, so the extension (or another one) is patching it here.' +
+      '</p><p>Stock Chromium reports 0. Run this page via <code>node test/run.mjs ownprops</code>' +
+      ' — that launches a browser with no extensions.</p><p class="k">FAILURES: 0 — skipped,' +
+      ' no usable baseline</p>';
+    return;
+  }
+
+  const rows = [];
+  let extras = 0, missing = 0, skipped = 0;
+
+  for (const [label, get] of PATHS) {
+    let ours, clean;
+    try { ours = get(window); } catch (e) { ours = null; }
+    try { clean = get(W); } catch (e) { clean = null; }
+    if (!ours || !clean) { skipped++; continue; }
+
+    let a, b;
+    try { a = Object.getOwnPropertyNames(ours); } catch (e) { skipped++; continue; }
+    try { b = Object.getOwnPropertyNames(clean); } catch (e) { skipped++; continue; }
+    const bs = new Set(b), as = new Set(a);
+    let plus = a.filter(n => !bs.has(n));
+    let minus = b.filter(n => !as.has(n));
+    let exempt = [];
+    if (label === 'Window (self)') {
+      plus = plus.filter(n => WINDOW_OURS.test(n));
+      exempt = plus.filter(n => WINDOW_EXEMPT[n]);
+      plus = plus.filter(n => !WINDOW_EXEMPT[n]);
+      minus = [];
+      if (exempt.length) {
+        rows.push('<tr><td>' + label + ' <span class="k">(accepted)</span></td><td class="k">' +
+          exempt.map(n => n + ' — ' + WINDOW_EXEMPT[n]).join('<br>') + '</td><td class="k">—</td></tr>');
+      }
+    }
+    if (!plus.length && !minus.length) continue;
+    extras += plus.length; missing += minus.length;
+    rows.push('<tr><td>' + label + '</td><td class="bad">' + (plus.join(', ') || '—') +
+      '</td><td class="bad">' + (minus.join(', ') || '—') + '</td></tr>');
+  }
+
+  f.remove();
+  const total = extras + missing;
+  document.getElementById('out').innerHTML =
+    (rows.length
+      ? '<table><tr><th>object</th><th>own props WE ADD</th><th>own props WE REMOVE</th></tr>' +
+        rows.join('') + '</table>'
+      : '<p class="ok">no own-property differences on any of the ' + PATHS.length + ' objects</p>') +
+    '<p class="k">' + PATHS.length + ' objects compared, ' + skipped + ' unavailable in one realm</p>' +
+    '<p class="' + (total ? 'bad' : 'ok') + '">FAILURES: ' + total +
+    (total ? '' : ' — own properties match a pristine realm') + '</p>';
+})();
+</script>

@@ -1,0 +1,123 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev — WebGL getParameter parity</title>
+<style>
+  body { font: 13px/1.5 ui-monospace, monospace; padding: 16px; }
+  table { border-collapse: collapse; margin-top: 12px; }
+  td, th { border: 1px solid #ccc; padding: 3px 8px; text-align: left; }
+  .ok { color: #0a0; } .bad { color: #c00; font-weight: bold; }
+  #sum { font-size: 15px; margin-top: 14px; }
+</style>
+<h1 style="font-size:15px">WebGL getParameter — window vs worker</h1>
+<p>Window side runs the real <code>mw/mw-core.js</code> + <code>mw/mw-navigator.js</code>.
+Worker side lifts the <code>webgl</code> arms of <code>_buildPatchCode()</code> out of the
+real <code>mw/mw-workers.js</code> and runs them in a genuine Worker. Both are then asked
+for the same GL enums and compared.</p>
+<div id="out"></div>
+<div id="sum"></div>
+
+<script>
+  // intel_uhd row from GPU_DATA in background.js — the values the profile would carry.
+  var WGP = {
+    0x0D33: 16384, 0x84E8: 16384, 0x851C: 16384,
+    0x8B4D: 192,   0x8B4C: 64,    0x8872: 64,
+    0x8DFD: 1024,  0x8DFB: 4096,  0x8DFC: 30,
+    0x8869: 16,
+    0x0D52: 8,     0x0D53: 8,     0x0D54: 8,
+    0x0D55: 8,     0x0D56: 24,    0x0D57: 0,
+    0x8073: 1048575, 0x8074: 1048575,
+    0x84FD: 16,    0x8B49: 1024,  0x8B48: 4096,
+    0x8A2B: 4,     0x88FF: 32768, 0x8904: 16,
+    0x84FF: 16
+  };
+  var WGV = 'Google Inc. (Intel)';
+  var WGR = 'ANGLE (Intel, Intel(R) UHD Graphics 630 (0x00003E9B) Direct3D11 vs_5_0 ps_5_0, D3D11)';
+  sessionStorage.setItem('v.ui.s', JSON.stringify({
+    webglVendor: WGV, webglRenderer: WGR, webglParams: WGP,
+    language: 'et-EE', timezone: 'Europe/Tallinn', mode: 'normal'
+  }));
+</script>
+
+<script src="../mw/mw-bag.js"></script>
+<script src="../mw/mw-core.js"></script>
+<script src="../mw/mw-navigator.js"></script>
+
+<script>
+(async function () {
+  var rows = [], pass = 0, fail = 0;
+  function render(note) {
+    var html = '<table><tr><th></th><th>enum</th><th>window</th><th>worker</th></tr>';
+    rows.forEach(function (r) {
+      html += '<tr><td class="' + (r.ok ? 'ok' : 'bad') + '">' + (r.ok ? 'PASS' : 'FAIL') +
+        '</td><td>' + r.name + '</td><td>' + String(r.win) + '</td><td>' + String(r.wrk) + '</td></tr>';
+    });
+    document.getElementById('out').innerHTML = html + '</table>';
+    document.getElementById('sum').innerHTML = '<span class="' + (fail || note ? 'bad' : 'ok') + '">' +
+      pass + ' matched, ' + fail + ' diverged' + (note ? ' — ' + note : '') + '</span>';
+    window.__RESULT__ = { pass: pass, fail: fail, note: note || null,
+      failed: rows.filter(function (r) { return !r.ok; })
+        .map(function (r) { return r.name + ': window ' + r.win + ' vs worker ' + r.wrk; }) };
+  }
+
+  // The enums under test: the four the worker already knew, plus every key the
+  // profile table carries — the ones that used to fall through to the real driver.
+  var ENUMS = [['VENDOR',0x1F00],['RENDERER',0x1F01],['UNMASKED_VENDOR',0x9245],['UNMASKED_RENDERER',0x9246]]
+    .concat(Object.keys(WGP).map(function (k) { return ['0x' + (+k).toString(16).toUpperCase(), +k]; }));
+
+  // Neither side needs a real GL context: for a spoofed enum the patch answers before
+  // it ever touches the native call, so a dummy `this` is enough to read the table out.
+  // A throw means "fell through to native", which is itself the answer we care about.
+  function probe(fn) {
+    return ENUMS.map(function (e) {
+      try { var v = fn(e[1]); return v === undefined ? '<undefined>' : v; }
+      catch (err) { return '<native fallthrough>'; }
+    });
+  }
+  var winVals = probe(function (p) {
+    return WebGLRenderingContext.prototype.getParameter.call({}, p);
+  });
+
+  // --- lift the three webgl arms out of the shipped worker builder -----------------
+  var workerJs;
+  try {
+    var src = await (await fetch('../mw/mw-workers.js')).text();
+    var lines = src.split('\n').filter(function (l) {
+      return l.indexOf("(_on('webgl'))") !== -1;
+    });
+    if (lines.length !== 3) throw new Error('expected 3 webgl arms, found ' + lines.length);
+    var _on = function () { return true; };
+    var wgp = JSON.stringify(WGP), wgv = JSON.stringify(WGV), wgr = JSON.stringify(WGR);
+    workerJs = lines.map(function (l) {
+      return eval(l.trim().replace(/,\s*$/, ''));   // same expression the builder evaluates
+    }).join('\n');
+  } catch (e) { render('extraction failed: ' + e.message); return; }
+
+  var harness =
+    'var _M = function (f) { return f; };\n' + workerJs + '\n' +
+    'var ENUMS = ' + JSON.stringify(ENUMS.map(function (e) { return e[1]; })) + ';\n' +
+    'var out = ENUMS.map(function (p) {\n' +
+    '  try { var v = WebGLRenderingContext.prototype.getParameter.call({}, p);\n' +
+    '        return v === undefined ? "<undefined>" : v; }\n' +
+    '  catch (e) { return "<native fallthrough>"; }\n' +
+    '});\n' +
+    'postMessage({ out: out, hasGL: typeof WebGLRenderingContext !== "undefined" });';
+
+  var w = new Worker(URL.createObjectURL(new Blob([harness], { type: 'text/javascript' })));
+  var res = await new Promise(function (resolve, reject) {
+    w.onmessage = function (ev) { resolve(ev.data); };
+    w.onerror = function (ev) { reject(new Error(ev.message || 'worker error')); };
+    setTimeout(function () { reject(new Error('worker timeout')); }, 5000);
+  }).catch(function (e) { return { __err: e.message }; });
+  w.terminate();
+
+  if (res.__err) { render('worker: ' + res.__err); return; }
+  if (!res.hasGL) { render('this worker has no WebGLRenderingContext — cannot compare'); return; }
+
+  ENUMS.forEach(function (e, i) {
+    var ok = String(winVals[i]) === String(res.out[i]);
+    ok ? pass++ : fail++;
+    rows.push({ name: e[0], win: winVals[i], wrk: res.out[i], ok: ok });
+  });
+  render(null);
+})();
+</script>

@@ -166,10 +166,16 @@ assert(/var _PATCH_MARK = '([^']+)'/.test(workers), 'worker patch marker is a na
     assert(docOnly === 2, `exactly two documents-only rules, the CSP rewrite and the per-route stand-down (found ${docOnly})`);
     assert(uses >= 3 && uses + docOnly === anyResourceTypes,
       `every request-header rule uses the shared list (shared ${uses} + documents-only ${docOnly} of ${anyResourceTypes})`);
-    for (const r of staticRules) {
-      const stat = (r.condition.resourceTypes || []).slice().sort();
-      assert(stat.join(',') === dynList.join(','),
-        `static rule ${r.id} covers the same request types as the dynamic rules`);
+    // [FIX the-arch-strip-hid-a-value-the-host-already-matched] All THREE static files,
+    // not just the first. rules/static-hw.json had never been in this loop and happened to
+    // carry the same twelve types; the gap was latent rather than live, and a third file
+    // was not the moment to leave it open.
+    for (const file of ['rules/static.json', 'rules/static-hw.json', 'rules/static-arch.json']) {
+      for (const r of JSON.parse(read(file))) {
+        const stat = (r.condition.resourceTypes || []).slice().sort();
+        assert(stat.join(',') === dynList.join(','),
+          `${file} rule ${r.id} covers the same request types as the dynamic rules`);
+      }
     }
     assert(!dynList.includes('websocket'),
       'websocket excluded — its handshake carries no Accept-Language and DNR cannot rewrite it');
@@ -640,7 +646,7 @@ assert(/var _PATCH_MARK = '([^']+)'/.test(workers), 'worker patch marker is a na
   // edited without re-running the generator would ship stale code while every test that
   // reads the sources still passed. Same guarantee dyn/ already has, same mechanism.
   {
-    const { generate: generateBundle, MAIN_MODULES, BUNDLE_PATH } =
+    const { generate: generateBundle, stripComments, MAIN_MODULES, BUNDLE_PATH } =
       await import('../tools/gen-bundle.mjs');
     assert(fs.existsSync(path.join(root, BUNDLE_PATH)), `${BUNDLE_PATH} exists`);
     assert(read(BUNDLE_PATH) === generateBundle(),
@@ -664,6 +670,55 @@ assert(/var _PATCH_MARK = '([^']+)'/.test(workers), 'worker patch marker is a na
     const seams = (read(BUNDLE_PATH).match(/\n;\n/g) || []).length;
     assert(seams === MAIN_MODULES.length - 1,
       `every seam carries a semicolon — found ${seams}, want ${MAIN_MODULES.length - 1}`);
+
+    // [FIX six-hundred-kilobytes-of-comments-in-every-frame] The bundle is injected into
+    // every frame of every page, so its comment text was SCANNED once per frame: of
+    // 1,075,029 bytes, 654,685 were comment. Measured by tools/probe-bundlecost.mjs,
+    // Chromium 141, three runs, minimum of twelve interleaved rounds — 6.4/7.8/7.8 ms per
+    // frame with the comments in against 5.2/6.4/6.5 ms as shipped. The modules keep every
+    // [FIX]; the concatenation does not. What is asserted here is the property, not the
+    // byte count: no line of the bundle is a comment except the banner and the headers.
+    const bundle = read(BUNDLE_PATH);
+    const commentLines = bundle.split('\n').filter((l) => /^\s*\/\//.test(l));
+    assert(commentLines.length === MAIN_MODULES.length + 2,
+      `only the banner and the ${MAIN_MODULES.length} module headers are comment lines ` +
+      `(found ${commentLines.length}, want ${MAIN_MODULES.length + 2})`);
+    assert(read('mw/mw-navigator.js').includes('[FIX iframe-full-parity]'),
+      'and the modules still carry their measurements — the strip touches the artefact');
+
+    // LINE NUMBERS MUST NOT MOVE. Blanking whole lines rather than deleting them is what
+    // keeps a stack frame at mw-bundle.js:N dividing back into a module and a line in it;
+    // mw/mw-core.js records `…/mw-bundle.js:1548:36` as evidence and that number has to
+    // keep resolving. Asserted two ways: per module, and over the whole file.
+    for (const rel of MAIN_MODULES) {
+      const src = read(rel);
+      assert(stripComments(src, rel).split('\n').length === src.split('\n').length,
+        `${rel} keeps its line count through the strip`);
+    }
+    const headers = bundle.split('\n')
+      .map((l, i) => (/^\/\/ ==== /.test(l) ? i + 1 : 0)).filter(Boolean);
+    assert(headers.length === MAIN_MODULES.length,
+      `every module header survives (${headers.length} of ${MAIN_MODULES.length})`);
+    for (let i = 0; i < MAIN_MODULES.length; i++) {
+      const want = read(MAIN_MODULES[i]).split('\n').length;
+      const got = (i + 1 < headers.length ? headers[i + 1] - 2 : bundle.split('\n').length - 1)
+        - headers[i];
+      assert(got === want,
+        `${MAIN_MODULES[i]} occupies ${want} bundle lines, one per source line (got ${got})`);
+    }
+
+    // THE STRIP CANNOT CORRUPT CODE, asserted on the three shapes that would. The first is
+    // why acorn is here at all: a filter over /^\s*\/\// eats the line that CLOSES a block
+    // comment and the rest of the file is swallowed by a comment that never ends.
+    assert(stripComments('var a = 1;\n/* x\n// y */\nvar b = 2;\n', 'trap:block') ===
+           'var a = 1;\n\n\nvar b = 2;\n',
+      'a block comment whose inner line starts with // is blanked whole, closer included');
+    const tmpl = 'var s = `line1\n// not a comment\n`;\n';
+    assert(stripComments(tmpl, 'trap:template') === tmpl,
+      'a //-looking line inside a template literal is left alone');
+    assert(stripComments('var r = /a\\/\\/b/;\nvar q = 1; // tail\n', 'trap:regex') ===
+           'var r = /a\\/\\/b/;\nvar q = 1; // tail\n',
+      'a // inside a regex, and a comment sharing its line with code, are left alone');
   }
 
   // ── globals a clean browser does not have ───────────────────────────────────────
@@ -923,7 +978,7 @@ const list = (src, re) => {
     new Function('return ' + balanced(read('defaults.js'), /var AFP_DEFAULT_FEATURES = \{/, '{', '}'))()
   );
   for (const page of ['dev-perflag.html', 'dev-flagcase.html']) {
-    const got = list(read(page), /const KEYS = \[/);
+    const got = list(read('devpages/' + page), /const KEYS = \[/);
     assert(Array.isArray(got) && JSON.stringify(got) === JSON.stringify(keys),
       `${page}: KEYS is the AFP_DEFAULT_FEATURES key set` +
       (Array.isArray(got)
@@ -958,14 +1013,14 @@ const list = (src, re) => {
   // [name, why] pairs, so one scan for quoted dev-*.html names covers both. Anything the
   // runner MENTIONS is declared; the point is to catch files it never names at all.
   const declared = new Set((runner.match(/'(dev-[\w.-]+\.html)'/g) || []).map((s) => s.slice(1, -1)));
-  const onDisk = fs.readdirSync(root).filter((f) => /^dev-.*\.html$/.test(f));
+  const onDisk = fs.readdirSync(path.join(root, 'devpages')).filter((f) => /^dev-.*\.html$/.test(f));
   const undeclared = onDisk.filter((f) => !declared.has(f));
   assert(undeclared.length === 0,
     'every dev-*.html is declared in test/run.mjs (CHECKS or NOT_COVERED)' +
     (undeclared.length ? ` — missing: ${undeclared.join(', ')}` : ` (${onDisk.length} pages)`));
   // And nothing is listed that no longer exists: a renamed page left in CHECKS makes the
   // runner report a permanent failure for a file it cannot load.
-  const ghosts = [...declared].filter((f) => !fs.existsSync(path.join(root, f)));
+  const ghosts = [...declared].filter((f) => !fs.existsSync(path.join(root, 'devpages', f)));
   assert(ghosts.length === 0,
     'test/run.mjs lists no dev page that has been deleted' + (ghosts.length ? ` — ${ghosts.join(', ')}` : ''));
 }
@@ -1241,14 +1296,21 @@ const list = (src, re) => {
   // the hardware hints (AFP_HW_HINTS) and is disabled for host mode by afpSyncHwRuleset,
   // where the host's own build and device hints are the right answer. Together they must
   // still cover every managed hint, or the install window re-opens for the one left out.
+  // [FIX the-arch-strip-hid-a-value-the-host-already-matched] THREE now.
+  // rules/static-arch.json holds exactly AFP_ARCH_HINTS and is disabled by
+  // afpSyncArchRuleset on a host whose own four values already equal the claim — a reading,
+  // not a mode, so it is independent of the hardware ruleset above.
   const hwRules = JSON.parse(read('rules/static-hw.json'));
-  const { AFP_CH_HINTS, AFP_HW_HINTS } = loadBackground(['AFP_CH_HINTS', 'AFP_HW_HINTS']);
-  const hdrs = staticRules[0].action.requestHeaders.concat(hwRules[0].action.requestHeaders);
+  const archRules = JSON.parse(read('rules/static-arch.json'));
+  const { AFP_CH_HINTS, AFP_HW_HINTS, AFP_ARCH_HINTS } =
+    loadBackground(['AFP_CH_HINTS', 'AFP_HW_HINTS', 'AFP_ARCH_HINTS']);
+  const hdrs = staticRules[0].action.requestHeaders
+    .concat(hwRules[0].action.requestHeaders, archRules[0].action.requestHeaders);
   const removed = new Set(hdrs.filter((h) => h.operation === 'remove').map((h) => h.header));
   for (const hint of Object.keys(AFP_CH_HINTS)) {
     assert(removed.has(hint),
-      `rules/static.json + rules/static-hw.json remove ${hint} by default, so the install ` +
-      `window cannot send the host's own value for it`);
+      `the three static rulesets remove ${hint} by default, so the install window cannot ` +
+      `send the host's own value for it`);
   }
   const hwRemoved = hwRules[0].action.requestHeaders.filter((h) => h.operation === 'remove').map((h) => h.header);
   assert(hwRemoved.slice().sort().join('|') === AFP_HW_HINTS.slice().sort().join('|'),
@@ -1262,12 +1324,32 @@ const list = (src, re) => {
       clientHints: { platformVersion: '15.0.0' } }) === null,
       `${hint} builds no per-origin rule in host mode`);
   }
+  const archRemoved = archRules[0].action.requestHeaders
+    .filter((h) => h.operation === 'remove').map((h) => h.header);
+  assert(archRemoved.slice().sort().join('|') === AFP_ARCH_HINTS.slice().sort().join('|'),
+    `rules/static-arch.json removes exactly the arch hints background.js lists as such ` +
+    `(${archRemoved.join(',')} vs ${AFP_ARCH_HINTS.join(',')}) — that file is the one a ` +
+    `matching host switches off`);
+  for (const hint of AFP_ARCH_HINTS) {
+    assert(!staticRules[0].action.requestHeaders.some((h) => h.header === hint) &&
+      !hwRules[0].action.requestHeaders.some((h) => h.header === hint),
+      `${hint} is stripped by rules/static-arch.json ALONE — a second copy in another ` +
+      `ruleset would make switching this one off change nothing`);
+  }
+  assert(archRules[0].priority === 1,
+    `rules/static-arch.json stays at priority 1 (found ${archRules[0].priority}), like the ` +
+    `other two, so the priority-2 per-origin rules still win where they exist`);
   const manifest = JSON.parse(read('manifest.json'));
   const rulesets = (manifest.declarative_net_request || {}).rule_resources || [];
   assert(rulesets.some((r) => r.id === 'ruleset_static_hw' && r.path === 'rules/static-hw.json' && r.enabled === true),
     'the manifest ships rules/static-hw.json as ruleset_static_hw, enabled by default');
+  assert(rulesets.some((r) => r.id === 'ruleset_static_arch' && r.path === 'rules/static-arch.json' && r.enabled === true),
+    'the manifest ships rules/static-arch.json as ruleset_static_arch, enabled by default — ' +
+    'the strip is on until a host reading turns it off, never the other way round');
   assert(/AFP_HW_RULESET_ID = 'ruleset_static_hw'/.test(bg),
     'background.js toggles the ruleset the manifest names');
+  assert(/AFP_ARCH_RULESET_ID = 'ruleset_static_arch'/.test(bg),
+    'background.js toggles the arch ruleset the manifest names');
   assert(removed.has('accept-language'),
     'rules/static.json removes accept-language by default — the header that names a COUNTRY, ' +
     "and the one measured leaking the host's ru-RU while the profile claimed America/New_York");
@@ -1276,8 +1358,15 @@ const list = (src, re) => {
     `priority-2 dynamic rules still win once they exist — that is what makes stripping safe`);
   // And the dynamic strip is still there: the static one covers the window, the dynamic one
   // is what the runtime suites exercise, and neither is a reason to drop the other.
-  assert(/id: AFP_HINT_STRIP_RULE_ID[\s\S]{0,200}?operation: 'remove'/.test(bg),
+  // [FIX an-empty-strip-rule-threw-and-took-the-whole-write-with-it] The rule is built
+  // CONDITIONALLY now — a header list that came out empty is not a rule Chrome will take —
+  // so the window this regex may span grew. It is still one assertion about one shape.
+  assert(/id: AFP_HINT_STRIP_RULE_ID[\s\S]{0,400}?operation: 'remove'/.test(bg),
     'background.js still builds the dynamic strip rule as well');
+  assert(/if \(stripped\.length\) \{/.test(bg),
+    'and only when it has something to strip — an empty modifyHeaders rule is rejected, and ' +
+    'the rejection takes the whole updateDynamicRules call with it, leaving the previous ' +
+    "profile's rules in place");
 }
 
 // ===== the READMEs must not quote a number that has moved =====
@@ -1538,10 +1627,10 @@ const list = (src, re) => {
   assert(!!decl, 'defaults.js declares AFP_MEDIA_PARITY_TRADE — the media-parity trade list');
 
   // dev-mediaparity.html reads the shared name and loads the file that defines it.
-  const dev = read('dev-mediaparity.html');
+  const dev = read('devpages/dev-mediaparity.html');
   assert(dev.includes('AFP_MEDIA_PARITY_TRADE.test('),
     'dev-mediaparity.html tests against the shared list rather than a copy');
-  assert(/const MODULES = \['defaults\.js'/.test(dev),
+  assert(/const MODULES = \['\.\.\/defaults\.js'/.test(dev),
     'dev-mediaparity.html loads defaults.js first among its modules, so the shared list exists');
   assert(!/const ACCEPTED = \//.test(dev),
     'dev-mediaparity.html no longer carries its own regex literal');
@@ -1671,7 +1760,9 @@ const list = (src, re) => {
     assert(false, `the clock-wait ceiling is stale: ${total} left, ceiling still ${CEILING} ` +
       '— lower it to lock the improvement in, or the next one silently spends the slack');
   }
-}if (failed) {
+}
+
+if (failed) {
   console.error('\n' + failed + ' assertion(s) failed');
   process.exit(1);
 }

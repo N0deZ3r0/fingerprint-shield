@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>does @media agree with matchMedia?</title>
+<style id="probe"></style></head>
+<body><div id="d">x</div><pre id="out">running…</pre>
+<script>
+// A real browser CANNOT disagree with itself about a media query: `@media` in a stylesheet
+// and `window.matchMedia()` are the same engine answering the same question. So a
+// divergence is not a wrong value — it is a positive signature that something is patching
+// the JS side, and it reads in three lines with no baseline knowledge of the visitor.
+// That is strictly worse than the trait it hides, and it is the same trade this codebase
+// already lost twice (the AudioContext noise, the ad-block mask that contradicted the
+// network).
+//
+// Measured with the real extension loaded, every feature asked twice:
+//   clean Chromium   0 disagreements
+//   this build       5  ->  (video-dynamic-range: standard)  css=false  matchMedia=true
+//                           plus the four screen/dpr ones listed at ACCEPTED below
+//
+// [FIX video-dynamic-range-was-caught-by-the-dynamic-range-branch] closed the first one:
+// 'video-dynamic-range' CONTAINS the substring 'dynamic-range', so the plain branch in
+// mw/mw-misc.js _decide matched it first and the dedicated branch below it had been dead
+// code since the day it was written — while the plain branch forced a feature this engine
+// does not answer at all. Both are gated on the engine now (see _mqUsable there).
+const FIXTURE = {
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:24, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'en-US', locale:'en-US', countryCode:'US', languages:['en-US','en'],
+  timezone:'America/New_York', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  allowedFonts:['Arial'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:{canvas:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:false,plugins:true,network:true,
+    hideAdBlocker:true}
+};
+window.__AFP_PROFILE__ = FIXTURE;
+
+const QUERIES = [
+  '(prefers-reduced-motion: reduce)','(prefers-reduced-motion: no-preference)',
+  '(prefers-color-scheme: dark)','(prefers-color-scheme: light)',
+  '(prefers-contrast: more)','(prefers-contrast: less)','(prefers-contrast: no-preference)',
+  '(prefers-reduced-transparency: reduce)','(prefers-reduced-transparency: no-preference)',
+  '(forced-colors: active)','(forced-colors: none)',
+  '(inverted-colors: inverted)','(inverted-colors: none)',
+  '(monochrome)','(monochrome: 0)',
+  '(color-gamut: srgb)','(color-gamut: p3)','(color-gamut: rec2020)',
+  '(dynamic-range: standard)','(dynamic-range: high)',
+  '(video-dynamic-range: standard)','(video-dynamic-range: high)',
+  '(hover: hover)','(hover: none)','(any-hover: hover)','(any-hover: none)',
+  '(pointer: fine)','(pointer: coarse)','(pointer: none)',
+  '(any-pointer: fine)','(any-pointer: coarse)','(any-pointer: none)',
+  '(update: fast)','(update: slow)','(update: none)',
+  '(scripting: enabled)','(scripting: none)',
+  '(display-mode: browser)','(display-mode: standalone)',
+  '(orientation: landscape)','(orientation: portrait)',
+  '(color: 8)','(color-index: 0)','(grid: 0)','(overflow-block: scroll)',
+  // [FIX unprefixed-device-pixel-ratio-was-answered-at-all] The resolution family was
+  // whitelisted below and never actually ASKED, so the one query in it that is not a
+  // trade at all shipped answered: unprefixed device-pixel-ratio is not a Blink media
+  // feature, clean Chrome says false on both sides, and matchMedia said true. A
+  // whitelist over a question nobody asks protects nothing.
+  '(min-device-pixel-ratio: 1.5)','(max-device-pixel-ratio: 1.5)','(device-pixel-ratio: 1)',
+  '(-webkit-min-device-pixel-ratio: 1.5)','(-webkit-max-device-pixel-ratio: 3)',
+  '(min-resolution: 1.5dppx)','(max-resolution: 3dppx)','(min-resolution: 96dpi)'
+];
+
+// KNOWN AND ACCEPTED — and SETTLED, not deferred. Do not "fix" these.
+//
+// matchMedia is answered from the PROFILE for these; the CSS engine answers from the real
+// window, and an extension cannot reach the CSS engine. So the divergence is structural:
+//
+//   keep the override      @media and matchMedia disagree             (today)
+//   drop the override      screen.width and (device-width) disagree   (the same problem,
+//                                                                     moved one API over)
+//
+// Which one costs less is not a matter of taste — it was decided by reading the detector.
+// creep.js, at the Screen test, takes OUR SPOOFED values and demands that matchMedia
+// confirm them:
+//
+//     const matchMediaLie = !matchMedia(`(device-width: ${width}px) and
+//                                        (device-height: ${height}px)`).matches;
+//     if (matchMediaLie) { lied = true; documentLie('Screen', 'failed matchMedia'); }
+//     const hasLiedDPR = !matchMedia(`(resolution: ${dpr}dppx)`).matches;
+//
+// while `mediaCSS` and `matchMediaCSS` are hashed SEPARATELY and never compared to each
+// other. So the override we have scores 0 lies; removing it would score 2 documented ones.
+// Keep it. What is left is two hashes that differ — entropy, not a flagged contradiction.
+//
+// This page measures them, names them, and does not fail on them. Everything OUTSIDE this
+// pattern is a real bug and does fail.
+//
+// THE SECOND ACCEPTED GROUP: hover / any-hover / pointer / any-pointer / update.
+//
+// Same structure, different claimant. mw-misc forces these to "mouse, no touch" so they
+// agree with the profile, whose navigator.maxTouchPoints is 0. On the desktop this rig
+// runs on, the forced answer IS the real one and nothing diverges - which is exactly how
+// it stayed invisible. Measured on an emulated touch device (Playwright hasTouch +
+// isMobile), it is 8 disagreements at once:
+//
+//     (hover: hover)        css=false  matchMedia=true      + any-hover, both values
+//     (pointer: fine)       css=false  matchMedia=true      + any-pointer, both values
+//
+// Dropping the force does NOT remove the contradiction, it moves it: matchMedia would
+// then report a coarse pointer next to a navigator.maxTouchPoints of 0, which no real
+// machine reports. Removing THAT means letting maxTouchPoints follow the host, and that
+// hands out a bit ("this box has a touchscreen") which survives a profile change - a new
+// host carrier of the kind test/hostleak.mjs exists to drive down.
+//
+// So it is the same trade as the screen/dpr group above, with our own spoofed value in
+// the place creep.js occupies there. Kept, named, and measured rather than left to look
+// like an oversight on the first touchscreen this build meets.
+//
+// NOT in this list, and deliberately: the accessibility preferences. They were forced
+// too, and were dropped instead of accepted - see [FIX accessibility-prefs-were-forced-
+// onto-the-user] in mw/mw-misc.js. Nothing of ours demanded those, and the cost of
+// keeping them landed on the user rather than on the fingerprint.
+// [FIX unprefixed-device-pixel-ratio-was-answered-at-all] `.*device-pixel-ratio` used to
+// accept the UNPREFIXED spelling too. That is not the structural trade described above:
+// Blink has no unprefixed device-pixel-ratio feature, so a clean browser answers false
+// through matchMedia AND through @media, there is no real window to disagree with, and
+// the profile has nothing to contribute. Only the -webkit- spelling is a real query, and
+// only that one is a trade.
+// The list itself is AFP_MEDIA_PARITY_TRADE in defaults.js, loaded with the modules below.
+// It was duplicated here and in audit.js until the copies drifted — audit.js was missing the
+// input family, so on a touchscreen it would have called those eight disagreements a fault.
+
+const MODULES = ['../defaults.js','../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+  '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js',
+  '../mw/mw-geo.js','../mw/mw-adblock.js','../mw/mw-cleanup.js'];
+const load = (s) => new Promise((r) => {
+  const e = document.createElement('script'); e.src = s + '?x=' + Date.now();
+  e.onload = e.onerror = r; document.head.appendChild(e);
+});
+
+(async () => {
+  for (const m of MODULES) await load(m);
+
+  const st = document.getElementById('probe');
+  const d = document.getElementById('d');
+  const rows = [];
+  let unexpected = 0, accepted = 0;
+  QUERIES.forEach(function (q) {
+    // CSS side: does the style engine apply a rule guarded by this query?
+    st.textContent = '#d{--v:0}@media ' + q + '{#d{--v:1}}';
+    const css = getComputedStyle(d).getPropertyValue('--v').trim() === '1';
+    let js;
+    try { js = window.matchMedia(q).matches; } catch (e) { js = 'ERR:' + e.name; }
+    if (css === js) return;
+    const known = AFP_MEDIA_PARITY_TRADE.test(q);
+    if (known) accepted++; else unexpected++;
+    rows.push((known ? '  note  ' : '  FAIL  ') + q.padEnd(40) +
+      'css=' + css + '  matchMedia=' + js);
+  });
+
+  const L = [];
+  L.push('asked ' + QUERIES.length + ' features twice — once as a CSS @media rule, once through matchMedia');
+  L.push('');
+  if (rows.length) { rows.forEach(function (r) { L.push(r); }); L.push(''); }
+  L.push('accepted (screen/dpr + input, structural — AFP_MEDIA_PARITY_TRADE in defaults.js): ' + accepted);
+  L.push('FAILURES: ' + unexpected);
+  L.push('');
+  L.push(unexpected === 0
+    ? 'VERDICT  the JS media-query layer agrees with the CSS engine on every feature it\n' +
+      '         answers. The screen and dpr overrides cannot agree while a screen is\n' +
+      '         declared that the machine does not have — those are listed, not failed.'
+    : 'VERDICT  FAIL — a feature answers differently in CSS and in JS. No real browser does\n' +
+      '         this; it is a signature, not a wrong value. See mw/mw-misc.js _decide.');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

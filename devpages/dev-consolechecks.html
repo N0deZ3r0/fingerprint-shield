@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>console self-checks</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// The three afp-*-console-check.js files ship to users through README.txt — "paste into
+// the page console" — and until now NO suite ran them. They rotted exactly the way an
+// untested consumer does: they kept reading the data-v-* attributes long after that whole
+// channel was removed, so every profile comparison in them was skipped in silence and the
+// "selection published" row reported FAIL against a fully working extension.
+//
+// What this page checks is the CHECKER, not the extension. Whether a given probe passes
+// depends on a real extension being live, which a dev page cannot supply; whether the file
+// parses, runs to completion, and returns the shape its own printout assumes does not, and
+// that is precisely what rotted. So a FAILURE here means one of:
+//   - the file threw (syntax error, or it calls something that no longer exists)
+//   - it never settled
+//   - it returned nothing usable, i.e. its console.table would print an empty report
+//   - every one of its probes errored, which is what a checker reading a removed API looks
+//     like from the outside — it "runs", and reports nothing about anything
+//
+// The modules are loaded first, with the same fixture the other dev-*.html pages use, so
+// the checks run against a patched realm rather than a bare one.
+const FIXTURE = {
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:24, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en-US','en'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)',
+  webglRenderer:'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)',
+  webglParams:{}, webgpuVendor:'intel', webgpuArchitecture:'xe-lpg',
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'15.0.0',architecture:'x86',
+    bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  speechVoices:[{name:'Microsoft Kaia - Estonian',lang:'et-EE',localService:true,default:true}],
+  features:{canvas:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:false,plugins:true,network:true,
+    hideAdBlocker:true}
+};
+sessionStorage.setItem('v.ui.s', JSON.stringify(FIXTURE));
+sessionStorage.setItem('v.ui.m', 'normal');
+
+const MODULES = ['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+  '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js',
+  '../mw/mw-geo.js','../mw/mw-adblock.js','../mw/mw-cleanup.js'];
+const CHECKS = ['../afp-console-check.js','../afp-full-console-check.js','../afp-parity-console.js'];
+
+const load = (s) => new Promise((r) => {
+  const e = document.createElement('script');
+  e.src = s + '?x=' + Date.now();
+  e.onload = e.onerror = r;
+  document.head.appendChild(e);
+});
+
+/** Rows a checker produced, normalised across the three return shapes. */
+function rowsOf(v) {
+  if (Array.isArray(v)) return v;                       // afp-console-check.js
+  if (v && Array.isArray(v.rows)) return v.rows;        // afp-full-console-check.js
+  if (v && typeof v === 'object') {                     // afp-parity-console.js
+    const nested = Object.values(v).filter((x) => Array.isArray(x));
+    if (nested.length) return nested.flat();
+    return Object.keys(v).length ? [v] : [];
+  }
+  return [];
+}
+
+(async () => {
+  const L = [];
+  let failures = 0;
+  const fail = (m) => { failures++; L.push('FAIL  ' + m); };
+
+  for (const m of MODULES) await load(m);
+  L.push('modules loaded: ' + MODULES.length);
+  L.push('__AFP_MW__ removed by mw-cleanup: ' + (typeof window.__AFP_MW__ === 'undefined'));
+  L.push('');
+
+  for (const file of CHECKS) {
+    let src = null;
+    try {
+      const res = await fetch(file + '?x=' + Date.now());
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      src = await res.text();
+    } catch (e) { fail(file + ' — could not be fetched: ' + e.message); continue; }
+
+    // The files are async IIFEs whose completion value is the report. Loading them with
+    // <script src> would run them but throw the report away, so the text is evaluated to
+    // keep it — this is also the closest thing to what a user pasting into the console does.
+    let out, threw = null;
+    const started = performance.now();
+    try {
+      out = await Promise.race([
+        Promise.resolve(eval(src)),
+        new Promise((_, rj) => setTimeout(() => rj(new Error('did not settle in 20s')), 20000))
+      ]);
+    } catch (e) { threw = e; }
+    const ms = Math.round(performance.now() - started);
+
+    if (threw) {
+      fail(file + ' — threw: ' + (threw && threw.message ? threw.message : String(threw)));
+      continue;
+    }
+    const rows = rowsOf(out);
+    if (!rows.length) {
+      fail(file + ' — returned nothing its own printout could show (' +
+        Object.prototype.toString.call(out) + ')');
+      continue;
+    }
+
+    // A checker whose probes ALL errored still "runs". That is what reading a removed API
+    // looks like from outside, and it is the state these files were actually found in.
+    const errored = rows.filter((r) => {
+      const d = String((r && (r.detail || r.result || r.value)) || '');
+      return /^ERR |is not a function|undefined is not|Cannot read/i.test(d);
+    }).length;
+    if (errored === rows.length) {
+      fail(file + ' — every one of its ' + rows.length + ' probes errored');
+      continue;
+    }
+    L.push('ok    ' + file.padEnd(28) + rows.length + ' probes, ' + errored +
+      ' errored, ' + ms + 'ms');
+  }
+
+  L.push('');
+  L.push('This page asserts the checkers RUN and report something — not that every probe');
+  L.push('passes, which needs a real extension. A green run here means a user pasting the');
+  L.push('file into a console gets a table rather than an exception.');
+  L.push('');
+  L.push('FAILURES: ' + failures);
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

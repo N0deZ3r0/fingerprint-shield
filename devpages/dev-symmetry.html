@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>window vs worker: source-level symmetry</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// Every other dev page compares OUTPUT. That is not enough: the window/worker
+// canvas split of 2026-08-07 came from the two temp copies being created with
+// DIFFERENT context options, and on this machine drawImage happens to give the
+// same bytes on either backend — so every output test passed while the shipped
+// extension split on the user's GPU.
+// This page checks the SOURCES instead. It encodes the invariants the session
+// established, and it is machine-independent by construction.
+const FILES = { win: '../mw/mw-canvas-audio.js', wk: '../mw/mw-workers.js' };
+
+// strip // line comments so commentary about a pattern never counts as the pattern
+function strip(src) {
+  return src.split('\n').map((l) => {
+    const i = l.indexOf('//');
+    if (i < 0) return l;
+    // crude but sufficient here: our payload strings are single-quoted and never
+    // contain "//" outside of a URL, which we do not match on anyway
+    return l.slice(0, i);
+  }).join('\n');
+}
+
+(async () => {
+  const L = [];
+  const src = {};
+  for (const k of Object.keys(FILES)) {
+    src[k] = strip(await (await fetch(FILES[k] + '?x=' + Date.now())).text());
+  }
+  const t = (name, pass, detail) => L.push((pass ? 'PASS  ' : 'FAIL  ') + name + (detail ? '\n        ' + detail : ''));
+
+  // ---- 1. our own scratch/temp copies must be created the SAME way in both worlds
+  // window: two of them (_renderNoisedCopy, convertToBlob) + the expanded-read scratch
+  const winCopies = src.win.match(/getContext\(\s*['"]2d['"]\s*,\s*\{[^}]*\}/g) || [];
+  // worker: the payload is a string, so the call appears as "2d",{...}
+  const wkCopies = src.wk.match(/getContext\(\\?["']2d\\?["']\s*,\s*\{[^}]*\}/g) || [];
+  const wrf = (s) => /willReadFrequently\s*:\s*true/.test(s);
+  t('every temp copy in the WINDOW sets willReadFrequently',
+    winCopies.length > 0 && winCopies.every(wrf),
+    winCopies.length + ' found: ' + winCopies.map((s) => wrf(s) ? 'wrf' : 'BARE').join(', '));
+  t('every temp copy in the WORKER sets willReadFrequently',
+    wkCopies.length > 0 && wkCopies.every(wrf),
+    wkCopies.length + ' found: ' + wkCopies.map((s) => wrf(s) ? 'wrf' : 'BARE').join(', '));
+  // .every() on an empty array is true, and a BARE getContext("2d") does not match
+  // the "with options" pattern at all — so this must demand both lists be non-empty,
+  // otherwise the very bug it guards against slips through as a pass.
+  t('the two worlds agree on how temp copies are created',
+    winCopies.length > 0 && wkCopies.length > 0 && winCopies.every(wrf) && wkCopies.every(wrf),
+    'a copy on a different rasterisation backend feeds the noise different source\n'
+    + '        pixels — invisible on a machine where drawImage is backend-stable');
+
+  // a bare getContext('2d') with no options, used for a COPY, is the bug we hit
+  const wkBareCopy = /new OffscreenCanvas\([^)]*\)\s*,\s*\w+\s*=\s*\w+\.getContext\(\\?["']2d\\?["']\s*\)/.test(src.wk);
+  t('worker does not create a temp copy with a bare getContext("2d")', !wkBareCopy);
+
+  // ---- 2. the page's OWN contexts must never be forced (the two tells we removed)
+  const forcedWin = /opts\s*=\s*Object\.assign\(\s*\{\s*\}\s*,\s*opts\s*,\s*\{\s*willReadFrequently/.test(src.win);
+  const forcedWk = /opts\s*=\s*Object\.assign\(\\?\{\\?\}\s*,\s*opts\s*,\s*\{\s*willReadFrequently/.test(src.wk)
+    || /Object\.assign\(\{\},opts,\{willReadFrequently/.test(src.wk);
+  t('window never forces willReadFrequently onto a page context', !forcedWin,
+    'forcing collapses paint(GPU)/paint(CPU) and makes getContextAttributes lie');
+  t('worker never forces willReadFrequently onto a page context', !forcedWk);
+
+  // ---- 3. the noise formula constants must match between the JS fallback and the port
+  const consts = ['0x27D4EB2F', '0x85EBCA6B', '0x2545F491'];
+  consts.forEach((c) => {
+    t('positional-noise constant ' + c + ' present in both worlds',
+      src.win.includes(c) && src.wk.includes(c));
+  });
+  // the text-width port must use the WASM constants, not the old LCG
+  ['0x01000193', '0x85EBCA6B'].forEach((c) => {
+    t('text-width hash constant ' + c + ' present in both worlds',
+      src.win.includes(c) && src.wk.includes(c));
+  });
+
+  // ---- 4. both worlds must substitute ONLY width on TextMetrics
+  // [FIX test] Accept whitespace — source is `var sub = { width: w }`, not zero-space.
+  t('window substitutes only width on TextMetrics',
+    /var subst\s*=\s*\{\s*width:\s*w\s*\}/.test(src.win) && !/subst\[k\]\s*=\s*_metric/.test(src.win));
+  t('worker substitutes only width on TextMetrics',
+    /var sub\s*=\s*\{\s*width:\s*w\s*\}/.test(src.wk) && !/sub\[k\]\s*=\s*_stm/.test(src.wk));
+
+  const fails = L.filter((x) => x.startsWith('FAIL')).length;
+  document.getElementById('out').textContent =
+    'Source-level symmetry between the window patch and the worker payload.\n'
+    + 'These invariants hold or fail the same way on every machine — unlike the\n'
+    + 'output comparisons, which only fail on hardware where the two paths diverge.\n\n'
+    + L.join('\n') + '\n\nFAILURES: ' + fails;
+})();
+</script>
+</body></html>

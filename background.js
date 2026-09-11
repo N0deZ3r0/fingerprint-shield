@@ -562,6 +562,11 @@ function afpResolveDpr(profile, profileId) {
 
 async function buildProfile() {
     const cached = await chrome.storage.local.get([PROFILE_DATA_KEY, STORAGE_KEY, NOISE_SEED_KEY, PROFILE_KEY, 'afp_mode', 'afp_features', HOST_LANG_KEY]);
+    // [FIX the-default-row-was-modal-by-accident-and-said-so-nowhere] This literal is the
+    // crowd every silent install joins, and it is laptop_mid because 1920x1080 at dpr 1 is
+    // the modal desktop screen by three to one — the measurement, and the argument against
+    // sampling the rows instead, are in test/profilecoherence.mjs, which goes red if the
+    // population moves out from under it.
     const profileId = cached[PROFILE_KEY] || 'laptop_mid';
     // [FIX host-mode] The measured record is taken as it is: enforceCoherence would
     // "correct" a real 18-core machine towards one of the four tables, and GPU_DATA has no
@@ -2764,6 +2769,10 @@ async function updateDynamicLanguageRule() {
         const platformVersion = (chProfile.clientHints && chProfile.clientHints.platformVersion) || '';
         // [FIX host-mode] The hardware-hint strip follows the same profile the rules do.
         await afpSyncHwRuleset(!!chProfile.hostHw);
+        // [FIX the-arch-strip-hid-a-value-the-host-already-matched] The arch strip follows
+        // the HOST, not the profile — an x86_64 machine answers those four the way every
+        // row claims them, whichever row is selected.
+        await afpSyncArchRuleset(await afpHostArchNative());
         // Keep network UA / CH aligned with the Windows spoof the MAIN world shows.
         // Without this, JS navigator.userAgent can say Windows while the request
         // still carries HeadlessChrome/Linux — a high-confidence bot signal.
@@ -2931,8 +2940,23 @@ async function updateDynamicLanguageRule() {
 // answers with its own. The strip that would otherwise silence them lives in a SEPARATE
 // static ruleset (rules/static-hw.json) that afpSyncHwRuleset disables for the same
 // selection; the identity/locale strip in rules/static.json stays on in every mode.
-// arch / bitness / model / wow64 are the values every x64 Windows desktop reports, host
-// included, so they need no exception.
+// [FIX the-arch-strip-hid-a-value-the-host-already-matched] arch / bitness / model /
+// wow64 were said to need no exception because "they are the values every x64 Windows
+// desktop reports, host included". That is true of the VALUE and false of the STRIP: the
+// strip fired on every host, so on a host that already answers those four exactly, the
+// four headers were removed and then set back — and between the two, on the first request
+// to a new origin, they were simply absent. Measured on an x86_64 rig, clean Chromium 141
+// against an origin answering Accept-CH:
+//
+//     clean browser     sec-ch-ua-arch "x86"   -bitness "64"   -model ""   -wow64 ?0
+//     AFP_CH_HINTS      "x86"                  "64"            ""          ?0
+//
+// — the same four constants, so leaving the headers ALONE makes them match the browser's
+// own JS by construction, which is the argument already made for the brand list above.
+// The exemption is therefore a reading taken from the host (afpHostArchNative), not a
+// constant: on an ARM host the browser answers "arm" and the strip is the only truthful
+// option. Its strip lives in a third static ruleset, rules/static-arch.json, switched the
+// way afpSyncHwRuleset switches the hardware one.
 const AFP_HW_HINTS = ['sec-ch-ua-platform-version', 'sec-ch-device-memory', 'device-memory', 'sec-ch-dpr', 'dpr'];
 const AFP_CH_HINTS = (function () {
     const hints = {
@@ -2976,6 +3000,57 @@ async function afpSyncHwRuleset(hostHw) {
             ? { disableRulesetIds: [AFP_HW_RULESET_ID] }
             : { enableRulesetIds: [AFP_HW_RULESET_ID] });
     } catch (e) { console.warn('[AFP] afpSyncHwRuleset:', e && e.message); }
+}
+const AFP_ARCH_HINTS = ['sec-ch-ua-arch', 'sec-ch-ua-bitness', 'sec-ch-ua-model', 'sec-ch-ua-wow64'];
+const AFP_ARCH_RULESET_ID = 'ruleset_static_arch';
+let _hostArchNative = null;
+let _hostArchRead = null;
+/**
+ * Does this host already answer the four arch hints exactly as the profile claims them?
+ *
+ * The service worker is not patched by the content scripts, so its own userAgentData is
+ * the host's — the same oracle afpPlatformVersion reads the OS build through.
+ *
+ * NOT PERSISTED, where afpPlatformVersion deliberately is. A stored 'x86' survives a
+ * Chrome profile copied onto an ARM machine, and there the host's own "arm" would go out
+ * on the wire while JS kept answering x86 — a flat contradiction, and a worse one than the
+ * bucket staleness the stored OS reading exists to avoid. Re-reading costs nothing: the
+ * value is local to this browser process and the call resolves off a cached answer.
+ *
+ * The in-flight promise is shared for the reason [FIX two-observers-in-one-tick-lost-a-host]
+ * records below: two callers in one tick must not have one of them decide from the
+ * unresolved `false` while the other decides from the reading.
+ */
+async function afpHostArchNative() {
+    if (_hostArchNative !== null) return _hostArchNative;
+    if (!_hostArchRead) {
+        _hostArchRead = (async function () {
+            try {
+                const uad = navigator.userAgentData;
+                if (uad && typeof uad.getHighEntropyValues === 'function') {
+                    const hev = await uad.getHighEntropyValues(['architecture', 'bitness', 'model', 'wow64']);
+                    return hev.architecture === 'x86' && hev.bitness === '64' &&
+                        (hev.model || '') === '' && !hev.wow64;
+                }
+            } catch (e) {}
+            return false;
+        })().then(function (v) { _hostArchNative = v; _hostArchRead = null; return v; });
+    }
+    return _hostArchRead;
+}
+/**
+ * The arch strip follows the reading, not the mode: it is off on a host whose four values
+ * already equal the claim — every profile row included, host mode included — and on
+ * everything else it stays on. updateEnabledRulesets persists per browser profile and is
+ * idempotent, so this is cheap to call from every place the rules are rebuilt.
+ */
+async function afpSyncArchRuleset(native) {
+    try {
+        if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateEnabledRulesets) return;
+        await chrome.declarativeNetRequest.updateEnabledRulesets(native
+            ? { disableRulesetIds: [AFP_ARCH_RULESET_ID] }
+            : { enableRulesetIds: [AFP_ARCH_RULESET_ID] });
+    } catch (e) { console.warn('[AFP] afpSyncArchRuleset:', e && e.message); }
 }
 const CH_OPTIN_KEY = 'afp_ch_optin';
 // One rule per hint, so a site that asked only for dpr does not also start receiving arch.
@@ -3052,22 +3127,55 @@ async function rebuildClientHintRules() {
         // as the static one does (afpSyncHwRuleset): with no per-origin SET rule to win
         // over it, a strip here would silence the browser's own answer, which is the one
         // this mode exists to let through.
-        const stripped = hints.filter(function (h) {
-            return !(profile && profile.hostHw && AFP_HW_HINTS.indexOf(h) !== -1);
-        });
-        const addRules = [{
-            id: AFP_HINT_STRIP_RULE_ID,
-            priority: 1,
-            action: {
-                type: 'modifyHeaders',
-                requestHeaders: stripped.map(function (h) {
-                    return { header: h, operation: 'remove' };
-                })
-            },
-            condition: { urlFilter: '*://*/*', resourceTypes: AFP_HEADER_RESOURCE_TYPES }
-        }];
+        // [FIX the-arch-strip-hid-a-value-the-host-already-matched] The second half of the
+        // exemption. Dropping the per-origin SET rule as well as the strip is the point: on
+        // a matching host those four become fully native, which is byte-identical to the
+        // clean browser on every request rather than only on the ones a rule reaches.
+        const archNative = await afpHostArchNative();
+        const exempt = function (h) {
+            return (profile && profile.hostHw && AFP_HW_HINTS.indexOf(h) !== -1) ||
+                (archNative && AFP_ARCH_HINTS.indexOf(h) !== -1);
+        };
+        const stripped = hints.filter(function (h) { return !exempt(h); });
+        // [FIX an-empty-strip-rule-threw-and-took-the-whole-write-with-it] There are nine
+        // managed hints and both exemptions are now list-shaped: AFP_HW_HINTS is five of
+        // them and AFP_ARCH_HINTS is the other four. In host mode ON a matching host both
+        // fire, `stripped` is EMPTY, and a modifyHeaders rule with no headers is not a
+        // no-op — Chrome rejects the rule, updateDynamicRules throws for the WHOLE call,
+        // the catch below logs it, and every id the call meant to remove stays exactly as
+        // it was. Which is the worst possible outcome: the rules that survive are the ones
+        // the previous profile wrote.
+        //
+        // Measured with the writes logged from inside the worker, test/hostmode.mjs:
+        //
+        //     t+0.000  write hostHw=false add=[1003,1014,1015,1017]   (laptop_mid)
+        //     t+3.037  write hostHw=true  add=[1003]                  (host, strip empty)
+        //     t+6.040  first host-mode request
+        //              sec-ch-ua-platform-version: "10.0.0"
+        //              getDynamicRules() -> 1014 still there
+        //
+        // The write at t+3.037 said add=[1003] and removed nothing, because it never
+        // landed. On the wire that is the profile's OS build in the one mode whose whole
+        // purpose is to answer the machine's own — 78/0 to 77/1, and the failing assertion
+        // named the header rather than the throw, which is why this took a log inside the
+        // worker to see rather than a re-read of the diff.
+        const addRules = [];
+        if (stripped.length) {
+            addRules.push({
+                id: AFP_HINT_STRIP_RULE_ID,
+                priority: 1,
+                action: {
+                    type: 'modifyHeaders',
+                    requestHeaders: stripped.map(function (h) {
+                        return { header: h, operation: 'remove' };
+                    })
+                },
+                condition: { urlFilter: '*://*/*', resourceTypes: AFP_HEADER_RESOURCE_TYPES }
+            });
+        }
         for (let i = 0; i < hints.length; i++) {
             const hint = hints[i];
+            if (exempt(hint)) continue;
             const domains = optIn[hint];
             if (!domains || !domains.length) continue;
             const value = AFP_CH_HINTS[hint](profile);
@@ -4306,6 +4414,14 @@ function afpNoteAcceptCH(details) {
         if (!host) return;
 
         loadChOptIn().then(function (optIn) {
+            // Whether this host was in the map AT ALL before this response. Read before the
+            // lists below are mutated, or it is always true; and per HOST, not per hint — a
+            // host already known for one hint is not a new origin because it asks for a second.
+            let known = false;
+            for (const h in optIn) {
+                if (Object.prototype.hasOwnProperty.call(optIn, h) &&
+                    Array.isArray(optIn[h]) && optIn[h].indexOf(host) !== -1) { known = true; break; }
+            }
             let changed = false;
             for (let i = 0; i < asked.length; i++) {
                 const hint = asked[i];
@@ -4314,6 +4430,35 @@ function afpNoteAcceptCH(details) {
             }
             if (!changed) return;
             try { chrome.storage.local.set({ [CH_OPTIN_KEY]: optIn }); } catch (eS) {}
+            // [FIX the-first-request-after-accept-ch-lost-its-hints] The coalesce was
+            // unconditional, and on a host nobody had heard of it WAS the window. Measured
+            // on one rig, clean Chromium 141 beside the same binary with this build, one
+            // origin answering Accept-CH, timestamps from the server:
+            //
+            //     clean   /?n1        t+7ms    no hints (not opted in yet — correct)
+            //             /favicon    t+30ms   arch "x86" bitness "64" model "" wow64 ?0
+            //                                  platform-version ""
+            //     ours    /?n1        t+15ms   no hints
+            //             /favicon    t+103ms  ALL FIVE ABSENT
+            //                                  per-origin rules landed at t+325ms
+            //
+            // — so the whole first page load on a new origin went out stripped where a clean
+            // browser was already answering, and ~310ms of that ~325ms was this timer. A new
+            // host now rebuilds at once; one extra DNR write costs 1.5-2.9ms measured warm in
+            // the live worker. The timer stays for a host already in the map, which is the
+            // case it was written for: one page carrying Accept-CH on many subresources.
+            //
+            // What is left is not zero: response -> browser process -> this observer ->
+            // loadChOptIn (a microtask warm, a storage read cold) -> updateDynamicRules
+            // (~3ms warm), plus an unbounded wake if the worker was asleep. And Chrome's
+            // Critical-CH retry is outside all of it — measured arriving 7ms after the first
+            // response on clean and 25ms here, issued by the network stack, with no blocking
+            // hook in MV3 to sit in front of it. That residue is README "Limits", item 23.
+            if (!known) {
+                if (_chRebuildTimer) { clearTimeout(_chRebuildTimer); _chRebuildTimer = null; }
+                rebuildClientHintRules();
+                return;
+            }
             // Coalesce: a page can carry Accept-CH on many subresources at once, and each
             // rebuild is a full DNR write.
             if (_chRebuildTimer) clearTimeout(_chRebuildTimer);
@@ -4383,6 +4528,7 @@ async function updateDynamicDeviceRule() {
 (async function () {
     try { await pruneStaleDynamicRules(); } catch (e) {}
     try { await afpPlatformVersion(); } catch (e) {}
+    try { await afpHostArchNative(); } catch (e) {}
     try { await updateDynamicLanguageRule(); } catch (e) {}
     // [FIX csp-rewrite-for-workers] Loads the map (the observer reads it synchronously) and
     // re-applies the rules, which dynamic rules would have kept anyway — idempotent.

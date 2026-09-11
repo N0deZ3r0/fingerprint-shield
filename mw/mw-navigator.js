@@ -1236,9 +1236,30 @@
                                         if (_standDownNow()) return r;
                                         // [FIX explicit-timezone-was-overridden] ours only.
                                         try { if (_frameOurTz.has(this)) r.timeZone = _pv('timezone', r.timeZone); } catch (eTz) {}
+                                        // [FIX the-frame-answered-the-tag-where-the-window-answered-icu]
+                                        // FIFTH copy, and the one
+                                        // [FIX intl-reported-the-tag-instead-of-the-default] did not
+                                        // reach. The window resolves this through _dtfLocale(), which
+                                        // prefers the MEASURED default `intlLocale`; the worker through
+                                        // _getIntlLoc(), same rule. This line took the profile's TAG.
+                                        // Reported from a user's own Chrome 153 on Windows, country EE,
+                                        // by the parity table on the Who Am I page:
+                                        //
+                                        //     signal        window   worker   iframe
+                                        //     Intl locale   et       et       et-EE
+                                        //
+                                        // — one axis, three realms, and a site needs to read it in two
+                                        // of them to have the split. `et-EE` is also a value no browser
+                                        // produces, which is the defect the window fix was written for.
+                                        //
+                                        // WHY NOTHING CAUGHT IT. test/realmmatrix.mjs reads exactly this
+                                        // in thirteen realms — and plants no country, so it runs on the
+                                        // default US row, where `loc` and `intlLocale` are the same
+                                        // string. 57 of the 67 country rows differ; 10 cannot show it,
+                                        // and the suite was standing on one of the 10.
                                         try {
                                             if (_frameOurs.has(this)) {
-                                                var loc2 = _pv('locale', _pv('language', null));
+                                                var loc2 = _pv('intlLocale', _pv('locale', _pv('language', null)));
                                                 if (loc2) r.locale = loc2;
                                             }
                                         } catch (eLc) {}

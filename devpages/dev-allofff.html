@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>all feature flags OFF — what still differs</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// Reproduces the user's situation: EVERY checkbox in the options page unchecked.
+const ALL_OFF = { canvas:false, audio:false, webgl:false, webrtc:false, navigator:false,
+  screen:false, timezone:false, geolocation:false, battery:false, fonts:false,
+  clientRects:false, plugins:false, network:false, hideAdBlocker:false };
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features: ALL_OFF
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(ALL_OFF));
+
+const ORDER=['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+ '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js','../mw/mw-geo.js','../mw/mw-adblock.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+const ifr=document.createElement('iframe'); ifr.style.display='none';
+document.body.appendChild(ifr);
+const CLEAN=ifr.contentWindow, CLEANDOC=ifr.contentDocument;
+
+// Font detection the way a fingerprinter does it: measure a probe string in a
+// candidate font and compare against a generic baseline. If widths are equal the
+// font is "absent". A defence that normalises blocked fonts to a generic makes
+// EVERY non-allowed font look absent — that is observable per font.
+const FONTS = ['Arial','Segoe UI','Tahoma','Comic Sans MS','Courier New','Georgia',
+               'Impact','Verdana','Wingdings','Calibri','Consolas','MS Gothic'];
+function fontProbe(W, D){
+  const c=D.createElement('canvas'), x=c.getContext('2d');
+  const base={};
+  for (const g of ['monospace','sans-serif','serif']){
+    x.font='72px '+g; base[g]=x.measureText('mmmmmmmmmmlli').width;
+  }
+  const present=[], widths={};
+  for (const f of FONTS){
+    let detected=false;
+    for (const g of ['monospace','sans-serif','serif']){
+      x.font='72px "'+f+'",'+g;
+      const w=x.measureText('mmmmmmmmmmlli').width;
+      widths[f+'/'+g]=Math.round(w*100)/100;
+      if (Math.abs(w-base[g])>0.5) detected=true;
+    }
+    if (detected) present.push(f);
+  }
+  return {present:present.join(','), widths:widths, base:base};
+}
+function textPixels(W, D){
+  const c=D.createElement('canvas'); c.width=200; c.height=60;
+  const x=c.getContext('2d');
+  x.font='24px "Comic Sans MS", sans-serif'; x.fillStyle='#000';
+  x.fillText('Handgloves', 5, 40);
+  const d=x.getImageData(0,0,200,60).data;
+  let h=2166136261>>>0;
+  for (let i=0;i<d.length;i++){ h^=d[i]; h=Math.imul(h,16777619)>>>0; }
+  return h.toString(16);
+}
+
+(async()=>{
+  const cleanFonts = fontProbe(CLEAN, CLEANDOC);
+  const cleanPix   = textPixels(CLEAN, CLEANDOC);
+  const cleanMTtype = (()=>{ const c=CLEANDOC.createElement('canvas'),x=c.getContext('2d');
+      const m=x.measureText('x'); return (m instanceof CLEAN.TextMetrics)+'/'+Object.getOwnPropertyNames(m).length; })();
+
+  // Snapshot THIS realm's natives BEFORE our modules run. Comparing against the
+  // iframe realm was wrong: cross-realm functions are never ===, so every entry
+  // looked patched.
+  const REFS = [
+    ['CanvasRenderingContext2D.measureText', ()=>CanvasRenderingContext2D.prototype.measureText],
+    ['CanvasRenderingContext2D.fillText',    ()=>CanvasRenderingContext2D.prototype.fillText],
+    ['CanvasRenderingContext2D.getImageData',()=>CanvasRenderingContext2D.prototype.getImageData],
+    ['HTMLCanvasElement.toDataURL',          ()=>HTMLCanvasElement.prototype.toDataURL],
+    ['HTMLCanvasElement.getContext',         ()=>HTMLCanvasElement.prototype.getContext],
+    ['window.matchMedia',                    ()=>window.matchMedia],
+    ['MediaDevices.enumerateDevices',        ()=>MediaDevices.prototype.enumerateDevices],
+    ['PermissionStatus.state',               ()=>Object.getOwnPropertyDescriptor(PermissionStatus.prototype,'state').get],
+    ['AnalyserNode.getFloatFrequencyData',   ()=>AnalyserNode.prototype.getFloatFrequencyData],
+    ['Error.prototype.stack',                ()=>Object.getOwnPropertyDescriptor(Error.prototype,'stack').get],
+    ['SpeechSynthesis.getVoices',            ()=>SpeechSynthesis.prototype.getVoices],
+    ['Keyboard.getLayoutMap',                ()=>navigator.keyboard&&Object.getPrototypeOf(navigator.keyboard).getLayoutMap],
+    ['TextMetrics.width',                    ()=>Object.getOwnPropertyDescriptor(TextMetrics.prototype,'width').get],
+    ['NavigatorUAData.getHighEntropyValues', ()=>NavigatorUAData.prototype.getHighEntropyValues],
+    ['NavigatorUAData.brands',               ()=>Object.getOwnPropertyDescriptor(NavigatorUAData.prototype,'brands').get],
+    ['Date.prototype.getTimezoneOffset',     ()=>Date.prototype.getTimezoneOffset],
+    ['Date.prototype.toString',              ()=>Date.prototype.toString],
+    ['Screen.width',                         ()=>Object.getOwnPropertyDescriptor(Screen.prototype,'width').get],
+    ['Navigator.deviceMemory',               ()=>Object.getOwnPropertyDescriptor(Navigator.prototype,'deviceMemory').get],
+    ['Navigator.getBattery',                 ()=>Navigator.prototype.getBattery],
+    ['Element.getBoundingClientRect',        ()=>Element.prototype.getBoundingClientRect],
+    ['WebGLRenderingContext.getParameter',   ()=>WebGLRenderingContext.prototype.getParameter],
+    ['window.innerWidth',                    ()=>Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window),'innerWidth').get],
+    ['NetworkInformation.effectiveType',     ()=>Object.getOwnPropertyDescriptor(NetworkInformation.prototype,'effectiveType').get],
+    ['Intl.DateTimeFormat',                  ()=>Intl.DateTimeFormat],
+    ['Number.prototype.toLocaleString',      ()=>Number.prototype.toLocaleString],
+    ['Performance.now',                      ()=>Performance.prototype.now],
+    ['Geolocation.getCurrentPosition',       ()=>Geolocation.prototype.getCurrentPosition],
+    ['FontFaceSet.check',                    ()=>FontFaceSet.prototype.check],
+    ['Worker',                               ()=>window.Worker]
+  ];
+  const PRE = REFS.map(([k,g])=>{ let v; try{ v=g(); }catch(e){ v='ERR'; } return [k,g,v]; });
+
+  for(const f of ORDER) await load(f);
+
+  const oursFonts = fontProbe(window, document);
+  const oursPix   = textPixels(window, document);
+  const oursMTtype = (()=>{ const c=document.createElement('canvas'),x=c.getContext('2d');
+      const m=x.measureText('x'); return (m instanceof TextMetrics)+'/'+Object.getOwnPropertyNames(m).length; })();
+
+  const L=[]; const t=(n,p,d)=>L.push((p?'PASS  ':'FAIL  ')+n+(d?'  ::  '+d:''));
+  L.push('ALL 14 feature flags are OFF — anything below that still differs is NOT');
+  L.push('controlled by the options page.');
+  L.push('');
+  t('detected font list identical to clean', cleanFonts.present===oursFonts.present,
+    '\n      clean = '+cleanFonts.present+'\n      ours  = '+oursFonts.present);
+  const wKeys=Object.keys(cleanFonts.widths);
+  const wDiff=wKeys.filter(k=>cleanFonts.widths[k]!==oursFonts.widths[k]);
+  t('measureText widths identical to clean ('+wKeys.length+' probes)', wDiff.length===0,
+    wDiff.length? wDiff.length+' differ, e.g. '+wDiff.slice(0,4).map(k=>k+': '+cleanFonts.widths[k]+'→'+oursFonts.widths[k]).join(' | ') : 'all equal');
+  t('rendered text pixels identical to clean', cleanPix===oursPix, 'clean '+cleanPix+'  ours '+oursPix);
+  t('measureText returns same object shape', cleanMTtype===oursMTtype, 'clean '+cleanMTtype+'  ours '+oursMTtype);
+
+  // A patch counts as installed iff the reference changed within THIS realm.
+  const still=[];
+  for (const [k,g,before] of PRE) {
+    let now; try{ now=g(); }catch(e){ now='ERR'; }
+    if (now !== before) still.push(k);
+  }
+  L.push('');
+  L.push(still.length===0
+    ? 'PASS  with every flag off NOT ONE patch remains installed ('+PRE.length+' references checked)'
+    : 'FAIL  still installed with every flag off ('+still.length+' of '+PRE.length+'):');
+  still.forEach(x=>L.push('   '+x));
+  document.getElementById('out').textContent=L.join('\n');
+})();
+</script>
+</body></html>

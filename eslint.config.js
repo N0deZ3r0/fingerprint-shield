@@ -19,7 +19,7 @@ module.exports = [
   { ignores: ['test/fixtures/**'] },
   {
     files: ['**/*.js'],
-    ignores: ['node_modules/**', 'dev-*.html', 'eslint.config.js'],
+    ignores: ['node_modules/**', 'devpages/**', 'eslint.config.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'script',

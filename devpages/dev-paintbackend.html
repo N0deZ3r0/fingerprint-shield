@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>paint (GPU) vs paint (CPU)</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// The detector's Canvas section prints TWO paint rows, "paint (GPU)" and
+// "paint (CPU)". They come from the same scene drawn into two contexts: a
+// default one (GPU-backed) and one created with willReadFrequently:true, which
+// switches Skia to the software rasteriser. On a real browser the two differ —
+// that is the entire reason both rows exist.
+// We force willReadFrequently:true onto EVERY 2d context (mw-canvas-audio.js
+// lines 55 and 93, mirrored in the worker payload). If that makes both rows
+// identical, we are announcing ourselves: the user's readout shows
+//   paint (GPU): efcd4db9
+//   paint (CPU): efcd4db9
+const F = {canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:F
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+const ORDER=['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+ '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js','../mw/mw-geo.js',
+ '../mw/mw-adblock.js','../mw/mw-cleanup.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+function h32(bytes){ let h=2166136261>>>0;
+  for(let i=0;i<bytes.length;i++){ h^=bytes[i]; h=Math.imul(h,16777619)>>>0; }
+  return h.toString(16).padStart(8,'0'); }
+
+// A scene whose rasterisation is backend-sensitive: gradients, curves,
+// antialiased strokes, shadow, transparency — the usual paint probe.
+function paint(D, opts){
+  const c = D.createElement('canvas'); c.width = 300; c.height = 150;
+  const x = opts === undefined ? c.getContext('2d') : c.getContext('2d', opts);
+  const g = x.createLinearGradient(0, 0, 300, 150);
+  g.addColorStop(0, '#f00'); g.addColorStop(0.5, '#0f08'); g.addColorStop(1, '#00f');
+  x.fillStyle = g; x.fillRect(0, 0, 300, 150);
+  x.globalCompositeOperation = 'multiply';
+  x.beginPath(); x.arc(120, 75, 60, 0, Math.PI * 1.7); x.closePath();
+  x.fillStyle = 'rgba(255,255,0,0.55)'; x.fill();
+  x.lineWidth = 3.7; x.strokeStyle = 'rgba(0,128,255,0.8)';
+  x.beginPath(); x.moveTo(10, 140); x.bezierCurveTo(90, 10, 210, 140, 290, 20); x.stroke();
+  x.shadowBlur = 6; x.shadowColor = '#000';
+  x.font = '18px Arial'; x.fillStyle = '#fff'; x.fillText('Paint probe \u{1F600}', 12, 30);
+  const d = x.getImageData(0, 0, 300, 150).data;
+  return { hash: h32(d), attrs: JSON.stringify(x.getContextAttributes ? x.getContextAttributes() : null) };
+}
+
+(async () => {
+  const ifr = document.createElement('iframe'); ifr.style.display='none';
+  document.body.appendChild(ifr);
+  const D = ifr.contentDocument;
+
+  const cleanGpu = paint(D, undefined);
+  const cleanCpu = paint(D, { willReadFrequently: true });
+
+  for (const f of ORDER) await load(f);
+
+  const ourGpu = paint(document, undefined);
+  const ourCpu = paint(document, { willReadFrequently: true });
+
+  const L = [];
+  L.push('same scene, two contexts — default (GPU path) and willReadFrequently:true (CPU path)');
+  L.push('');
+  L.push('CLEAN realm (no extension code):');
+  L.push('  paint (GPU)  ' + cleanGpu.hash + '   attrs ' + cleanGpu.attrs);
+  L.push('  paint (CPU)  ' + cleanCpu.hash + '   attrs ' + cleanCpu.attrs);
+  L.push('  → ' + (cleanGpu.hash === cleanCpu.hash
+      ? 'IDENTICAL — this machine does not distinguish the two backends,\n'
+       +'    so the detector could not tell either way and this is not our signal'
+      : 'DIFFERENT, as a real browser should be'));
+  L.push('');
+  L.push('PATCHED window:');
+  L.push('  paint (GPU)  ' + ourGpu.hash + '   attrs ' + ourGpu.attrs);
+  L.push('  paint (CPU)  ' + ourCpu.hash + '   attrs ' + ourCpu.attrs);
+  L.push('  → ' + (ourGpu.hash === ourCpu.hash ? 'IDENTICAL' : 'DIFFERENT'));
+  L.push('');
+  const cleanDiffers = cleanGpu.hash !== cleanCpu.hash;
+  const oursDiffers  = ourGpu.hash !== ourCpu.hash;
+  L.push(cleanDiffers && !oursDiffers
+    ? 'VERDICT  WE collapse the two backends into one. A real browser gives two\n'
+     +'         different hashes here; we force willReadFrequently onto every 2d\n'
+     +'         context, so both probes land on the software rasteriser and match.\n'
+     +'         That is exactly the readout the user sees (efcd4db9 twice).'
+    : (!cleanDiffers && !oursDiffers)
+    ? 'VERDICT  the backends do not differ on this machine even without us —\n'
+     +'         the collapsed rows are not our doing, look elsewhere.'
+    : (cleanDiffers && oursDiffers)
+    ? 'VERDICT  both scopes still differ — the forcing is not collapsing them here.'
+    : 'VERDICT  we introduce a difference the clean browser does not have.');
+  L.push('');
+  L.push('note: getContextAttributes() reports willReadFrequently, so a detector can');
+  L.push('      also just ASK whether the flag it never passed came back set.');
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

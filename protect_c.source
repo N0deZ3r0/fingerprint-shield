@@ -11,7 +11,8 @@
  * Seed:   g_seed[0] = domain noiseSeed from JS (seed_random)
  *
  * Exports used by background.js loadWasmToMain wrapper:
- *   seed_random, add_canvas_noise, should_skip_canvas_noise (DEAD stub→0),
+ *   seed_random, add_canvas_noise, should_skip_canvas_noise (DEAD; binary
+ *     returns 1 unseeded / 1 on w<=0||h<=0 / 0 — see below),
  *   substitute_text_width, substitute_text_metrics, add_audio_noise,
  *   normalize_timing, set_locale, get_fake_shader_precision
  *
@@ -25,6 +26,30 @@
  *
  * If your pipeline uses classic emscripten JS glue, drop STANDALONE_WASM
  * and keep the same EXPORTED_FUNCTIONS (without leading underscore as needed).
+ *
+ * PROVENANCE OF THE SHIPPED protect.wasm — measured 2026-09-10, not instructions.
+ *   * The emsdk/emcc version that produced it is NOT KNOWN. The block above is an
+ *     example, and it is shape-consistent with the artifact; it is not a record of
+ *     what was run.
+ *   * The artifact is 4748 bytes, sha256
+ *     16dd3c58667bca48a20c6a9da8b7fd63bca8c82cd3b210e42ae0f335dc9da2f7.
+ *   * It carries NO custom sections at all (section ids present: 1,2,3,4,5,6,7,9,
+ *     12,10,11), so the producers record is stripped and the toolchain version
+ *     cannot be read back out of the file.
+ *   * Its single import is env.emscripten_notify_memory_growth and its init export
+ *     is _initialize. That is the STANDALONE_WASM shape, which identifies it as the
+ *     rebuild described at background.js:1058-1068 and :1120-1127 — NOT the emcc
+ *     3.1.6 non-standalone build at background.js:1054-1057, which imported
+ *     emscripten_resize_heap and exported __wasm_call_ctors.
+ *   * Byte-for-byte reproducibility across emsdk versions is NOT claimed. The
+ *     evidence against claiming it is in this repository: background.js:1058-1061
+ *     records a rebuild with the same emcc and a different flag set changing the
+ *     import name, and the author unable to find the flags that reproduced the
+ *     original.
+ *   * The gate is therefore behavioural, not a byte compare: test/wasmparity.mjs
+ *     runs the shipped binary against the shipped JS ports in mw/mw-canvas-audio.js
+ *     and mw/mw-workers.js and pins the size, the hash, the import and the 16
+ *     export names.
  */
 
 #define SEED_WORDS 8
@@ -147,7 +172,20 @@ int should_skip_canvas_noise(int w, int h) {
     /* [DEAD] Formerly skipped first visit to sizes 33-99.
      * That made first getImageData clean and second noised → CheckIntegrity fail.
      * Kept as export stub (always 0) so old/new glue that still links the symbol is safe.
-     * JS no longer calls this. Safe to drop from EXPORTED_FUNCTIONS on next wasm rebuild. */
+     * JS no longer calls this. Safe to drop from EXPORTED_FUNCTIONS on next wasm rebuild.
+     *
+     * MEASURED 2026-09-10 against the shipped protect.wasm: this export returns 1
+     * while unseeded and 1 for w<=0 or h<=0, 0 otherwise — the compiled body is NOT
+     * the `return 0` below. The binary predates this edit (or the edit was made
+     * without a rebuild). The body is left alone deliberately: changing it would
+     * produce a .source that still does not match the binary while now LOOKING like
+     * it does. Harmless either way — nothing CALLS the export. Outside the definition
+     * on the line above this comment and the -s EXPORTED_FUNCTIONS list at :22, every
+     * reference in the tree is a comment: :14 here, background.js:1163 and
+     * mw/mw-canvas-audio.js:527 — and that last one describes a THIRD behaviour, a
+     * first-(w,h) cache, which the binary does not implement either: 50x50 returns 0
+     * on both the first and the second call.
+     * Pinned by test/wasmparity.mjs so a rebuild that changes it is visible. */
     (void)w; (void)h;
     return 0;
 }

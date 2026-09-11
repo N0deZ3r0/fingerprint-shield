@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>hideAdBlocker — masking survives clientRects noise</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// The adblock mask reads getBoundingClientRect().width/height to decide a bait is blocked.
+// mw/mw-misc.js loads BEFORE mw/mw-adblock.js and, when the clientRects feature is ON, adds
+// ±0.001px noise to the DOMRect accessors. A blocked bait normally escapes that noise —
+// mw-misc leaves a rect untouched when its four raw numbers sit on the pixel grid, or when
+// the element has no text — but a bait that DOES carry text AND sits on a fractional x/y
+// satisfies neither guard, so its width comes back as 0 + ~±0.001 instead of a hard 0. A
+// bare `=== 0` in the mask misses that and the block becomes visible again. See
+// [FIX adblock-zero-check-vs-clientrects-noise].
+//
+// The vector matters and is specific. A `display:none` bait is NOT it: display:none takes
+// the element out of layout, so getBoundingClientRect returns 0/0 at the ORIGIN (x=y=0, on
+// the grid) whatever the CSS left/top says — measured — and mw-misc's grid guard then
+// exempts it. The reachable case is a cosmetic filter that COLLAPSES the box in flow
+// (`width:0!important;height:0!important;overflow:hidden`, which many filter lists use
+// instead of display:none): width/height read 0 but x/y keep the element's real, often
+// fractional, in-flow position. That is what this page builds. dev-adblockmask.html cannot
+// reach it — it runs clientRects:false and hides with display:none — so the interaction of
+// the two getBoundingClientRect patches is exercised only here.
+//
+// A check that DETECTS the block is a hole in the mask; FAILURES: 0 means the mask held.
+const FIXTURE = {
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:24, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'en-US', locale:'en-US', countryCode:'US', languages:['en-US','en'],
+  timezone:'America/New_York', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  allowedFonts:['Arial'], mediaDevices:[], plugins:[], mimeTypes:[],
+  // clientRects ON — the whole point of this page.
+  features:{canvas:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,
+    hideAdBlocker:true}
+};
+sessionStorage.setItem('v.ui.s', JSON.stringify(FIXTURE));
+sessionStorage.setItem('v.ui.m', 'normal');
+
+// The cosmetic filter, applied before the modules load. Collapses the box IN FLOW rather
+// than removing it (display:none would reset x/y to the origin and put the rect on the
+// grid, which is exactly the case that does NOT trigger the bug). overflow:hidden keeps a
+// 0x0 box that still has its real, fractional in-flow position.
+const css = document.createElement('style');
+css.textContent = '.adsbox, #ad-banner, .sponsored { width:0 !important; height:0 !important; overflow:hidden !important; }';
+document.head.appendChild(css);
+
+const MODULES = ['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+  '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js',
+  '../mw/mw-geo.js','../mw/mw-adblock.js','../mw/mw-cleanup.js'];
+const load = (s) => new Promise((r) => {
+  const e = document.createElement('script'); e.src = s + '?x=' + Date.now();
+  e.onload = e.onerror = r; document.head.appendChild(e);
+});
+
+(async () => {
+  const L = [];
+  for (const m of MODULES) await load(m);
+
+  // A bait with TEXT (so mw-misc's _hasText guard would let it be noised) collapsed by the
+  // filter above and placed IN FLOW on a fractional origin (so mw-misc's on-pixel-grid
+  // guard does NOT exempt it). A fractional-height spacer pushes y off the grid; a
+  // sub-pixel transform pushes x. Without the epsilon fix, getBoundingClientRect().width
+  // /height read ~0.001 here, not a hard 0, and the mask misses the block.
+  const spacer = document.createElement('div');
+  spacer.style.cssText = 'height:88.5px';
+  document.body.appendChild(spacer);
+  const bait = document.createElement('div');
+  bait.className = 'adsbox';
+  bait.textContent = 'advertisement';
+  bait.style.cssText = 'transform:translateX(0.3px)';
+  document.body.appendChild(bait);
+
+  // Sanity: with the feature on, a TEXT div that is NOT bait, on a fractional origin, must
+  // actually be noised — so we know the noise layer is live and this test is meaningful
+  // rather than passing because nothing was noised at all. In flow, off the grid, like the
+  // bait but not collapsed.
+  const probeSpacer = document.createElement('div');
+  probeSpacer.style.cssText = 'height:11.5px';
+  document.body.appendChild(probeSpacer);
+  const probe = document.createElement('div');
+  probe.textContent = 'measure me';
+  probe.style.cssText = 'transform:translateX(0.3px)';
+  document.body.appendChild(probe);
+  const pr = probe.getBoundingClientRect();
+  const noiseLive = (pr.x !== Math.round(pr.x * 64) / 64) || (pr.width !== Math.round(pr.width));
+
+  // This filter collapses the box (width/height:0) but keeps it in the document, so the
+  // display/visibility/offsetParent tells a display:none check would read do NOT apply —
+  // the block shows up only in the box size. So the reads that matter here are the size
+  // ones, which are exactly the ones the clientRects noise can disturb. Each returns TRUE
+  // when it has NOTICED the block, i.e. TRUE = the mask failed for that read.
+  const CHECKS = {
+    'getBoundingClientRect().width === 0':   () => bait.getBoundingClientRect().width === 0,
+    'getBoundingClientRect().height === 0':  () => bait.getBoundingClientRect().height === 0,
+    'gBCR width < 0.5 (near-zero)':          () => bait.getBoundingClientRect().width < 0.5,
+    'gBCR height < 0.5 (near-zero)':         () => bait.getBoundingClientRect().height < 0.5,
+    'offsetHeight === 0':                    () => bait.offsetHeight === 0,
+    'offsetWidth === 0':                     () => bait.offsetWidth === 0,
+    'clientHeight === 0':                    () => bait.clientHeight === 0,
+    'clientWidth === 0':                     () => bait.clientWidth === 0,
+    'getClientRects()[0].width near-zero':   () => { var r = bait.getClientRects()[0]; return r ? r.width < 0.5 : false; },
+    'getClientRects()[0].height near-zero':  () => { var r = bait.getClientRects()[0]; return r ? r.height < 0.5 : false; }
+  };
+
+  let caught = 0, total = 0;
+  L.push('bait: <div class="adsbox">advertisement</div>, collapsed in-flow (width/height:0),');
+  L.push('      clientRects noise ON, placed on a fractional origin (left:137.5 + transform).');
+  L.push('noise layer live (non-bait text div is noised): ' + noiseLive);
+  L.push('');
+  L.push('  a check that DETECTS the block is a hole in the mask:');
+  L.push('');
+  for (const [name, fn] of Object.entries(CHECKS)) {
+    let v; try { v = fn(); } catch (e) { v = 'ERR ' + e.message; }
+    if (v === null) { L.push('  n/a    ' + name); continue; }
+    total++;
+    if (v === true) { caught++; L.push('  LEAK   ' + name.padEnd(42) + '-> block is visible'); }
+    else            { L.push('  masked ' + name.padEnd(42) + '-> ' + v); }
+  }
+
+  // If the noise layer is not live the test proves nothing — flag it rather than pass.
+  if (!noiseLive) { caught++; L.push(''); L.push('  LEAK   clientRects noise was not active — test is inconclusive'); }
+
+  L.push('');
+  L.push('masked ' + (total - caught) + ' of ' + total + ' reads');
+  L.push('');
+  L.push('FAILURES: ' + caught);
+  document.getElementById('out').textContent = L.join('\n');
+})();
+</script>
+</body></html>

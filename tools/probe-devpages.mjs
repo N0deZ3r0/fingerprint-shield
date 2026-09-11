@@ -67,7 +67,7 @@ const CHECKS = [...block.matchAll(/'([^']+\.html)'/g)].map((m) => m[1]);
  */
 const selfInstalls = (name, depth) => {
   try {
-    var src = readFileSync(join(ROOT, name), 'utf8');
+    var src = readFileSync(join(ROOT, 'devpages', name), 'utf8');
     if (/mw\/mw-[a-z-]+\.js/.test(src)) return true;
     // One level of children: dev-perflag.html installs nothing itself and drives
     // dev-flagcase.html in sixteen iframes, which does.
@@ -106,7 +106,7 @@ const VERDICT = () => {
 async function readPage(ctx, check) {
   const page = await ctx.newPage();
   try {
-    await page.goto(`http://127.0.0.1:${port}/${check}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await page.goto(`http://127.0.0.1:${port}/devpages/${check}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
     const h = await page.waitForFunction(VERDICT, null,
       { timeout: check === 'dev-perflag.html' ? 90000 : 45000, polling: 200 });
     return String(await h.jsonValue()).trim();

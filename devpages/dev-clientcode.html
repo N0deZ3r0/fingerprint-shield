@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>clientCode: what CreepJS sees</title></head>
+<body><pre id="out">running…</pre>
+<script>
+// NOTE: everything here lives inside one IIFE on purpose. A top-level `function
+// foo(){}` in this page becomes an own property of window and getClientCode()
+// счёл бы его нашей утечкой — the harness must not appear in its own result.
+(function(){
+// getClientCode() copied VERBATIM from the detector the user pasted. It reports
+// "unknown" only when the array is empty (hashMini([]) === 'ac6c4be7'); anything
+// we leave behind turns it into a hash. Two of its rules are easy to trip:
+//   • Object.getOwnPropertyNames(self.navigator) is appended with NO filter —
+//     every own property on the navigator INSTANCE counts;
+//   • isClient() returns true for any key ending in "_".
+const F = {canvas:true,audio:true,webgl:true,webrtc:true,navigator:true,screen:true,timezone:true,
+    geolocation:true,battery:true,fonts:true,clientRects:true,plugins:true,network:true,hideAdBlocker:true};
+sessionStorage.setItem('v.ui.s', JSON.stringify({
+  mode:'normal', screenWidth:1920, screenHeight:1080, colorDepth:32, devicePixelRatio:1,
+  platform:'Win32', hwConcurrency:8, deviceMemory:8, vendor:'Google Inc.',
+  language:'et-EE', locale:'et-EE', countryCode:'EE', languages:['et-EE','et','en','en-US'],
+  timezone:'Europe/Tallinn', noiseSeed:305419896, maxTouchPoints:0,
+  userAgent:navigator.userAgent, appVersion:'5.0 (Windows NT 10.0; Win64; x64)',
+  webglVendor:'Google Inc. (Intel)', webglRenderer:'ANGLE (Intel, Iris Xe)', webglParams:{},
+  clientHints:{platform:'Windows',mobile:false,platformVersion:'10.0.0',architecture:'x86',bitness:'64',wow64:false,model:'',formFactors:['Desktop']},
+  allowedFonts:['Arial','Segoe UI','Tahoma'], mediaDevices:[], plugins:[], mimeTypes:[],
+  features:F
+}));
+sessionStorage.setItem('v.ui.m','normal');
+document.documentElement.setAttribute('data-v-ft', JSON.stringify(F));
+
+// mw-cleanup.js IS in the manifest as the last content script — include it here,
+// otherwise this page measures a state the real extension never ships.
+const ORDER=['../profile-injector.js','../mw/mw-bag.js','../mw/mw-core.js','../mw/mw-timezone-screen.js',
+ '../mw/mw-navigator.js','../mw/mw-canvas-audio.js','../mw/mw-misc.js','../mw/mw-workers.js','../mw/mw-geo.js',
+ '../mw/mw-adblock.js','../mw/mw-cleanup.js'];
+const load=(s)=>new Promise(r=>{const e=document.createElement('script');e.src=s+'?x='+Date.now();
+  e.onload=()=>r(1);e.onerror=()=>r(0);document.head.appendChild(e);});
+
+const hashMini = (x) => {
+	if (!x) return x
+	const json = `${JSON.stringify(x)}`
+	const hash = json.split('').reduce((hash, char, i) => {
+		return Math.imul(31, hash) + json.charCodeAt(i) | 0
+	}, 0x811c9dc5)
+	return ('0000000' + (hash >>> 0).toString(16)).substr(-8)
+}
+
+// ---- verbatim ----
+function getClientCode(self) {
+	const limit = 50
+	const [p1, p2] = (1).constructor.toString().split((1).constructor.name)
+	const isEngine = (fn) => {
+		if (typeof fn !== 'function') return true
+		return (''+fn === p1 + fn.name + p2 || ''+fn === p1 + (fn.name || '').replace('get ', '') + p2)
+	}
+	const isClient = (obj, key) => {
+		if (/_$/.test(key)) return true
+		const d = Object.getOwnPropertyDescriptor(obj, key)
+		return !d || !isEngine(d.get || d.value)
+	}
+	let clientCode = Object.keys(self).slice(-limit).filter((x) => isClient(self, x))
+	Object.getOwnPropertyNames(self).slice(-limit).forEach((x) => {
+		if (!clientCode.includes(x) && isClient(self, x)) clientCode.push(x)
+	})
+	clientCode = [...clientCode, ...Object.getOwnPropertyNames(self.navigator)]
+	const navProto = Object.getPrototypeOf(self.navigator)
+	Object.getOwnPropertyNames(navProto).forEach((x) => {
+		if (!clientCode.includes(x) && isClient(navProto, x)) clientCode.push(x)
+	})
+	return clientCode
+}
+// ---- /verbatim ----
+
+// Which of the three sources did a name come from?
+function attribute(self, name){
+	const navOwn = Object.getOwnPropertyNames(self.navigator);
+	if (navOwn.includes(name)) return 'navigator own property (appended unfiltered)';
+	if (/_$/.test(name)) return 'global whose name ends in "_"';
+	const d = Object.getOwnPropertyDescriptor(self, name);
+	if (d) return 'global: ' + (typeof (d.get||d.value)) + ' whose toString is not native-looking';
+	const np = Object.getPrototypeOf(self.navigator);
+	if (Object.getOwnPropertyDescriptor(np, name)) return 'Navigator.prototype: toString is not native-looking';
+	return 'no descriptor';
+}
+
+(async()=>{
+  const ifr=document.createElement('iframe'); ifr.style.display='none';
+  document.body.appendChild(ifr);
+  const clean = getClientCode(ifr.contentWindow);
+
+  const wk = await new Promise(r=>{
+    const src='('+getClientCode.toString()+')(self);'
+      +'onmessage=()=>{try{postMessage(('+getClientCode.toString()+')(self))}catch(e){postMessage(["ERR "+e.message])}};';
+    try{ const w=new Worker(URL.createObjectURL(new Blob([src],{type:'application/javascript'})));
+      w.onmessage=e=>r(e.data); w.onerror=e=>r(['ERR worker']); w.postMessage(1);
+      setTimeout(()=>r(['ERR timeout']),10000);
+    }catch(e){ r(['ERR '+e.message]); }
+  });
+
+  for(const f of ORDER) await load(f);
+  const ours = getClientCode(window);
+
+  const EMPTY = hashMini([]);
+  const L=[];
+  L.push('emptyHash (what the page prints as "unknown") = '+EMPTY);
+  L.push('');
+  L.push('clean iframe   : '+clean.length+' entries   hash '+(clean.length?hashMini(clean):EMPTY));
+  L.push('native worker  : '+wk.length+' entries   hash '+(wk.length?hashMini(wk):EMPTY));
+  L.push('patched window : '+ours.length+' entries   hash '+(ours.length?hashMini(ours):EMPTY));
+  L.push('');
+  if (ours.length){
+    L.push('WE LEAK — every name below turns "code: unknown" into a hash:');
+    ours.forEach(n=>L.push('   '+String(n).padEnd(28)+attribute(window,n)));
+  } else {
+    L.push('PASS  patched window leaks nothing — code stays "unknown" like a clean browser');
+  }
+  L.push('');
+  L.push('raw navigator own properties: '+JSON.stringify(Object.getOwnPropertyNames(navigator)));
+  L.push('clean navigator own properties: '+JSON.stringify(Object.getOwnPropertyNames(ifr.contentWindow.navigator)));
+  L.push('');
+  L.push('the two worker constructors, as isEngine() sees them:');
+  ['Worker','SharedWorker'].forEach(k=>{
+    const f=window[k], c=ifr.contentWindow[k];
+    L.push('  '+k);
+    L.push('    clean : name='+JSON.stringify(c.name)+'  toString='+JSON.stringify(String(c)));
+    L.push('    ours  : name='+JSON.stringify(f.name)+'  toString='+JSON.stringify(String(f)));
+    L.push('    expected by isEngine: '+JSON.stringify('function '+f.name+'() { [native code] }'));
+    L.push('    → '+(String(f)==='function '+f.name+'() { [native code] }' ? 'passes' : 'FLAGGED as client code'));
+  });
+  document.getElementById('out').textContent=L.join('\n');
+})();
+})();
+</script>
+</body></html>

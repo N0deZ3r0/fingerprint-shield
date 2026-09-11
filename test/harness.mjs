@@ -144,6 +144,16 @@ export function uiMessages(uiLang) {
  * that quietly drove the wrong one would print FAILURES: 0 and read as a pass —
  * the same shape of mistake as a skip path. One switch, one place to read it.
  *
+ * [FIX the-dev-page-runner-drove-a-browser-nobody-chose] "All 39 launch sites"
+ * was true of the sites that existed when this was written, and two written
+ * afterwards never joined: test/run.mjs, which drives the 36 dev pages, and
+ * test/mediadisplay.mjs. Both named no channel at all, so both drove Playwright's
+ * bundled shell — a browser reporting navigator.plugins 0 where channel:'chromium'
+ * reports 5. Both spread BROWSER now. Four plain launches remain and are meant to:
+ * test/stealth.mjs asks its question OF the bundled browser, test/domrects.mjs and
+ * tools/diff-metrics.mjs take the channel as a parameter (Chromium against Edge),
+ * and tools/probe-surface.mjs is handed its launch options by its caller.
+ *
  * The banner prints only when FPS_CHROME is set, so default output stays byte
  * for byte what it was and nothing that parses this output has to change.
  */
@@ -285,7 +295,13 @@ export function mockChrome(seed = {}) {
         addRules.forEach((r) => sessionRules.set(r.id, r));
       },
       getSessionRules: async () => [...sessionRules.values()],
-      updateEnabledRulesets: async () => {}
+      // Recorded rather than swallowed, because enabling or disabling a STATIC ruleset is
+      // the only thing afpSyncHwRuleset / afpSyncArchRuleset leave behind: the rules live
+      // in rules/*.json, not in the dynamic table above, so a suite that wants to know
+      // which of them the background switched has nothing else to read.
+      updateEnabledRulesets: async ({ enableRulesetIds = [], disableRulesetIds = [] } = {}) => {
+        calls.push({ api: 'updateEnabledRulesets', enable: enableRulesetIds.slice(), disable: disableRulesetIds.slice() });
+      }
     },
     scripting: {
       getRegisteredContentScripts: async () => [],
@@ -306,6 +322,9 @@ export function mockChrome(seed = {}) {
 /**
  * Runs background.js and returns the named top-level identifiers.
  * `ua` becomes navigator.userAgent (afpChromeMajor reads it).
+ * `userAgentData` becomes navigator.userAgentData (afpHostArchNative reads it); ABSENT
+ * unless a caller passes it, which is the state every existing suite runs in and which
+ * background.js has to treat as "nothing is known about this host".
  * `chrome` replaces the inert stub with a functional one — see mockChrome.
  */
 export function loadBackground(names, opts = {}) {
@@ -328,6 +347,7 @@ export function loadBackground(names, opts = {}) {
   const nav = 'ua' in opts
     ? (opts.ua === null ? null : { get userAgent() { if (opts.ua === 'throw') throw new Error('blocked'); return opts.ua; } })
     : { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36' };
+  if (nav && 'userAgentData' in opts) nav.userAgentData = opts.userAgentData;
   return new Function('chrome', 'navigator', 'self', body)(opts.chrome || deepStub(), nav, deepStub());
 }
 

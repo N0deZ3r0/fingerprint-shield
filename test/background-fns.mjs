@@ -762,6 +762,180 @@ t.section('11) dynamic rule ids');
   t.eq(r1000 && (r1000.condition.excludedInitiatorDomains || []).join(), 'github.com', 'rule 1000 still excludes the initiator');
 }
 
+// ---- 16) Accept-CH from a host nobody had heard of -----------------------------------
+// [FIX the-first-request-after-accept-ch-lost-its-hints] afpNoteAcceptCH coalesced EVERY
+// observation behind a 300ms timer, and on a host that was not in the opt-in map yet that
+// timer was the whole window: the strip was already in force, no per-origin SET rule
+// existed, and the rest of the first page load went out with the hints simply absent where
+// a clean browser was answering. Measured on this rig against one origin sending Accept-CH,
+// server timestamps: clean answered all five on the subresource at t+12ms, this build
+// answered none of them and its rules landed at t+325ms.
+//
+// The two paths are told apart by the NUMBER of updateDynamicRules calls rather than by
+// timing alone — a rebuild that merely happened to be fast would still be the timer, and a
+// suite that only looked at the clock could not say which one it had watched.
+t.section('16) Accept-CH from a host nobody had heard of');
+{
+  const { chrome, rules, calls } = mockChrome({
+    afp_country_code: 'US', afp_profile_id: 'laptop_mid',
+    afp_profile_data: { screenW: 1920, screenH: 1080, dpr: 1, cores: 8, memory: 8, gpu: 'intel_iris', platform: 'Win32' },
+    afp_noise_seed: 5, afp_mode: 'normal', afp_host_platform_version: '15.0.0',
+    afp_ch_optin: {}
+  });
+  const { afpNoteAcceptCH } = loadBackground(['afpNoteAcceptCH'], { chrome });
+  const writes = () => calls.filter((c) => c.api === 'updateDynamicRules').length;
+  const setRuleFor = (hint) => [...rules.values()].find((r) => (r.action.requestHeaders || [])
+    .some((h) => h.header === hint && h.operation === 'set'));
+  // The load-time startup pass writes rules of its own. Wait for it to STOP rather than
+  // guess at it, or the count below belongs partly to something else.
+  await new Promise((r) => setTimeout(r, 300));
+  for (let last = -1; last !== writes();) { last = writes(); await new Promise((r) => setTimeout(r, 80)); }
+  const mark = writes();
+  const respond = (path, value) => afpNoteAcceptCH({
+    url: 'https://fresh.example' + path, responseHeaders: [{ name: 'Accept-CH', value }]
+  });
+
+  respond('/one', 'sec-ch-dpr');
+  // Well under the 300ms timer: anything visible here cannot have come through it.
+  await new Promise((r) => setTimeout(r, 80));
+  t.assert(setRuleFor('sec-ch-dpr'), 'a host seen for the first time has its per-origin rule before the coalesce window closes');
+  t.eq(writes() - mark, 1, 'and that took exactly one DNR write');
+  // Not `setRuleFor(...).condition` — on a build where the rule is ABSENT, which is the
+  // build this section exists to catch, that deref throws a TypeError, the file dies where
+  // it stands, and the sections after this one never run at all. A guard that turns a named
+  // failure into a stack trace is most of a guard thrown away.
+  t.eq(((setRuleFor('sec-ch-dpr') || {}).condition || {}).requestDomains?.join() ?? '(no rule)',
+    'fresh.example', 'the rule is scoped to the host that asked');
+
+  respond('/two', 'device-memory');
+  await new Promise((r) => setTimeout(r, 80));
+  t.assert(!setRuleFor('device-memory'), 'a SECOND hint from a host already in the map is still coalesced — no rule yet');
+  t.eq(writes() - mark, 1, 'and no second write yet either');
+  await new Promise((r) => setTimeout(r, 350));
+  t.assert(setRuleFor('device-memory'), 'the coalesced hint arrives once the 300ms timer fires');
+  t.eq(writes() - mark, 2, 'two writes in all: one immediate for the new host, one coalesced for the known one');
+  t.assert(setRuleFor('sec-ch-dpr'), 'and the first hint survived the rebuild that added the second');
+}
+
+// ---- 18) both exemptions at once leave nothing to strip -------------------------------
+// [FIX an-empty-strip-rule-threw-and-took-the-whole-write-with-it] There are nine managed
+// hints, AFP_HW_HINTS is five of them and AFP_ARCH_HINTS is the other four, so host mode ON
+// a matching host exempts all nine and the strip rule's header list is EMPTY. Chrome
+// rejects a modifyHeaders rule with no headers, and the rejection is not local to that
+// rule: updateDynamicRules throws for the whole call, so every id the call meant to REMOVE
+// survives. Measured in a real browser before this was fixed — test/hostmode.mjs went 78/0
+// to 77/1 and the wire carried `sec-ch-ua-platform-version "10.0.0"` in the one mode whose
+// purpose is to answer the machine's own, three seconds after the write that should have
+// deleted that rule reported itself as done.
+//
+// The failing assertion named the header, not the throw, which is why it took a log inside
+// the service worker to find. This section is the cheap version of that log.
+t.section('18) both exemptions at once leave nothing to strip');
+{
+  const SEED = {
+    afp_country_code: 'US', afp_profile_id: 'host',
+    // afpIsHostRecord reads the record, not the id alone: a measured record carries `host`.
+    afp_profile_data: { host: true, screenW: 1920, screenH: 1080, dpr: 1, cores: 8, memory: 8, gpu: 'intel_iris', platform: 'Win32' },
+    afp_noise_seed: 5, afp_mode: 'normal', afp_host_platform_version: '15.0.0',
+    afp_ch_optin: { 'sec-ch-ua-arch': ['asked.example'], 'sec-ch-ua-platform-version': ['asked.example'] }
+  };
+  const { chrome, rules, calls } = mockChrome(SEED);
+  const userAgentData = {
+    getHighEntropyValues: async () => ({ architecture: 'x86', bitness: '64', model: '', wow64: false })
+  };
+  const bg = loadBackground(['updateDynamicLanguageRule', 'rebuildClientHintRules',
+    'AFP_HINT_STRIP_RULE_ID', 'AFP_CH_HINTS', 'AFP_HW_HINTS', 'AFP_ARCH_HINTS'], { chrome, userAgentData });
+
+  // The arithmetic that makes the case reachable at all, asserted rather than assumed: if a
+  // tenth hint is added to one list and not the other, this section stops testing anything.
+  t.eq(Object.keys(bg.AFP_CH_HINTS).length, bg.AFP_HW_HINTS.length + bg.AFP_ARCH_HINTS.length,
+    `every managed hint is in exactly one exemption list, so both at once leaves none ` +
+    `(${Object.keys(bg.AFP_CH_HINTS).length} hints, ${bg.AFP_HW_HINTS.length} hardware + ${bg.AFP_ARCH_HINTS.length} arch)`);
+
+  await bg.updateDynamicLanguageRule();
+  const strip = rules.get(bg.AFP_HINT_STRIP_RULE_ID);
+  t.assert(!strip || (strip.action.requestHeaders || []).length > 0,
+    'the strip rule is either absent or carries headers — never present and empty, which is ' +
+    'the shape Chrome rejects for the whole updateDynamicRules call');
+
+  // And the write has to have LANDED, which is the half the throw destroyed: a stale
+  // per-origin rule from the previous profile must not survive the switch.
+  const stale = [...rules.values()].some((r) => (r.action.requestHeaders || [])
+    .some((h) => h.operation === 'set' && bg.AFP_CH_HINTS[h.header]));
+  t.assert(!stale,
+    'and no per-origin SET rule for a managed hint is left behind — in host mode on a ' +
+    'matching host every one of the nine is the browser\'s own answer');
+  t.assert(calls.some((c) => c.api === 'updateDynamicRules'),
+    'the rebuild wrote at all (a throw inside it is swallowed, so silence looks like success)');
+}
+
+// ---- 17) the arch exemption is a reading of the host, and its default is to strip ------
+// [FIX the-arch-strip-hid-a-value-the-host-already-matched] The exemption is only safe
+// while it is read from the host: on an ARM machine the browser answers "arm" and leaving
+// the four alone would put that on the wire under an x86 claim. So the DEFAULT — a host
+// that says nothing about its architecture, which is the state loadBackground's fake
+// navigator is in and the state the service worker is in before its first read resolves —
+// has to be the strip, not the exemption.
+//
+// The second half checks the fix itself, and checks BOTH halves of it: the four leave the
+// strip AND no per-origin SET rule is built for them, so a matching host is byte-identical
+// to a clean browser on every request rather than only on the ones a rule reaches.
+t.section('17) the arch exemption is a reading of the host');
+{
+  const SEED = {
+    afp_country_code: 'US', afp_profile_id: 'laptop_mid',
+    afp_profile_data: { screenW: 1920, screenH: 1080, dpr: 1, cores: 8, memory: 8, gpu: 'intel_iris', platform: 'Win32' },
+    afp_noise_seed: 5, afp_mode: 'normal', afp_host_platform_version: '15.0.0',
+    // An origin that has asked for all four, so an unbuilt SET rule is a decision and not
+    // an empty opt-in map.
+    afp_ch_optin: {
+      'sec-ch-ua-arch': ['asked.example'], 'sec-ch-ua-bitness': ['asked.example'],
+      'sec-ch-ua-model': ['asked.example'], 'sec-ch-ua-wow64': ['asked.example'],
+      'sec-ch-dpr': ['asked.example']
+    }
+  };
+  const NAMES = ['updateDynamicLanguageRule', 'afpHostArchNative', 'AFP_ARCH_HINTS',
+    'AFP_ARCH_RULESET_ID', 'AFP_HINT_STRIP_RULE_ID'];
+  const strippedBy = (rules, id) => (rules.get(id) ? rules.get(id).action.requestHeaders.map((h) => h.header) : []);
+  const setRules = (rules) => [...rules.values()].flatMap((r) => (r.action.requestHeaders || [])
+    .filter((h) => h.operation === 'set').map((h) => h.header)).sort();
+  const switched = (calls, id) => calls.filter((c) => c.api === 'updateEnabledRulesets')
+    .map((c) => (c.enable.includes(id) ? 'enable' : c.disable.includes(id) ? 'disable' : '')).filter(Boolean).pop() || '(never touched)';
+
+  // The safe default: no userAgentData at all, which is what every other suite loads with.
+  {
+    const { chrome, rules, calls } = mockChrome(SEED);
+    const bgA = loadBackground(NAMES, { chrome });
+    t.eq(await bgA.afpHostArchNative(), false, 'a host that answers nothing about its architecture does not count as matching');
+    await bgA.updateDynamicLanguageRule();
+    const stripped = strippedBy(rules, bgA.AFP_HINT_STRIP_RULE_ID);
+    t.eq(bgA.AFP_ARCH_HINTS.filter((h) => !stripped.includes(h)).join(), '',
+      `all four arch hints are still stripped when the host is unknown (${stripped.join(',')})`);
+    t.assert(setRules(rules).includes('sec-ch-ua-arch'), 'and the origin that asked still gets the profile value set for it');
+    t.eq(switched(calls, bgA.AFP_ARCH_RULESET_ID), 'enable', 'the static arch ruleset is left ENABLED on such a host');
+  }
+
+  // The reading the fix turns on: x86 / 64 / '' / not-wow64, which is what AFP_CH_HINTS
+  // claims for every row, so the truthful move is to send nothing and let the host answer.
+  {
+    const { chrome, rules, calls } = mockChrome(SEED);
+    const userAgentData = {
+      getHighEntropyValues: async () => ({ architecture: 'x86', bitness: '64', model: '', wow64: false })
+    };
+    const bgB = loadBackground(NAMES, { chrome, userAgentData });
+    t.eq(await bgB.afpHostArchNative(), true, 'a host answering x86 / 64 / no model / not-wow64 matches what every profile row claims');
+    await bgB.updateDynamicLanguageRule();
+    const stripped = strippedBy(rules, bgB.AFP_HINT_STRIP_RULE_ID);
+    t.eq(bgB.AFP_ARCH_HINTS.filter((h) => stripped.includes(h)).join(), '',
+      `none of the four arch hints is stripped on a matching host (${stripped.join(',')})`);
+    t.assert(stripped.includes('sec-ch-dpr'), 'while the hints the host does NOT already match are stripped as before');
+    t.eq(bgB.AFP_ARCH_HINTS.filter((h) => setRules(rules).includes(h)).join(), '',
+      `and no per-origin SET rule is built for them either, so they stay fully native (${setRules(rules).join(',')})`);
+    t.assert(setRules(rules).includes('sec-ch-dpr'), 'the same origin still gets a SET rule for the hint that is not exempt');
+    t.eq(switched(calls, bgB.AFP_ARCH_RULESET_ID), 'disable', 'and the static arch ruleset is DISABLED');
+  }
+}
+
 // ---- 12) the CSP observer with a cache that has not loaded yet ----------------------
 // [FIX the-csp-observer-judged-from-a-cache-that-had-not-loaded] afpNoteCsp consulted
 // `_cspRewrite` synchronously; on the request that WAKES the service worker it is null, the
