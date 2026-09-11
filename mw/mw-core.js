@@ -1570,13 +1570,116 @@
         } catch (e) {}
         return null;
     }
+    // [FIX a-meta-csp-was-never-learned] THE THIRD WAY A POLICY ARRIVES: a <meta> element.
+    //
+    // Reported from web.telegram.org/a/ with the extension installed:
+    //
+    //   Creating a worker from 'blob:https://web.telegram.org/…' violates the following
+    //   Content Security Policy directive: "worker-src 'self'". The action has been blocked.
+    //        mw-bundle.js (_wrapModuleWorker)
+    //
+    // Telegram Web A sends no CSP header at all; its policy is a <meta http-equiv> in <head>.
+    // Both gates above are fed from RESPONSE HEADERS — background.js reads them in
+    // onHeadersReceived — so a meta policy was invisible to them for good, not only on a
+    // first visit. Measured on a page carrying `worker-src 'self'` as a meta element and
+    // building a module worker in its first script, a fresh profile, beside the same policy
+    // sent as a header:
+    //
+    //                      header                  meta
+    //   tab 1, load 1      worker dead             worker dead
+    //   tab 1, load 2      alive (tab history)     alive (tab history)
+    //   a new tab          alive (learned)         worker DEAD — every new tab, for good
+    //
+    // A <meta> is part of the document, so it can be read where a header cannot: here, at
+    // read time. The pragma is honoured only as a child of <head> and only from the moment it
+    // is inserted, and the page's scripts run after the <head> that carries it, so by the
+    // first read the page can make the element is already in the tree. The verdict is the
+    // one background.js reaches for a header in afpJudgeCsp — worker sources refuse blob:, or
+    // a worker could be created but neither read nor imported — and _cspListBlocksBlobWorkers
+    // below is that predicate; test/background-fns.mjs holds the two copies to one answer.
+    //
+    // Read through natives captured now, at document_start: the question is asked after the
+    // page's scripts have run and could have replaced any of them. Cached on the length of
+    // the live collection, because _standDownNow asks on every read while the document is
+    // parsing, and sticky once true — a policy that has been applied is never lifted, even if
+    // the element is removed again.
+    // ---- lifted by test/background-fns.mjs: begin ----
+    function _cspListBlocksBlobWorkers(value) {
+        var refuses = function (list, strictDynamicAdmits) {
+            return !!list && list.indexOf('blob:') === -1 &&
+                !(strictDynamicAdmits && list.indexOf("'strict-dynamic'") !== -1);
+        };
+        var policies = String(value || '').split(','), worker = false, conn = false, script = false;
+        for (var i = 0; i < policies.length; i++) {
+            var d = {}, parts = policies[i].split(';');
+            for (var j = 0; j < parts.length; j++) {
+                var t = parts[j].trim().split(/\s+/).filter(Boolean);
+                if (t.length) d[t[0].toLowerCase()] = t.slice(1).map(function (s) { return s.toLowerCase(); });
+            }
+            if (refuses(d['worker-src'] || d['child-src'] || d['script-src'] || d['default-src'], true)) worker = true;
+            if (refuses(d['connect-src'] || d['default-src'], false)) conn = true;
+            if (refuses(d['script-src-elem'] || d['script-src'] || d['default-src'], true)) script = true;
+        }
+        return worker || (conn && script);
+    }
+    // ---- lifted by test/background-fns.mjs: end ----
+    var _metaCspBlocksBlobWorkers = (function () {
+        var gebtn, getAttr, lenGet, itemFn, parentGet, headGet, urlGet;
+        try {
+            gebtn = window.Document.prototype.getElementsByTagName;
+            getAttr = Element.prototype.getAttribute;
+            lenGet = Object.getOwnPropertyDescriptor(window.HTMLCollection.prototype, 'length').get;
+            itemFn = window.HTMLCollection.prototype.item;
+            parentGet = Object.getOwnPropertyDescriptor(Node.prototype, 'parentNode').get;
+            headGet = Object.getOwnPropertyDescriptor(window.Document.prototype, 'head').get;
+            urlGet = Object.getOwnPropertyDescriptor(window.Document.prototype, 'URL').get;
+        } catch (eCap) { return function () { return false; }; }
+        // The policies a document's <head> declares: http-equiv compared ASCII
+        // case-insensitively, a <meta> anywhere but directly under <head> ignored — both as
+        // the browser does.
+        function policiesOf(doc, els) {
+            var out = [], head = headGet.call(doc), n = lenGet.call(els);
+            for (var i = 0; i < n; i++) {
+                var m = itemFn.call(els, i);
+                if (!m || !head || parentGet.call(m) !== head) continue;
+                if (String(getAttr.call(m, 'http-equiv') || '').toLowerCase() !== 'content-security-policy') continue;
+                var c = getAttr.call(m, 'content');
+                if (c) out.push(String(c));
+            }
+            return out.join(',');
+        }
+        var mine = null, seen = -1, verdict = false, aboutDoc = null;
+        return function () {
+            if (verdict) return true;
+            try {
+                if (!mine) mine = gebtn.call(document, 'meta');
+                var n = lenGet.call(mine);
+                if (n !== seen) {
+                    seen = n;
+                    if (n && _cspListBlocksBlobWorkers(policiesOf(document, mine))) verdict = true;
+                }
+                // about:blank and srcdoc documents enforce their CREATOR's policy, a <meta> one
+                // included, and have no <head> of their own worth reading: walk up while the
+                // document is one of those and the parent is same-origin (cross-origin throws).
+                if (aboutDoc === null) aboutDoc = /^about:/.test(String(urlGet.call(document)));
+                var w = window;
+                for (var k = 0; aboutDoc && !verdict && k < 10 && w.parent !== w; k++) {
+                    w = w.parent;
+                    var pd = w.document;
+                    if (_cspListBlocksBlobWorkers(policiesOf(pd, gebtn.call(pd, 'meta')))) verdict = true;
+                    if (!/^about:/.test(String(urlGet.call(pd)))) break;
+                }
+            } catch (e) {}
+            return verdict;
+        };
+    })();
     function _standDownNow() {
         if (_sdMemo !== null) return _sdMemo;
         var inh = _sdInherited();
         if (inh !== null) { _sdMemo = inh; _sdPublish(inh); return inh; }
         var v = false;
         try {
-            v = _cspFlagOn('v.ui.tt') || _cspFlagOn('v.ui.wb');
+            v = _cspFlagOn('v.ui.tt') || _cspFlagOn('v.ui.wb') || _metaCspBlocksBlobWorkers();
         } catch (e) {}
         try {
             if (v || document.readyState !== 'loading') { _sdMemo = v; _sdPublish(v); }
@@ -2065,7 +2168,9 @@
                 sdProp: _sdProp,
                 // [FIX host-mode] Read at effect time by every module with a hardware
                 // answer that does not go through _def — see the note at its definition.
-                hostHwNow: _hostHwNow
+                hostHwNow: _hostHwNow,
+                // [FIX a-meta-csp-was-never-learned] Asked by mw-workers at construction time.
+                metaCspBlocksBlob: _metaCspBlocksBlobWorkers
                 // [CLEANUP dead-export] nativeFns and DEFAULT_PROFILE were published here
                 // but no other module ever read them. _nativeFns is used only inside this
                 // file (the WeakSet that _mn's toString masking checks); its one former
@@ -2088,7 +2193,9 @@
                 RawDate: _RawDate, BASE_FONTS: _BASE_FONTS, markStatus: _markStatus,
                 def: _def, defIfDiff: _defIfDiff, sameVal: _sameVal, cpuTier: _cpuTier,
                 featKnown: _FEAT_KNOWN, featNow: _featNow, standDownNow: _standDownNow, hostResolved: _hostResolved, sdProp: _sdProp,
-                hostHwNow: _hostHwNow
+                hostHwNow: _hostHwNow,
+                // [FIX a-meta-csp-was-never-learned] Asked by mw-workers at construction time.
+                metaCspBlocksBlob: _metaCspBlocksBlobWorkers
                 // [CLEANUP dead-export] see the primary branch above — nativeFns and
                 // DEFAULT_PROFILE are used only inside this file and were read by nobody.
             };

@@ -78,9 +78,39 @@ window.__w = new Promise(function (res) {
 });
 </script></head><body>probe</body></html>`;
 
+// [FIX a-meta-csp-was-never-learned] The same policy the way web.telegram.org/a/ delivers it:
+// a <meta http-equiv> in <head> and no header at all. Its worker reports the core count as
+// well, because on this route "alive" is not the whole answer — a worker the wrapper could
+// not patch is native, and the window has to stand down with it or the two disagree.
+const WORKER_CORES_JS = 'self.onmessage = () => postMessage("alive/" + navigator.hardwareConcurrency);\n';
+const META_PAGE = `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${CSP}"><title>blobcsp meta</title>
+<script>
+window.__v = [];
+document.addEventListener('securitypolicyviolation', function (e) { __v.push(e.violatedDirective); });
+window.__cores = navigator.hardwareConcurrency;
+window.__w = new Promise(function (res) {
+  var done = false;
+  var finish = function (v) { if (!done) { done = true; res(v); } };
+  try {
+    var w = new Worker('/wcores.js', { type: 'module' });
+    w.onmessage = function (e) { finish(String(e.data)); };
+    w.onerror = function (e) { finish('error:' + (e && e.message ? e.message : '(empty message)')); };
+    w.postMessage(1);
+  } catch (e) { finish('threw:' + (e && e.name)); }
+  setTimeout(function () { finish('timeout'); }, 4000);
+});
+</script></head><body>probe</body></html>`;
+
 const server = createServer((q, r) => {
   if (q.url.startsWith('/worker.js')) {
     return r.writeHead(200, { 'content-type': 'application/javascript' }).end(WORKER_JS);
+  }
+  if (q.url.startsWith('/wcores.js')) {
+    return r.writeHead(200, { 'content-type': 'application/javascript' }).end(WORKER_CORES_JS);
+  }
+  if (q.url.startsWith('/meta')) {
+    return r.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }).end(META_PAGE);
   }
   r.writeHead(200, {
     'content-type': 'text/html', 'cache-control': 'no-store', 'content-security-policy': CSP,
@@ -215,6 +245,56 @@ section('1) after the first visit, every tab keeps its worker');
     }).catch(() => null);
     assert(!!regs && (regs.js || []).indexOf('noblob.js') !== -1,
       `and registered noblob.js for it (${JSON.stringify(regs)})`);
+  } finally {
+    await shut(b);
+  }
+}
+
+// ── the <meta> route ───────────────────────────────────────────────────────────
+//
+// [FIX a-meta-csp-was-never-learned] Reported from web.telegram.org/a/, whose policy is a
+// <meta> element and no header. Section 1's machinery never heard of it, so EVERY new tab lost
+// its first worker, not only the first visit. Measured on the build before the fix, a fresh
+// profile: load 1 dead, load 2 of that tab alive (tab history), a new tab dead again — the
+// window on the profile's 8 cores beside a worker that never answered.
+//
+// Asserted from the very first load: no residual is expected here, because the element is in
+// the document and read at read time. The core count is what makes "alive" mean "coherent":
+// the worker the wrapper leaves alone answers natively, so the window must too.
+section('2) a <meta> policy: the worker lives and the window agrees with it, from the first load');
+{
+  const b = await launch(true);
+  try {
+    // No settling sleep here, unlike section 1: the page reads the <meta> itself, so no load
+    // below waits on the observer, and the learning is polled for at the end.
+    await (b.ctx.serviceWorkers()[0] || b.ctx.waitForEvent('serviceworker', { timeout: 20000 }));
+    for (const [n, q] of [[1, 'visit=1'], [2, 'tab=2'], [3, 'tab=3']]) {
+      const tab = await b.ctx.newPage();
+      await tab.goto(URL_ + 'meta?' + q, { waitUntil: 'load' });
+      const got = await tab.evaluate('window.__w');
+      await tab.waitForTimeout(150);
+      const r = await tab.evaluate(() => ({ cores: window.__cores, v: window.__v.slice() }));
+      await tab.close();
+      assert(/^alive\/\d+$/.test(got), `load ${n}: the page keeps the module worker it asked for (${got})`);
+      eq(String(r.cores), String(got).split('/')[1],
+        `load ${n}: the window answers the worker's core count — the worker is native, so the window stands down with it`);
+      eq(r.v.length, 0, `load ${n}: no CSP violation (${JSON.stringify(r.v)}) — the refusal used to be charged to mw-bundle.js`);
+    }
+    // And background heard of it from the page, so the next documents stand down before their
+    // first script and their headers leave the rewrite too. Polled: the report is sent at
+    // DOMContentLoaded and written through a storage promise.
+    let learned = [];
+    for (let i = 0; i < 20; i++) {
+      const sw = b.ctx.serviceWorkers()[0];
+      if (sw) {
+        learned = await sw.evaluate(async () => (await chrome.storage.local.get(['afp_csp_noblob'])).afp_csp_noblob || [])
+          .catch(() => []);
+      }
+      if (learned.includes('127.0.0.1/meta')) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    assert(learned.includes('127.0.0.1/meta'),
+      `the route was learned from the <meta> element (afp_csp_noblob=${JSON.stringify(learned)})`);
   } finally {
     await shut(b);
   }

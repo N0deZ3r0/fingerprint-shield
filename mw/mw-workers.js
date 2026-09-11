@@ -51,6 +51,11 @@
     // the pixel noise OFF, which in the window is _noiseOff() asked per read. So the GL
     // readback shim needs the mode itself, not the feature flag.
     var _stealthNow = (window.__AFP_MW__ && window.__AFP_MW__.stealthNow) || function () { return false; };
+    // [FIX a-meta-csp-was-never-learned] Captured at load like the others, asked at
+    // CONSTRUCTION time: a <meta> CSP that refuses blob: workers is in the tree by the time
+    // the page builds one and never at document_start. It is the same function the window's
+    // stand-down asks, so the worker and the window cannot reach different answers.
+    var _metaCspBlocksBlob = (window.__AFP_MW__ && window.__AFP_MW__.metaCspBlocksBlob) || function () { return false; };
     try {
         // [FIX stealth-worker-parity] Do not abort the whole worker patch in stealth.
         // Main still spoofs cores/lang/TZ; returning here left Worker native → anti_detect.
@@ -118,7 +123,9 @@
         function _isBlobBlocked() {
             if (_blobBlocked) return true;
             try {
-                if (_cspFlagOn(_BLOB_BLOCKED_KEY)) {
+                // [FIX a-meta-csp-was-never-learned] Or a <meta> policy in this document's
+                // <head>, which no header observer can see — see mw-core.
+                if (_cspFlagOn(_BLOB_BLOCKED_KEY) || _metaCspBlocksBlob()) {
                     _blobBlocked = true;
                     _unwrapWorkerCtors();
                     return true;

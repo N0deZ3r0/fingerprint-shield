@@ -2344,6 +2344,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         afpCspVerdictWhenSettled(sender).then(sendResponse, function () { sendResponse(null); });
         return true;
     }
+    // [FIX a-meta-csp-was-never-learned] storage-bridge.js at DOMContentLoaded: the policies a
+    // document declared in <meta> elements, which the header observer cannot see. The URL and
+    // the tab are the SENDER's, never the message's.
+    if (message.type === 'afpMetaCsp') {
+        try {
+            afpNoteMetaCsp(String((sender && sender.url) || ''), message.policies,
+                sender && sender.tab ? sender.tab.id : -1, !!sender && sender.frameId === 0);
+        } catch (eMeta) {}
+        return false;
+    }
     // audit.html: the same record for the top document of a tab it inspects.
     if (message.type === 'afpCspVerdictForTab') {
         sendResponse(afpCspVerdictFor({ tab: { id: Number(message.tabId) }, frameId: 0 }));
@@ -3504,7 +3514,9 @@ function afpNoteCsp(details) {
         const rec = afpRecordCspVerdict(details, host, tteHere);
         if (!raw.length) {
             afpSettleCspVerdict(rec, false, false, false, false);
-            afpSetSdTab(tabId, false);
+            // [FIX a-meta-csp-was-never-learned] No header is not "no policy": a route learned
+            // from a <meta> element sends none on every visit. See afpSdTabForRoute.
+            afpSdTabForRoute(tabId, details.url);
             afpNoteLooseDocument(host);
             return;
         }
@@ -3640,27 +3652,8 @@ function afpJudgeCsp(host, type, headers, raw, rw, rec, name, scope, tabId) {
     // a route per repository, and a list that grew with every repository would drag a
     // six-pattern registration behind each; claude.ai, strict on one route and loose on
     // another, is marked mixed by its first loose document and never collapses.
-    function noteCspHost(loader, key, restricted) {
-        loader().then(function (list) {
-            if (!restricted) {
-                if (afpCspHostListed(list, host)) afpMarkCspMixed(host);
-                return;
-            }
-            if (afpCspScopeMatches(list, scope)) return;
-            list.push(scope);
-            // Written at once — the page's first load is waiting on this — and collapsed
-            // in a second write only when there is something to collapse.
-            try { chrome.storage.local.set({ [key]: list }); } catch (eS) {}
-            loadCspMixed().then(function (mixed) {
-                if (mixed.indexOf(host) !== -1) return;
-                const routes = list.filter(function (e) { return e.indexOf('/') !== -1 && afpCspScopeHost(e) === host; });
-                if (routes.length < 3) return;
-                for (let i = list.length - 1; i >= 0; i--) if (routes.indexOf(list[i]) !== -1) list.splice(i, 1);
-                if (list.indexOf(host) === -1) list.push(host);
-                try { chrome.storage.local.set({ [key]: list }); } catch (eS2) {}
-            }, function () {});
-        });
-    }
+    // The list update itself is afpNoteCspList below, shared with the <meta> path.
+    function noteCspHost(loader, key, restricted) { afpNoteCspList(loader, key, restricted, host, scope); }
     noteCspHost(loadCspNoBlob, CSP_NOBLOB_KEY, blocked);
     // The four restrictions are independent — a page can forbid blob: workers and allow
     // any policy name, or the reverse — and mw-workers answers them at different moments,
@@ -3669,6 +3662,82 @@ function afpJudgeCsp(host, type, headers, raw, rw, rec, name, scope, tabId) {
     noteCspHost(loadCspNc, CSP_NC_KEY, ncBlocked);
     noteCspHost(loadCspNs, CSP_NS_KEY, nsBlocked);
     noteCspHost(loadCspTte, CSP_TTE_KEY, ttEnforced);
+}
+
+/** One add-only list, one route: the rules are in the note above noteCspHost in afpJudgeCsp. */
+function afpNoteCspList(loader, key, restricted, host, scope) {
+    loader().then(function (list) {
+        if (!restricted) {
+            if (afpCspHostListed(list, host)) afpMarkCspMixed(host);
+            return;
+        }
+        if (afpCspScopeMatches(list, scope)) return;
+        list.push(scope);
+        // Written at once — the page's first load is waiting on this — and collapsed
+        // in a second write only when there is something to collapse.
+        try { chrome.storage.local.set({ [key]: list }); } catch (eS) {}
+        loadCspMixed().then(function (mixed) {
+            if (mixed.indexOf(host) !== -1) return;
+            const routes = list.filter(function (e) { return e.indexOf('/') !== -1 && afpCspScopeHost(e) === host; });
+            if (routes.length < 3) return;
+            for (let i = list.length - 1; i >= 0; i--) if (routes.indexOf(list[i]) !== -1) list.splice(i, 1);
+            if (list.indexOf(host) === -1) list.push(host);
+            try { chrome.storage.local.set({ [key]: list }); } catch (eS2) {}
+        }, function () {});
+    });
+}
+
+/**
+ * [FIX a-meta-csp-was-never-learned] The learning afpJudgeCsp does for a header, for a policy
+ * that arrived as a <meta http-equiv="Content-Security-Policy"> element instead — reported by
+ * storage-bridge.js once the document's <head> is parsed.
+ *
+ * web.telegram.org/a/ sends no CSP header at all; `worker-src 'self'` is a meta element. The
+ * observer in afpNoteCsp reads response headers only, so the route was never listed: no
+ * noblob.js marker, no `allow` rules, and every new tab rediscovered the policy by spending
+ * a worker on it. mw-core now reads the element at read time and keeps that worker alive,
+ * but the header half of the stand-down and the marker for the NEXT document are keyed off
+ * afp_csp_noblob, which is what this writes.
+ *
+ * The verdict is afpJudgeCsp's minus its rewrite branch: the per-site rewrite edits headers,
+ * and a policy inside the document is out of its reach. Add-only and only for what a meta
+ * RESTRICTS — a loose one says nothing about the header its host sends on other documents.
+ */
+function afpNoteMetaCsp(url, policies, tabId, isTop) {
+    let host = '';
+    try { host = new URL(url).hostname; } catch (eU) { return; }
+    const scope = afpCspScope(url);
+    if (!host || !scope) return;
+    const all = (Array.isArray(policies) ? policies : []).map(String).filter(Boolean).join(', ');
+    if (!all) return;
+    const blocked = afpCspBlocksBlobWorkers(all) ||
+        (afpCspBlocksBlobConnect(all) && afpCspBlocksBlobScript(all));
+    if (!blocked) return;
+    afpNoteCspList(loadCspNoBlob, CSP_NOBLOB_KEY, true, host, scope);
+    // The rest of THIS tab's requests, as the header path does when the response arrives —
+    // here as soon as the <head> has been read. Only a top document moves the tab rule.
+    if (isTop) afpSetSdTab(tabId, true);
+}
+
+/**
+ * [FIX a-meta-csp-was-never-learned] The tab rule for a document that sent NO CSP header.
+ * That used to switch the rule off unconditionally, which was right while every listed route
+ * had been learned from a header: no header meant a document that did not restrict. A route
+ * learned from a <meta> element sends no header on ANY visit, so the rule went off at every
+ * response and came back at DOMContentLoaded, and the subresources in between left under the
+ * profile while the window stood down. The lists decide here, as they do from the URL in
+ * afpSdTabFromUrl; unlike there, "not listed" does turn the rule off, because this document
+ * has now answered for itself.
+ */
+function afpSdTabForRoute(tabId, url) {
+    if (typeof tabId !== 'number' || tabId < 0) return;
+    const scope = afpCspScope(url);
+    if (!scope) { afpSetSdTab(tabId, false); return; }
+    Promise.all([loadCspNoBlob(), loadCspTt(), loadCspRewrite()]).then(function (r) {
+        const host = afpCspScopeHost(scope);
+        const rewritten = Object.prototype.hasOwnProperty.call(r[2] || {}, host);
+        afpSetSdTab(tabId, !rewritten && (afpCspScopeMatches(r[0], scope) || afpCspScopeMatches(r[1], scope)));
+    }, function () { afpSetSdTab(tabId, false); });
 }
 // ============================================================
 // [FIX csp-rewrite-for-workers] PER-SITE CSP REWRITE — the switch past README "Limits", item 6.

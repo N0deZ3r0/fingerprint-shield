@@ -103,7 +103,9 @@
     <li><b>The first visit to a site that refuses blob: workers costs it one worker.</b>
       Every worker this extension patches is built from a blob, and a host is only known
       to refuse them once its headers have been seen — which is during that first load.
-      Every visit after it, in any tab, is fine.</li>
+      Every visit after it, in any tab, is fine. A policy declared in a
+      <code>&lt;meta&gt;</code> tag instead is read from the page itself and costs no
+      worker.</li>
     <li><b>The decoder and the WebRTC codec list are the card's.</b> HEVC support and
       <code>video/H265</code> follow the host's hardware; only AV1's
       <code>powerEfficient</code> is downgraded for a claimed card without the decoder.

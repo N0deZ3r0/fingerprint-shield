@@ -1114,6 +1114,81 @@ t.section('15) CSP restrictions per route');
   t.assert(!ids.split(',').includes('21'), `a rewritten host is not stood down from the URL (${ids})`);
 }
 
+// ---- 19) a <meta> policy: one verdict in two copies, and what background learns ----------
+// [FIX a-meta-csp-was-never-learned] web.telegram.org/a/ carries its CSP as a <meta> element,
+// which no response-header observer can see. mw-core reads it at read time with its OWN copy
+// of the verdict afpJudgeCsp reaches — the MAIN world cannot load background.js — so the two
+// copies are held to one answer here, over the rows section 8 measured, the third gate and
+// Telegram's live policy (curl of https://web.telegram.org/a/, 2026-09-11).
+t.section('19) meta CSP: the page-side verdict and the learning');
+{
+  const src = read('mw/mw-core.js');
+  const a = src.indexOf('// ---- lifted by test/background-fns.mjs: begin ----');
+  const b = src.indexOf('// ---- lifted by test/background-fns.mjs: end ----');
+  t.assert(a > 0 && b > a, 'mw-core.js still marks the predicate it shares with background.js');
+  const pageVerdict = new Function(src.slice(a, b) + '\nreturn _cspListBlocksBlobWorkers;')();
+  const { afpCspBlocksBlobWorkers, afpCspBlocksBlobConnect, afpCspBlocksBlobScript } =
+    loadBackground(['afpCspBlocksBlobWorkers', 'afpCspBlocksBlobConnect', 'afpCspBlocksBlobScript']);
+  const bgVerdict = (v) => afpCspBlocksBlobWorkers(v) || (afpCspBlocksBlobConnect(v) && afpCspBlocksBlobScript(v));
+  const TG = "default-src 'self'; connect-src 'self' wss://*.web.telegram.org blob: http: https: ; " +
+    "script-src 'self' 'wasm-unsafe-eval' https://t.me/_websync_ https://telegram.me/_websync_ " +
+    "https://telegram.dog/_websync_; worker-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "font-src 'self' data:; img-src 'self' data: blob: https://ss3.4sqi.net/img/categories_v2/; " +
+    "media-src 'self' blob: data:; object-src 'none'; frame-src http: https: bitkeep: bnc: bybitapp:; " +
+    "base-uri 'none'; form-action 'none';";
+  const CASES = [
+    "script-src 'nonce-N'", "script-src 'self' 'unsafe-inline'", "script-src 'nonce-N' https: http:",
+    "default-src 'self'", 'script-src *', "script-src 'nonce-N' blob:", "script-src 'nonce-N' 'strict-dynamic'",
+    "script-src 'nonce-N' 'strict-dynamic' https: http:", "script-src 'nonce-N' 'strict-dynamic';worker-src 'self'",
+    "script-src 'self';worker-src blob:", "script-src 'self';child-src blob:", "img-src 'self'",
+    "require-trusted-types-for 'script'", '', null,
+    "script-src 'nonce-N' 'strict-dynamic',script-src 'self'", "script-src 'self',script-src 'nonce-N' 'strict-dynamic'",
+    "script-src 'nonce-N' 'strict-dynamic',script-src blob:",
+    // the third gate: a blob worker that can be created but neither read nor imported
+    "worker-src blob:; connect-src 'self'; script-src 'self'",
+    "worker-src blob:; connect-src 'self' blob:; script-src 'self'",
+    "worker-src blob:; script-src 'self'",
+    "default-src 'self'; worker-src blob:",
+    "WORKER-SRC 'SELF'",
+    TG
+  ];
+  const disagree = CASES.filter((v) => pageVerdict(v) !== bgVerdict(v));
+  t.eq(disagree.length, 0, `mw-core's copy agrees with background.js on all ${CASES.length} policies` +
+    (disagree.length ? ` — not on ${JSON.stringify(disagree)}` : ''));
+  t.eq(pageVerdict(TG), true, "Telegram Web A's live <meta> policy refuses blob: workers (worker-src 'self')");
+  t.eq(pageVerdict("default-src 'self'; worker-src blob:"), true,
+    'the third gate: creatable, but neither readable nor importable, is still blocked');
+
+  // What background does with it: the route goes on the SAME add-only list a header would put
+  // it on, the tab's subresources stand down at once, and a loose meta adds nothing.
+  const { chrome, store, sessionRules } = mockChrome({
+    afp_country_code: 'US', afp_profile_id: 'laptop_mid',
+    afp_profile_data: { screenW: 1920, screenH: 1080, dpr: 1, cores: 8, memory: 8, gpu: 'intel_iris', platform: 'Win32' },
+    afp_noise_seed: 5, afp_mode: 'normal', afp_host_platform_version: '15.0.0'
+  });
+  const { afpNoteMetaCsp, afpNoteCsp } = loadBackground(['afpNoteMetaCsp', 'afpNoteCsp'], { chrome });
+  const settle = () => new Promise((r) => setTimeout(r, 120));
+  const tabs = () => (sessionRules.get(1004) ? sessionRules.get(1004).condition.tabIds.slice() : []);
+  afpNoteMetaCsp('https://web.telegram.org/a/', [TG], 7, true);
+  await settle();
+  t.eq((store.get('afp_csp_noblob') || []).join(), 'web.telegram.org/a', 'a blob-refusing <meta> policy is learned for its route');
+  t.assert(tabs().includes(7), `and the tab it came from stands down in its headers at once (${tabs()})`);
+  afpNoteMetaCsp('https://loose.test/app/', ["default-src 'self' blob:"], 8, true);
+  afpNoteMetaCsp('https://frame.test/x/', ["worker-src 'self'"], 9, false);
+  await settle();
+  t.eq((store.get('afp_csp_noblob') || []).slice().sort().join(), 'frame.test/x,web.telegram.org/a',
+    'a loose <meta> adds nothing; a frame\'s strict one is learned for its own route');
+  t.assert(!tabs().includes(8) && !tabs().includes(9), `and only a strict TOP document moves the tab rule (${tabs()})`);
+  // The header observer then meets the same route's next document with NO CSP header — every
+  // document of a meta-only site — and must not undo the tab rule of a listed route.
+  afpNoteCsp({ type: 'main_frame', tabId: 7, frameId: 0, url: 'https://web.telegram.org/a/#123', responseHeaders: [] });
+  await settle();
+  t.assert(tabs().includes(7), `a response with no CSP header on a route learned from <meta> keeps the tab stood down (${tabs()})`);
+  afpNoteCsp({ type: 'main_frame', tabId: 7, frameId: 0, url: 'https://elsewhere.test/', responseHeaders: [] });
+  await settle();
+  t.assert(!tabs().includes(7), `while an unlisted route with no header still takes the tab out, as before (${tabs()})`);
+}
+
 // ---- 14) the per-document trusted-types verdict --------------------------------------
 // [FIX a-refusal-we-passed-through-was-charged-to-us] The host lists are add-only, so a
 // host that enforced once reads as enforcing for good. That is the safe direction for

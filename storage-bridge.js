@@ -297,6 +297,39 @@
             if (afpCspScopeMatches(list, scope)) afpHostFlag(BLOB_BLOCKED_KEY);
         } catch (e) {}
     }
+    // [FIX a-meta-csp-was-never-learned] A policy delivered as <meta http-equiv> never reaches
+    // background.js: its observer reads RESPONSE HEADERS, and web.telegram.org/a/ sends none —
+    // its `worker-src 'self'` is an element in <head>. mw-core and mw-workers read that
+    // element themselves at read time, which keeps this document's worker alive and its
+    // window coherent. What they cannot do is the other half of the stand-down — the `allow`
+    // rules that take the route out of the header rewrite, and the per-route marker that lets
+    // the NEXT document stand down before its first script — because both are background's,
+    // keyed off afp_csp_noblob. So the policy text goes there once the head is parsed.
+    // Documents with a route only: an about:blank or srcdoc frame enforces its creator's
+    // policy, and the creator reports it.
+    function reportMetaCsp() {
+        try {
+            if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+            var head = document.head;
+            if (!head) return;
+            var list = [], metas = head.getElementsByTagName('meta');
+            for (var i = 0; i < metas.length; i++) {
+                var m = metas[i];
+                if (m.parentNode !== head) continue;
+                if (String(m.getAttribute('http-equiv') || '').toLowerCase() !== 'content-security-policy') continue;
+                var c = m.getAttribute('content');
+                if (c) list.push(String(c));
+            }
+            if (!list.length) return;
+            chrome.runtime.sendMessage({ type: 'afpMetaCsp', policies: list }, function () {
+                void chrome.runtime.lastError;
+            });
+        } catch (e) {}
+    }
+    try {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', reportMetaCsp, { once: true });
+        else reportMetaCsp();
+    } catch (eMeta) {}
 
     // [FIX adblock-mask-contradicted-the-network] "A network-level ad blocker is refusing ad
     // requests", learned in background.js from ERR_BLOCKED_BY_CLIENT. mw/mw-adblock.js stands

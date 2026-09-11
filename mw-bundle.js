@@ -2160,13 +2160,116 @@
         } catch (e) {}
         return null;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    function _cspListBlocksBlobWorkers(value) {
+        var refuses = function (list, strictDynamicAdmits) {
+            return !!list && list.indexOf('blob:') === -1 &&
+                !(strictDynamicAdmits && list.indexOf("'strict-dynamic'") !== -1);
+        };
+        var policies = String(value || '').split(','), worker = false, conn = false, script = false;
+        for (var i = 0; i < policies.length; i++) {
+            var d = {}, parts = policies[i].split(';');
+            for (var j = 0; j < parts.length; j++) {
+                var t = parts[j].trim().split(/\s+/).filter(Boolean);
+                if (t.length) d[t[0].toLowerCase()] = t.slice(1).map(function (s) { return s.toLowerCase(); });
+            }
+            if (refuses(d['worker-src'] || d['child-src'] || d['script-src'] || d['default-src'], true)) worker = true;
+            if (refuses(d['connect-src'] || d['default-src'], false)) conn = true;
+            if (refuses(d['script-src-elem'] || d['script-src'] || d['default-src'], true)) script = true;
+        }
+        return worker || (conn && script);
+    }
+
+    var _metaCspBlocksBlobWorkers = (function () {
+        var gebtn, getAttr, lenGet, itemFn, parentGet, headGet, urlGet;
+        try {
+            gebtn = window.Document.prototype.getElementsByTagName;
+            getAttr = Element.prototype.getAttribute;
+            lenGet = Object.getOwnPropertyDescriptor(window.HTMLCollection.prototype, 'length').get;
+            itemFn = window.HTMLCollection.prototype.item;
+            parentGet = Object.getOwnPropertyDescriptor(Node.prototype, 'parentNode').get;
+            headGet = Object.getOwnPropertyDescriptor(window.Document.prototype, 'head').get;
+            urlGet = Object.getOwnPropertyDescriptor(window.Document.prototype, 'URL').get;
+        } catch (eCap) { return function () { return false; }; }
+
+
+
+        function policiesOf(doc, els) {
+            var out = [], head = headGet.call(doc), n = lenGet.call(els);
+            for (var i = 0; i < n; i++) {
+                var m = itemFn.call(els, i);
+                if (!m || !head || parentGet.call(m) !== head) continue;
+                if (String(getAttr.call(m, 'http-equiv') || '').toLowerCase() !== 'content-security-policy') continue;
+                var c = getAttr.call(m, 'content');
+                if (c) out.push(String(c));
+            }
+            return out.join(',');
+        }
+        var mine = null, seen = -1, verdict = false, aboutDoc = null;
+        return function () {
+            if (verdict) return true;
+            try {
+                if (!mine) mine = gebtn.call(document, 'meta');
+                var n = lenGet.call(mine);
+                if (n !== seen) {
+                    seen = n;
+                    if (n && _cspListBlocksBlobWorkers(policiesOf(document, mine))) verdict = true;
+                }
+
+
+
+                if (aboutDoc === null) aboutDoc = /^about:/.test(String(urlGet.call(document)));
+                var w = window;
+                for (var k = 0; aboutDoc && !verdict && k < 10 && w.parent !== w; k++) {
+                    w = w.parent;
+                    var pd = w.document;
+                    if (_cspListBlocksBlobWorkers(policiesOf(pd, gebtn.call(pd, 'meta')))) verdict = true;
+                    if (!/^about:/.test(String(urlGet.call(pd)))) break;
+                }
+            } catch (e) {}
+            return verdict;
+        };
+    })();
     function _standDownNow() {
         if (_sdMemo !== null) return _sdMemo;
         var inh = _sdInherited();
         if (inh !== null) { _sdMemo = inh; _sdPublish(inh); return inh; }
         var v = false;
         try {
-            v = _cspFlagOn('v.ui.tt') || _cspFlagOn('v.ui.wb');
+            v = _cspFlagOn('v.ui.tt') || _cspFlagOn('v.ui.wb') || _metaCspBlocksBlobWorkers();
         } catch (e) {}
         try {
             if (v || document.readyState !== 'loading') { _sdMemo = v; _sdPublish(v); }
@@ -2655,7 +2758,9 @@
                 sdProp: _sdProp,
 
 
-                hostHwNow: _hostHwNow
+                hostHwNow: _hostHwNow,
+
+                metaCspBlocksBlob: _metaCspBlocksBlobWorkers
 
 
 
@@ -2678,7 +2783,9 @@
                 RawDate: _RawDate, BASE_FONTS: _BASE_FONTS, markStatus: _markStatus,
                 def: _def, defIfDiff: _defIfDiff, sameVal: _sameVal, cpuTier: _cpuTier,
                 featKnown: _FEAT_KNOWN, featNow: _featNow, standDownNow: _standDownNow, hostResolved: _hostResolved, sdProp: _sdProp,
-                hostHwNow: _hostHwNow
+                hostHwNow: _hostHwNow,
+
+                metaCspBlocksBlob: _metaCspBlocksBlobWorkers
 
 
             };
@@ -11034,6 +11141,11 @@ if (!_STEALTH)     (function() {
 
 
     var _stealthNow = (window.__AFP_MW__ && window.__AFP_MW__.stealthNow) || function () { return false; };
+
+
+
+
+    var _metaCspBlocksBlob = (window.__AFP_MW__ && window.__AFP_MW__.metaCspBlocksBlob) || function () { return false; };
     try {
 
 
@@ -11101,7 +11213,9 @@ if (!_STEALTH)     (function() {
         function _isBlobBlocked() {
             if (_blobBlocked) return true;
             try {
-                if (_cspFlagOn(_BLOB_BLOCKED_KEY)) {
+
+
+                if (_cspFlagOn(_BLOB_BLOCKED_KEY) || _metaCspBlocksBlob()) {
                     _blobBlocked = true;
                     _unwrapWorkerCtors();
                     return true;
