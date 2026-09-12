@@ -2274,6 +2274,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     // Either gate's host list moves the header rewrite, so both are watched here. Only
     // the blob list also drives a content script; the trusted-types one is read by
     // storage-bridge on the page side and by standDownHosts() here.
+    // [FIX the-header-half-queued-behind-seven-rebuilds] The route rules first and on their own:
+    // they are a route's header half and must not wait behind a full rebuild.
+    if (changes[CSP_TT_KEY] || changes[CSP_NOBLOB_KEY]) afpSyncSdRouteRules().catch(function () {});
     if (changes[CSP_TT_KEY] && !changes[CSP_NOBLOB_KEY]) {
         updateDynamicLanguageRule().catch(function () {});
     }
@@ -2748,7 +2751,36 @@ async function pruneStaleDynamicRules() {
     }
 }
 
-async function updateDynamicLanguageRule() {
+// [FIX the-header-half-queued-behind-seven-rebuilds] ONE REBUILD AT A TIME, AND AT MOST ONE WAITING.
+//
+// A fresh install calls this from seven places inside its first second — onInstalled, the
+// profile write, the country write, the worker-start pass and the writes that follow — and
+// every call used to run in full and concurrently: two ruleset toggles, rule 1000, the route
+// rules and the client-hint rules, about five DNR operations each, all queued behind one
+// another in the browser. On a fast machine that queue drains unnoticed. On the public CI
+// runner, where one DNR write costs hundreds of milliseconds inside the full set, the header
+// half of a route learned during that second landed page loads late: test/wbcoherence.mjs
+// saw the window stand down by visit 3 while the document request went on carrying the
+// profile's user-agent through visit 7 — every nightly pass of 2026-09-11, and two of three
+// v2.5.30 tag attempts on the fork. Reproduced by delaying every DNR write in the service
+// worker: seven overlapping rebuilds, and no route rule for /wb/ through all seven visits.
+//
+// Coalesced: a call made while another is WAITING joins it — that run has not started, so it
+// reads everything the new call would have read. A call made while one is RUNNING queues a
+// single follow-up, which reads the state as it stands when it starts.
+let _dlrChain = Promise.resolve();
+let _dlrWaiting = null;
+function updateDynamicLanguageRule() {
+    if (_dlrWaiting) return _dlrWaiting;
+    const run = _dlrChain.catch(function () {}).then(function () {
+        _dlrWaiting = null;
+        return afpUpdateDynamicLanguageRuleNow();
+    });
+    _dlrWaiting = run;
+    _dlrChain = run;
+    return run;
+}
+async function afpUpdateDynamicLanguageRuleNow() {
     try {
         const cached = await chrome.storage.local.get([STORAGE_KEY, HOST_LANG_KEY]);
         const countryCode = cached[STORAGE_KEY] || 'US';
@@ -2873,7 +2905,8 @@ async function updateDynamicLanguageRule() {
                 }
             }] : [])
         });
-        await afpApplySdRouteRules(_sdScopes.routes);
+        // Not from _sdScopes: that snapshot is several awaits old by now. See afpSyncSdRouteRules.
+        await afpSyncSdRouteRules();
         // [FIX per-origin-hints-outlived-the-profile] The per-origin SET rules carry profile
         // VALUES (device memory, dpr, the OS bucket) and were rebuilt only when an origin's
         // Accept-CH was observed and at worker start — so a profile change left every origin
@@ -4196,6 +4229,24 @@ async function afpApplySdRouteRules(routes) {
     try {
         await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: afpSdRouteRuleIds(), addRules });
     } catch (e) { console.warn('[AFP] stand-down route rules:', e && e.message); }
+}
+// [FIX the-header-half-queued-behind-seven-rebuilds] The route rules on a chain of their own,
+// reading the lists at WRITE time. They are the header half of a route's stand-down and the
+// one thing a new entry in the CSP lists must move at once, so the storage listener calls this
+// directly instead of waiting for a whole rebuild to reach them — and the rebuild calls it too,
+// so no writer ever hands them a snapshot older than its own write. Coalesced like the rebuild.
+let _sdRouteChain = Promise.resolve();
+let _sdRouteWaiting = null;
+function afpSyncSdRouteRules() {
+    if (_sdRouteWaiting) return _sdRouteWaiting;
+    const run = _sdRouteChain.catch(function () {}).then(async function () {
+        _sdRouteWaiting = null;
+        const scopes = await standDownScopes();
+        await afpApplySdRouteRules(scopes.routes);
+    });
+    _sdRouteWaiting = run;
+    _sdRouteChain = run;
+    return run;
 }
 const _sdTabs = new Set();
 let _sdTabSync = Promise.resolve();

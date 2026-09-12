@@ -1189,6 +1189,54 @@ t.section('19) meta CSP: the page-side verdict and the learning');
   t.assert(!tabs().includes(7), `while an unlisted route with no header still takes the tab out, as before (${tabs()})`);
 }
 
+// ---- 20) seven rebuilds at once, and a route learned in the gap ------------------------
+// [FIX the-header-half-queued-behind-seven-rebuilds] A fresh install calls
+// updateDynamicLanguageRule from seven places within its first second, and each call used to
+// run in full and concurrently — about five DNR operations apiece, all queued in the browser.
+// On the public CI runner that queue kept the header half of a route learned in that second
+// out for ten page loads (test/wbcoherence.mjs: window stood down by visit 3, the document
+// request still on the profile's user-agent at visit 7). Two properties close it, and both
+// are held here without a clock: concurrent calls coalesce, and the route rules are written
+// from the lists as they stand at WRITE time, not from a snapshot the rebuild took earlier.
+t.section('20) concurrent rebuilds coalesce; route rules read the lists when they write');
+{
+  const { chrome, rules, calls } = mockChrome({
+    afp_country_code: 'US', afp_profile_id: 'laptop_mid',
+    afp_profile_data: { screenW: 1920, screenH: 1080, dpr: 1, cores: 8, memory: 8, gpu: 'intel_iris', platform: 'Win32' },
+    afp_noise_seed: 5, afp_mode: 'normal', afp_host_platform_version: '15.0.0'
+  });
+  const { updateDynamicLanguageRule, loadCspNoBlob } =
+    loadBackground(['updateDynamicLanguageRule', 'loadCspNoBlob'], { chrome });
+  // A rebuild is the write that replaces rule 1000; nothing else removes that id.
+  const rebuilds = () => calls.filter((c) => c.api === 'updateDynamicRules' && c.remove.includes(1000)).length;
+  // Let the load-time pass finish first, as in section 16, so the count is only ours.
+  await new Promise((r) => setTimeout(r, 300));
+  for (let last = -1; last !== calls.length;) { last = calls.length; await new Promise((r) => setTimeout(r, 80)); }
+  const mark = rebuilds();
+  await Promise.all(Array.from({ length: 7 }, () => updateDynamicLanguageRule()));
+  const ran = rebuilds() - mark;
+  t.assert(ran >= 1 && ran <= 2, `seven concurrent calls run one or two rebuilds, not seven (ran ${ran})`);
+
+  // The gap: hold the rebuild inside its rule-1000 write — by then it has read the lists —
+  // add a route the way afpNoteCspList does (into the memoised list), then let it go.
+  const orig = chrome.declarativeNetRequest.updateDynamicRules;
+  let entered, release, armed = true;
+  const enteredP = new Promise((r) => { entered = r; });
+  const gate = new Promise((r) => { release = r; });
+  chrome.declarativeNetRequest.updateDynamicRules = async (a) => {
+    if (armed && (a.removeRuleIds || []).includes(1000)) { armed = false; entered(); await gate; }
+    return orig(a);
+  };
+  const p = updateDynamicLanguageRule();
+  await enteredP;
+  (await loadCspNoBlob()).push('late.test/app');
+  release();
+  await p;
+  chrome.declarativeNetRequest.updateDynamicRules = orig;
+  const late = [...rules.values()].some((r) => r.id >= 5000 && /late\\.test/.test(String(r.condition.regexFilter)));
+  t.assert(late, 'a route learned while the rebuild was writing rule 1000 is in the route rules that same rebuild writes');
+}
+
 // ---- 14) the per-document trusted-types verdict --------------------------------------
 // [FIX a-refusal-we-passed-through-was-charged-to-us] The host lists are add-only, so a
 // host that enforced once reads as enforcing for good. That is the safe direction for

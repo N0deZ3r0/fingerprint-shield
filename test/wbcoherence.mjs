@@ -270,9 +270,22 @@ try {
         // does, rather than that it never happened. Reporting the halves separately, because
         // which one is behind is the useful half of the sentence.
         learningVisits++;
+        // [FIX the-header-half-queued-behind-seven-rebuilds] And WHY the header half is behind:
+        // whether the route's allow rule exists at all. On the public runner this line read
+        // "headers asked profile-ua" for five visits running and nothing said whether the rule
+        // was missing or present and losing; it took an instrumented rerun to find it missing,
+        // queued behind seven concurrent rebuilds. Now the note says it.
+        let routeRules = '?';
+        try {
+          const sw = ctx.serviceWorkers()[0];
+          routeRules = sw ? String(await sw.evaluate(async () => (await chrome.declarativeNetRequest.getDynamicRules())
+            .filter((r) => r.id >= 5000).map((r) => String(r.condition.regexFilter).split('?/')[1].split('(')[0])
+            .join('|') || 'none')) : 'no worker';
+        } catch (eR) { routeRules = 'unreadable'; }
         note(`   visit ${n}: still learning — ` +
           `JS ${off.length ? 'split: ' + off.join(' ; ') : 'agrees'}; ` +
-          `headers ${headerOff ? `asked ${String(sent.al).split(',')[0]}/${String(sent.ua).includes('Headless') ? 'host-ua' : 'profile-ua'}, reports ${win.lang}` : 'agree'}`);
+          `headers ${headerOff ? `asked ${String(sent.al).split(',')[0]}/${String(sent.ua).includes('Headless') ? 'host-ua' : 'profile-ua'}, reports ${win.lang}` : 'agree'}; ` +
+          `route allow rules: ${routeRules}`);
         assert(learningVisits <= LEARNED_BY,
           `the stand-down is in place within ${LEARNED_BY} visits — it is still not on ` +
           `visit ${n}, which is a stand-down that does not fire rather than one that is slow`);
