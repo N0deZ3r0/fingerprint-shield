@@ -6646,6 +6646,30 @@
 
                 try { _patchFrameAll(el.contentWindow, true); } catch (e0) {}
             }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            function _scanFrameWindows() {
+                try {
+                    for (var j = 0; j < window.frames.length; j++) {
+                        try { _patchFrameAll(window.frames[j]); } catch (e3) {}
+                    }
+                } catch (e4) {}
+            }
             function _scanFrames() {
                 try {
                     var list = document.querySelectorAll('iframe');
@@ -6653,22 +6677,32 @@
                         try { _hookIframeEl(list[i]); } catch (e) {}
                     }
                 } catch (e2) {}
-                try {
-                    for (var j = 0; j < window.frames.length; j++) {
-                        try { _patchFrameAll(window.frames[j]); } catch (e3) {}
-                    }
-                } catch (e4) {}
+                _scanFrameWindows();
             }
-            var _scanTimer = 0;
+
+
+
+
+
+
+
+
+
+
+
+            var _scanPending = false, _scanAskedAt = 0;
             function _scanFramesSoon() {
-                if (_scanTimer) return;
+                var now = Date.now();
+                if (_scanPending && (now - _scanAskedAt) < 2000) return;
+                _scanPending = true;
+                _scanAskedAt = now;
                 try {
-                    _scanTimer = setTimeout(function () {
-                        _scanTimer = 0;
+                    setTimeout(function () {
+                        _scanPending = false;
                         try { _scanFrames(); } catch (eSc) {}
                     }, 200);
                 } catch (eT) {
-                    _scanTimer = 0;
+                    _scanPending = false;
                     try { _scanFrames(); } catch (eSc2) {}
                 }
             }
@@ -6766,6 +6800,11 @@
 
 
 
+
+
+
+
+                    _scanFrameWindows();
                     _scanFramesSoon();
                 });
                 mo.observe(document.documentElement || document, { childList: true, subtree: true });
@@ -12283,42 +12322,50 @@ if (!_STEALTH)     (function() {
 
             function rfe(d, ox, oy, ex, exX, exY) {
                 var w = d.width, h = d.height, da = d.data, ew = ex.width, eh = ex.height, ed = ex.data;
-                function at(ax, ay) {
-                    var lx = ax - exX, ly = ay - exY;
-                    if (lx < 0 || ly < 0 || lx >= ew || ly >= eh) return null;
-                    var i = (ly * ew + lx) * 4;
-                    return [ed[i], ed[i + 1], ed[i + 2], ed[i + 3]];
-                }
 
 
 
 
 
 
-                function kk(c) { return ((c[0] << 16) | (c[1] << 8) | c[2]) >>> 0; }
-                function few(cols) {
-                    var n = 0, seen = [];
-                    for (var k = 0; k < cols.length; k++) {
-                        var v = cols[k], known = false;
-                        for (var j = 0; j < n; j++) { if (seen[j] === v) { known = true; break; } }
-                        if (known) continue;
-                        seen[n++] = v;
-                        if (n > 2) return false;
-                    }
-                    return true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                function fw(a, b, c, e, f, limit) {
+                    var n = 1;
+                    if (b !== -1 && b !== a) n++;
+                    if (c !== -1 && c !== a && c !== b) n++;
+                    if (e !== -1 && e !== a && e !== b && e !== c) n++;
+                    if (f !== -1 && f !== a && f !== b && f !== c && f !== e) n++;
+                    return n <= limit;
                 }
                 for (var ly = 0; ly < h; ly++) {
+                    var cy = oy + ly - exY;
                     for (var lx = 0; lx < w; lx++) {
-                        var ax = ox + lx, ay = oy + ly, c = at(ax, ay);
-                        if (!c) continue;
-                        var cols = [kk(c)], nb;
-                        nb = at(ax - 1, ay); if (nb) cols.push(kk(nb));
-                        nb = at(ax + 1, ay); if (nb) cols.push(kk(nb));
-                        nb = at(ax, ay - 1); if (nb) cols.push(kk(nb));
-                        nb = at(ax, ay + 1); if (nb) cols.push(kk(nb));
-                        if (few(cols)) {
+                        var cx = ox + lx - exX;
+
+                        if (cx < 0 || cy < 0 || cx >= ew || cy >= eh) continue;
+                        var ci = (cy * ew + cx) * 4, j;
+                        var kc = ((ed[ci] << 16) | (ed[ci + 1] << 8) | ed[ci + 2]) >>> 0;
+                        var kl = -1, kr = -1, ku = -1, kd = -1;
+                        if (cx > 0) { j = ci - 4; kl = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (cx + 1 < ew) { j = ci + 4; kr = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (cy > 0) { j = ci - ew * 4; ku = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (cy + 1 < eh) { j = ci + ew * 4; kd = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (fw(kc, kl, kr, ku, kd, 2)) {
                             var i = (ly * w + lx) * 4;
-                            da[i] = c[0]; da[i + 1] = c[1]; da[i + 2] = c[2]; da[i + 3] = c[3];
+                            da[i] = ed[ci]; da[i + 1] = ed[ci + 1]; da[i + 2] = ed[ci + 2]; da[i + 3] = ed[ci + 3];
                         }
                     }
                 }

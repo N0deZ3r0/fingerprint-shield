@@ -1647,6 +1647,30 @@
                 // Synchronous patch — detectors read cores immediately after appendChild
                 try { _patchFrameAll(el.contentWindow, true); } catch (e0) {}
             }
+            // [FIX the-safety-net-moved-onto-a-throttled-timer] The window.frames half of
+            // the scan is split out because it is the cheap half and the important half.
+            // Cheap: its cost is the number of nested browsing contexts, not the size of
+            // the document, and _patchFrameAll memoises per window when `force` is not
+            // passed, so a repeat is one property read per frame. Important: it is the ONLY
+            // half that sees a frame inside a shadow root — neither a subtree observer nor
+            // document.querySelectorAll pierces one — and a window.frames entry that no
+            // element points at.
+            //
+            // Coalescing the WHOLE scan onto a 200 ms timer put that half behind the same
+            // throttling as the 1.5 s interval below: Chrome clamps timers to >= 1 s in a
+            // hidden tab and bundles sub-minute ones to roughly once a minute once the tab
+            // has been hidden five minutes, while the MutationObserver callback it used to
+            // run in is a microtask and is never throttled. A page reading frames[n].
+            // navigator in a background tab would have had the host answering in the frame
+            // beside the profile answering in the window — the split this file exists to
+            // close, and the one CreepJS compares by design.
+            function _scanFrameWindows() {
+                try {
+                    for (var j = 0; j < window.frames.length; j++) {
+                        try { _patchFrameAll(window.frames[j]); } catch (e3) {}
+                    }
+                } catch (e4) {}
+            }
             function _scanFrames() {
                 try {
                     var list = document.querySelectorAll('iframe');
@@ -1654,22 +1678,32 @@
                         try { _hookIframeEl(list[i]); } catch (e) {}
                     }
                 } catch (e2) {}
-                try {
-                    for (var j = 0; j < window.frames.length; j++) {
-                        try { _patchFrameAll(window.frames[j]); } catch (e3) {}
-                    }
-                } catch (e4) {}
+                _scanFrameWindows();
             }
-            var _scanTimer = 0;
+            // [FIX the-debounce-latched-on-a-timer-the-page-owns] This kept the setTimeout
+            // HANDLE in _scanTimer and read its truthiness as "a pass is already scheduled".
+            // setTimeout here is the PAGE's — no native timer is captured anywhere in this
+            // file — so the page decided both halves of that flag. A shim that returns 0
+            // left it falsy and every batch scheduled its own full scan, which is the cost
+            // this coalescing exists to remove, on exactly the kind of page it was written
+            // for; a shim that returns an id and never calls back, or a clearTimeout on
+            // that id, left it truthy with no path back to 0 and the pass never ran again
+            // for the life of the document. The flag is its own boolean now, and it
+            // expires: a pass still pending after ten times the delay is treated as lost
+            // and re-asked, so the worst case is one attempt every 2 s rather than silence.
+            var _scanPending = false, _scanAskedAt = 0;
             function _scanFramesSoon() {
-                if (_scanTimer) return;
+                var now = Date.now();
+                if (_scanPending && (now - _scanAskedAt) < 2000) return;
+                _scanPending = true;
+                _scanAskedAt = now;
                 try {
-                    _scanTimer = setTimeout(function () {
-                        _scanTimer = 0;
+                    setTimeout(function () {
+                        _scanPending = false;
                         try { _scanFrames(); } catch (eSc) {}
                     }, 200);
                 } catch (eT) {
-                    _scanTimer = 0;
+                    _scanPending = false;
                     try { _scanFrames(); } catch (eSc2) {}
                 }
             }
@@ -1767,6 +1801,11 @@
                     // second time from mw-canvas-audio.js's own observer. One scan, once the
                     // burst is over, covers the same ground — the 1.5 s timer below is the
                     // net's other half and is unchanged.
+                    // [FIX the-safety-net-moved-onto-a-throttled-timer] The cheap half
+                    // runs HERE, in the observer's own microtask, where nothing throttles
+                    // it. Only the document-wide half waits for the burst to end, which is
+                    // what the note above is about.
+                    _scanFrameWindows();
                     _scanFramesSoon();
                 });
                 mo.observe(document.documentElement || document, { childList: true, subtree: true });

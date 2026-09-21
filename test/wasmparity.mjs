@@ -427,6 +427,21 @@ for (const [w, h, ox, oy] of GEOMETRIES) {
     need(ca, '_flatWithin', 'mw/mw-canvas-audio.js (was :285, rgbKey + _distinctAtMost)') + '\n' +
     need(ca, '_restoreFlatRegionsExpanded', 'mw/mw-canvas-audio.js (was :365)') + '\n' +
     'return _restoreFlatRegionsExpanded;')());
+  // [FIX only-the-expanded-half-was-extracted] _restoreFlatRegions is the OTHER window
+  // rollback — the one every same-rect read takes, and the one production falls back to
+  // when the expanded read raised IndexSizeError (mw/mw-workers.js does the same thing with
+  // rfe(r, ox, oy, pre0, ox, oy)). It was rewritten line for line beside the expanded copy,
+  // the key() closures inlined and the four neighbour bounds retyped against a different
+  // index base, and nothing in the Node set read it: the extraction above takes the
+  // expanded one alone, test/btreadback.mjs is in the manual browser half, and
+  // test/canvasmode.mjs is not in the SUITES array at all. The two are ONE rule, so the
+  // same-rect case of the expanded function IS this function — which is what the reads
+  // below assert. An off-by-one in either set of bounds breaks it.
+  const winRf = safeFn(() => new Function(
+    decl(ca, /var MAX_FLAT_COLORS = \d+;/, 'mw/mw-canvas-audio.js (was :284)') + '\n' +
+    need(ca, '_flatWithin', 'mw/mw-canvas-audio.js (was :285)') + '\n' +
+    need(ca, '_restoreFlatRegions', 'mw/mw-canvas-audio.js (was :317)') + '\n' +
+    'return _restoreFlatRegions;')());
   // The reads: the whole canvas, a rect straddling the cross, a right-hand slab, and a
   // single pixel — production clamps the expanded read to the canvas, so the 1px margin is
   // clamped here too and the corners get a genuinely truncated neighbourhood.
@@ -461,6 +476,20 @@ for (const [w, h, ox, oy] of GEOMETRIES) {
         'and rolls noise back somewhere — the one- and two-colour neighbourhoods either ' +
         'side of the cross are flat and must be restored');
     }
+    // The same rule, the same rect, two implementations: _restoreFlatRegions(d, orig)
+    // against _restoreFlatRegionsExpanded with the snapshot set to the read itself. Both
+    // start from the same noised bytes and read the same pristine snapshot, so anything
+    // but byte equality is one of the two walking its neighbourhood differently.
+    const sr1 = rectOf(x, y, w, h); sr1.data.set(noised);
+    winRf(sr1, clean.data);
+    const sr2 = rectOf(x, y, w, h); sr2.data.set(noised);
+    winRfe(sr2, x, y, clean, x, y);
+    const ds = firstDiff(sr1.data, sr2.data);
+    t.assert(ds === -1,
+      `${w}x${h}@${x},${y}: mw/mw-canvas-audio.js _restoreFlatRegions == ` +
+      '_restoreFlatRegionsExpanded over the same rect — the non-expanded rollback is what ' +
+      'every same-rect read takes and it is hand-written against its own index base' +
+      (ds === -1 ? '' : ` — first difference at byte ${ds}: plain ${sr1.data[ds]}, expanded ${sr2.data[ds]}`));
   }
 }
 

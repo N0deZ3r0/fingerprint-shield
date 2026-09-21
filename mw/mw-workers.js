@@ -1107,42 +1107,50 @@
             // read is sliced.
             function rfe(d, ox, oy, ex, exX, exY) {
                 var w = d.width, h = d.height, da = d.data, ew = ex.width, eh = ex.height, ed = ex.data;
-                function at(ax, ay) {
-                    var lx = ax - exX, ly = ay - exY;
-                    if (lx < 0 || ly < 0 || lx >= ew || ly >= eh) return null;
-                    var i = (ly * ew + lx) * 4;
-                    return [ed[i], ed[i + 1], ed[i + 2], ed[i + 3]];
-                }
                 // [FIX solid-fill-canvas-was-noised] Port of the main thread's
                 // at-most-two-colours rule (MAX_FLAT_COLORS in mw-canvas-audio.js):
                 // one colour is a flat interior, two is a hard edge between two flat
                 // fills, and neither carries per-machine entropy. Must stay identical
                 // to the window's copy or Window and Worker diverge on any shape with
-                // a hard edge — which is exactly what dev-wvw.html measures.
-                function kk(c) { return ((c[0] << 16) | (c[1] << 8) | c[2]) >>> 0; }
-                function few(cols) {
-                    var n = 0, seen = [];
-                    for (var k = 0; k < cols.length; k++) {
-                        var v = cols[k], known = false;
-                        for (var j = 0; j < n; j++) { if (seen[j] === v) { known = true; break; } }
-                        if (known) continue;
-                        seen[n++] = v;
-                        if (n > 2) return false;
-                    }
-                    return true;
+                // a hard edge — which is what dev-wvw.html measures and what section 3
+                // of test/wasmparity.mjs compares byte for byte.
+                //
+                // [FIX the-worker-copy-kept-the-per-pixel-arrays] The window side stopped
+                // allocating per pixel and this did not, so a page that does its canvas
+                // work in a worker went on paying the whole cost: at() returned a fresh
+                // four-element array PER NEIGHBOUR and few() built two more lists, per
+                // PIXEL — a few million short-lived arrays for one 1280x720 read, measured
+                // on the window side at 117 ms against 3.4 ms clean. The verdict is a
+                // function of at most five numbers, so it is computed from five numbers:
+                // the centre and its four neighbours as unsigned 24-bit colour keys, -1
+                // where a neighbour falls outside the snapshot (a real key is never
+                // negative), and "no more than two distinct" counted without a list.
+                // Same shape as the window's _restoreFlatRegionsExpanded, which is the
+                // point — the two are one rule and the suite holds them together.
+                function fw(a, b, c, e, f, limit) {
+                    var n = 1;
+                    if (b !== -1 && b !== a) n++;
+                    if (c !== -1 && c !== a && c !== b) n++;
+                    if (e !== -1 && e !== a && e !== b && e !== c) n++;
+                    if (f !== -1 && f !== a && f !== b && f !== c && f !== e) n++;
+                    return n <= limit;
                 }
                 for (var ly = 0; ly < h; ly++) {
+                    var cy = oy + ly - exY;
                     for (var lx = 0; lx < w; lx++) {
-                        var ax = ox + lx, ay = oy + ly, c = at(ax, ay);
-                        if (!c) continue;
-                        var cols = [kk(c)], nb;
-                        nb = at(ax - 1, ay); if (nb) cols.push(kk(nb));
-                        nb = at(ax + 1, ay); if (nb) cols.push(kk(nb));
-                        nb = at(ax, ay - 1); if (nb) cols.push(kk(nb));
-                        nb = at(ax, ay + 1); if (nb) cols.push(kk(nb));
-                        if (few(cols)) {
+                        var cx = ox + lx - exX;
+                        // A pixel the snapshot does not cover keeps its noise.
+                        if (cx < 0 || cy < 0 || cx >= ew || cy >= eh) continue;
+                        var ci = (cy * ew + cx) * 4, j;
+                        var kc = ((ed[ci] << 16) | (ed[ci + 1] << 8) | ed[ci + 2]) >>> 0;
+                        var kl = -1, kr = -1, ku = -1, kd = -1;
+                        if (cx > 0) { j = ci - 4; kl = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (cx + 1 < ew) { j = ci + 4; kr = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (cy > 0) { j = ci - ew * 4; ku = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (cy + 1 < eh) { j = ci + ew * 4; kd = ((ed[j] << 16) | (ed[j + 1] << 8) | ed[j + 2]) >>> 0; }
+                        if (fw(kc, kl, kr, ku, kd, 2)) {
                             var i = (ly * w + lx) * 4;
-                            da[i] = c[0]; da[i + 1] = c[1]; da[i + 2] = c[2]; da[i + 3] = c[3];
+                            da[i] = ed[ci]; da[i + 1] = ed[ci + 1]; da[i + 2] = ed[ci + 2]; da[i + 3] = ed[ci + 3];
                         }
                     }
                 }
