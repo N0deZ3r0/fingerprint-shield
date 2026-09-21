@@ -282,40 +282,51 @@
         // replaces it depends only on canvas content, never on how a read was sliced —
         // the CheckIntegrity invariant (1x1 read == block read) holds.
         var MAX_FLAT_COLORS = 2;
-        function rgbKey(c) {
-            return ((c[0] << 16) | (c[1] << 8) | c[2]) >>> 0;
-        }
-        function _distinctAtMost(cols, limit) {
-            var n = 0, seen = [];
-            for (var k = 0; k < cols.length; k++) {
-                var c = cols[k];
-                if (c === null) continue;
-                var known = false;
-                for (var j = 0; j < n; j++) {
-                    if (seen[j] === c) { known = true; break; }
-                }
-                if (known) continue;
-                seen[n++] = c;
-                if (n > limit) return false;
-            }
-            return true;
+        // [FIX flat-check-allocated-an-array-per-pixel] The rule above used to be built from
+        // rgbKey(c), which took a four-element array, and _distinctAtMost(cols, limit), which
+        // took a freshly built list of up to five keys and a second list of what it had seen —
+        // per PIXEL, in both rollback functions below. A video-sized frame is 921,600 pixels,
+        // so every getImageData / toDataURL / readPixels on a 1280x720 canvas allocated a few
+        // million short-lived arrays. Measured against the real unpacked extension, one call:
+        //
+        //     getImageData 1280x720     clean 3.4 ms    ours 117 ms
+        //     readPixels   1280x720     clean 3.7 ms    ours 104 ms
+        //
+        // and the two rollbacks alone were most of it (Node, same buffers: 71 -> 24 ms and
+        // 130 -> 30 ms). The verdict is a function of at most five numbers, so it is computed
+        // from five numbers: the centre and its four neighbours as unsigned 24-bit colour
+        // keys, -1 for a neighbour that does not exist (a real key is never negative).
+        // "No more than MAX_FLAT_COLORS distinct" is decided without a list: each value is
+        // counted when it differs from the ones before it.
+        //
+        // Byte-identical to the array version, which is the whole requirement: the flat-region
+        // rule is hand-ported into mw/mw-workers.js (_pixShim.rfe) and test/wasmparity.mjs
+        // holds the two together. Checked against the previous implementation: 105 buffers
+        // (flat, two-colour, three-colour, random; 1x1 to 64x64; partial neighbour coverage),
+        // 0 differing bytes; and the predicate itself over every combination of five values
+        // with absent neighbours at limits 1 to 4 — 25,920 of them, 0 differing.
+        function _flatWithin(a, b, c, d, e, limit) {
+            var n = 1;
+            if (b !== -1 && b !== a) n++;
+            if (c !== -1 && c !== a && c !== b) n++;
+            if (d !== -1 && d !== a && d !== b && d !== c) n++;
+            if (e !== -1 && e !== a && e !== b && e !== c && e !== d) n++;
+            return n <= limit;
         }
 
         function _restoreFlatRegions(d, orig) {
             var w = d.width, h = d.height, data = d.data, rowBytes = w * 4;
-            function key(o) {
-                return ((orig[o] << 16) | (orig[o + 1] << 8) | orig[o + 2]) >>> 0;
-            }
             for (var y = 0; y < h; y++) {
                 var rowOff = y * rowBytes;
                 for (var x = 0; x < w; x++) {
-                    var i = rowOff + x * 4;
-                    var cols = [key(i)];
-                    if (x > 0) cols.push(key(i - 4));
-                    if (x < w - 1) cols.push(key(i + 4));
-                    if (y > 0) cols.push(key(i - rowBytes));
-                    if (y < h - 1) cols.push(key(i + rowBytes));
-                    if (!_distinctAtMost(cols, MAX_FLAT_COLORS)) continue;
+                    var i = rowOff + x * 4, j;
+                    var kc = ((orig[i] << 16) | (orig[i + 1] << 8) | orig[i + 2]) >>> 0;
+                    var kl = -1, kr = -1, ku = -1, kd = -1;
+                    if (x > 0) { j = i - 4; kl = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (x < w - 1) { j = i + 4; kr = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (y > 0) { j = i - rowBytes; ku = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (y < h - 1) { j = i + rowBytes; kd = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (!_flatWithin(kc, kl, kr, ku, kd, MAX_FLAT_COLORS)) continue;
                     data[i] = orig[i]; data[i+1] = orig[i+1]; data[i+2] = orig[i+2]; data[i+3] = orig[i+3];
                 }
             }
@@ -365,28 +376,25 @@
         function _restoreFlatRegionsExpanded(d, offsetX, offsetY, expanded, exOffsetX, exOffsetY) {
             var w = d.width, h = d.height, data = d.data;
             var exW = expanded.width, exH = expanded.height, exData = expanded.data;
-            function rawAt(absX, absY) {
-                var lx = absX - exOffsetX, ly = absY - exOffsetY;
-                if (lx < 0 || ly < 0 || lx >= exW || ly >= exH) return null;
-                var i = (ly * exW + lx) * 4;
-                return [exData[i], exData[i+1], exData[i+2], exData[i+3]];
-            }
             for (var ly = 0; ly < h; ly++) {
+                var ey = offsetY + ly - exOffsetY;
                 for (var lx = 0; lx < w; lx++) {
-                    var absX = offsetX + lx, absY = offsetY + ly;
-                    var center = rawAt(absX, absY);
-                    if (!center) continue;
+                    var ex = offsetX + lx - exOffsetX;
+                    // A pixel the expanded read does not cover keeps its noise.
+                    if (ex < 0 || ey < 0 || ex >= exW || ey >= exH) continue;
+                    var ci = (ey * exW + ex) * 4, j;
                     // Same plus-shaped, at-most-two-colours rule as _restoreFlatRegions —
                     // see the note there. Both must agree or a read that takes the
                     // expanded path and one that does not would disagree on the same pixel.
-                    var cols = [rgbKey(center)];
-                    var nb = rawAt(absX - 1, absY); if (nb) cols.push(rgbKey(nb));
-                    nb = rawAt(absX + 1, absY); if (nb) cols.push(rgbKey(nb));
-                    nb = rawAt(absX, absY - 1); if (nb) cols.push(rgbKey(nb));
-                    nb = rawAt(absX, absY + 1); if (nb) cols.push(rgbKey(nb));
-                    if (_distinctAtMost(cols, MAX_FLAT_COLORS)) {
+                    var kc = ((exData[ci] << 16) | (exData[ci + 1] << 8) | exData[ci + 2]) >>> 0;
+                    var kl = -1, kr = -1, ku = -1, kd = -1;
+                    if (ex > 0) { j = ci - 4; kl = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (ex + 1 < exW) { j = ci + 4; kr = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (ey > 0) { j = ci - exW * 4; ku = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (ey + 1 < exH) { j = ci + exW * 4; kd = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (_flatWithin(kc, kl, kr, ku, kd, MAX_FLAT_COLORS)) {
                         var i = (ly * w + lx) * 4;
-                        data[i] = center[0]; data[i+1] = center[1]; data[i+2] = center[2]; data[i+3] = center[3];
+                        data[i] = exData[ci]; data[i+1] = exData[ci+1]; data[i+2] = exData[ci+2]; data[i+3] = exData[ci+3];
                     }
                 }
             }
@@ -401,11 +409,17 @@
         var _canvasNoiseMode = null; // null | 'wasm' | 'js'
         function _jsCanvasNoise(d, offsetX, offsetY) {
             var w = d.width, h = d.height;
+            // [FIX flat-check-allocated-an-array-per-pixel] The session seed can be upgraded
+            // once, when the profile arrives (see _getSessionSeed in mw-core), but never in
+            // the middle of a synchronous call — and it was fetched once per PIXEL, which
+            // while the seed is still provisional means a profile lookup per pixel. Once
+            // per call is the same number.
+            var seed = _getSessionSeed();
             for (var ly = 0; ly < h; ly++) {
                 for (var lx = 0; lx < w; lx++) {
                     var absX = offsetX + lx, absY = offsetY + ly;
                     var i = (ly * w + lx) * 4;
-                    var hh = _hashPixelPosition(absX, absY, _getSessionSeed());
+                    var hh = _hashPixelPosition(absX, absY, seed);
                     d.data[i]   = Math.max(0, Math.min(255, d.data[i]   + ((hh & 3) - 1)));
                     d.data[i+1] = Math.max(0, Math.min(255, d.data[i+1] + ((hh >>> 4 & 3) - 1)));
                     d.data[i+2] = Math.max(0, Math.min(255, d.data[i+2] + ((hh >>> 8 & 3) - 1)));
@@ -924,8 +938,10 @@
             // If the registry is somehow absent the sync path is skipped rather than
             // rebuilt — the observer, DOMContentLoaded, load and timed rescans below still
             // cover every frame, just not within the same tick.
+            var _sharedScan = false;
             try {
                 if (MW && MW.iframeHooks && typeof MW.iframeHooks.push === 'function') {
+                    _sharedScan = true;
                     MW.iframeHooks.push(function (el) {
                         if (!_isScriptlessSandbox(el)) return;
                         try {
@@ -936,8 +952,16 @@
                 }
             } catch (eIns) {}
             _scanFrames();
+            // [FIX two-full-document-scans-per-mutation-batch] This file kept a MutationObserver
+            // of its own whose only job was a full document.querySelectorAll('iframe') per
+            // batch, beside the identical observer in mw-navigator.js. It is redundant
+            // wherever the registry above exists: mw-navigator's scan hooks every iframe by
+            // reading its contentWindow, and that getter runs every hook registered here —
+            // so a scriptless sandbox frame is bridged by the one shared scan, and by the
+            // getter itself the moment the page reaches into it. The observer stays only for
+            // the case the registry note above describes, where it is absent.
             try {
-                if (typeof MutationObserver !== 'undefined') {
+                if (!_sharedScan && typeof MutationObserver !== 'undefined') {
                     var mo = new MutationObserver(function() { _scanFrames(); });
                     mo.observe(document.documentElement, { childList: true, subtree: true });
                 }

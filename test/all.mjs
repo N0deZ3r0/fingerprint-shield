@@ -94,6 +94,12 @@ if (withBrowser) SUITES.push(['mode claims (Chromium)', ['test/modeclaims.mjs']]
 // microsecond added to a hot path and nothing finer. tools/probe-textcost.mjs is what judges
 // a real change.
 if (withBrowser) SUITES.push(['cost budget (Chromium)', ['test/costceiling.mjs']]);
+// The other cost shape, the one that scales with the AGE of a page rather than with one call:
+// the parent-side frame patch runs per iframe per mutation batch, and used to stack a new
+// getter layer on every pass (youtube.com — hidden iframes, DOM that never stops changing —
+// hung and did not come back). Structural check first: the installed getter must be the same
+// function object after a burst as before it.
+if (withBrowser) SUITES.push(['frame scan cost (Chromium)', ['test/framescan.mjs']]);
 // Each of the 13 popup switches, on and off, against the real extension and a clean browser
 // beside it. dev-perflag.html asks whether a reference is still patched; this asks whether
 // the value is the profile's — a patched reference returning the host's answer passes that

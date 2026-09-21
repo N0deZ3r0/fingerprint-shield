@@ -967,6 +967,35 @@
             // prototype throws Illegal invocation the way a native accessor does.
             // proto is omitted for genuinely own window properties — devicePixelRatio is
             // an own property of window in Chrome (verified: own true, on prototype false).
+            // [FIX frame-getters-were-wrapped-again-on-every-scan] _defWinProp is reached
+            // through _patchFrameAll(win, true) from _hookIframeEl, and _hookIframeEl runs
+            // for EVERY iframe on EVERY MutationObserver batch (see the observers below) and
+            // on a 1.5 s timer. Each of those calls used to capture the getter it found —
+            // by the second call, its OWN previous layer — and install a new _mn proxy on
+            // top, with the previous layer as both `orig` and `oracle`. Two costs, one
+            // cause:
+            //
+            //   * the oracle probe below, `orig.get.call({})`, runs THROUGH every layer
+            //     already stacked (each one forwards a foreign receiver to its oracle, down
+            //     to the platform's refusal), so patch number N costs O(N) per property —
+            //     seventeen properties — and N counts every mutation batch the page has
+            //     ever produced. The whole is quadratic in the age of the tab;
+            //   * every stand-down read (`_sdProp`, the default on a route the CSP refuses)
+            //     walks the same chain to reach the native getter.
+            //
+            // Measured against the real unpacked extension on a page with N mutation batches
+            // and one hidden iframe (test/framescan.mjs), overhead on top of a clean
+            // browser: 50 batches 0.35 s, 100 -> 1.0 s, 200 -> 3.3 s, 400 -> 14 s; with six
+            // iframes 150 batches took 15 s against 1.4 s clean. youtube.com keeps a handful
+            // of hidden iframes and never stops mutating its DOM, which is what "the page
+            // hangs and does not come back" looks like from the outside.
+            //
+            // The getter this installs reads the profile LIVE (getVal -> _pv on every
+            // access), so a second install of the same slot can never change an answer —
+            // it can only add a layer. A slot that already carries one of OUR getters is
+            // therefore left alone. What still runs each time, because it always did, is
+            // the removal of an own copy some other code left on the instance.
+            var _ourFrameGetters = new WeakSet();
             function _defWinProp(obj, prop, getVal, proto) {
                 if (!obj) return;
                 // [FIX the-stand-down-stopped-at-the-window] Leave the frame's own value
@@ -987,6 +1016,14 @@
                 try {
                     var target = proto || obj;
                     var orig = Object.getOwnPropertyDescriptor(target, prop);
+                    if (orig && typeof orig.get === 'function' && _ourFrameGetters.has(orig.get)) {
+                        if (target !== obj) {
+                            try {
+                                if (Object.getOwnPropertyDescriptor(obj, prop)) delete obj[prop];
+                            } catch (eDel0) {}
+                        }
+                        return;
+                    }
                     // [FIX the-frame-path-kept-the-brand-check] This was
                     // `brand.isPrototypeOf(Object(this))`, the rule v2.5.11 replaced
                     // everywhere else and did not reach here — the parent-side frame patch is
@@ -1029,11 +1066,13 @@
                             if (Object.getOwnPropertyDescriptor(obj, prop)) delete obj[prop];
                         } catch (eDel) {}
                     }
+                    var installed = _mn(g, true);
                     Object.defineProperty(target, prop, {
-                        get: _mn(g, true),
+                        get: installed,
                         configurable: true,
                         enumerable: orig ? !!orig.enumerable : true
                     });
+                    try { _ourFrameGetters.add(installed); } catch (eReg) {}
                 } catch (e2) {}
             }
             function _patchFrameNavScreen(win) {
@@ -1621,6 +1660,19 @@
                     }
                 } catch (e4) {}
             }
+            var _scanTimer = 0;
+            function _scanFramesSoon() {
+                if (_scanTimer) return;
+                try {
+                    _scanTimer = setTimeout(function () {
+                        _scanTimer = 0;
+                        try { _scanFrames(); } catch (eSc) {}
+                    }, 200);
+                } catch (eT) {
+                    _scanTimer = 0;
+                    try { _scanFrames(); } catch (eSc2) {}
+                }
+            }
             // [FIX blamed-for-the-pages-own-console-errors] A frame has to be patched
             // before the page's NEXT LINE — an Akamai-style probe appends an iframe and
             // reads hardwareConcurrency immediately, and the MutationObserver below is a
@@ -1705,7 +1757,17 @@
                             } catch (eN) {}
                         }
                     }
-                    try { _scanFrames(); } catch (eS) {}
+                    // [FIX two-full-document-scans-per-mutation-batch] The loop above already
+                    // hooks every iframe among the nodes this batch ADDED, synchronously and
+                    // at a cost proportional to what was added. What a full scan adds on top
+                    // is the safety net (a frame in a shadow tree, a window.frames entry no
+                    // element points at), and it costs the whole document every time:
+                    // document.querySelectorAll('iframe') walks every node the page has, on a
+                    // page that produces mutation batches without pause. It also ran a
+                    // second time from mw-canvas-audio.js's own observer. One scan, once the
+                    // burst is over, covers the same ground — the 1.5 s timer below is the
+                    // net's other half and is unchanged.
+                    _scanFramesSoon();
                 });
                 mo.observe(document.documentElement || document, { childList: true, subtree: true });
             } catch (eMO) {}

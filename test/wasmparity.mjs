@@ -424,8 +424,7 @@ for (const [w, h, ox, oy] of GEOMETRIES) {
   // suite exercising itself, the same argument the two preludes in section 7 make.
   const winRfe = safeFn(() => new Function(
     decl(ca, /var MAX_FLAT_COLORS = \d+;/, 'mw/mw-canvas-audio.js (was :284)') + '\n' +
-    need(ca, 'rgbKey', 'mw/mw-canvas-audio.js (was :285)') + '\n' +
-    need(ca, '_distinctAtMost', 'mw/mw-canvas-audio.js (was :288)') + '\n' +
+    need(ca, '_flatWithin', 'mw/mw-canvas-audio.js (was :285, rgbKey + _distinctAtMost)') + '\n' +
     need(ca, '_restoreFlatRegionsExpanded', 'mw/mw-canvas-audio.js (was :365)') + '\n' +
     'return _restoreFlatRegionsExpanded;')());
   // The reads: the whole canvas, a rect straddling the cross, a right-hand slab, and a

@@ -5966,6 +5966,35 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            var _ourFrameGetters = new WeakSet();
             function _defWinProp(obj, prop, getVal, proto) {
                 if (!obj) return;
 
@@ -5986,6 +6015,14 @@
                 try {
                     var target = proto || obj;
                     var orig = Object.getOwnPropertyDescriptor(target, prop);
+                    if (orig && typeof orig.get === 'function' && _ourFrameGetters.has(orig.get)) {
+                        if (target !== obj) {
+                            try {
+                                if (Object.getOwnPropertyDescriptor(obj, prop)) delete obj[prop];
+                            } catch (eDel0) {}
+                        }
+                        return;
+                    }
 
 
 
@@ -6028,11 +6065,13 @@
                             if (Object.getOwnPropertyDescriptor(obj, prop)) delete obj[prop];
                         } catch (eDel) {}
                     }
+                    var installed = _mn(g, true);
                     Object.defineProperty(target, prop, {
-                        get: _mn(g, true),
+                        get: installed,
                         configurable: true,
                         enumerable: orig ? !!orig.enumerable : true
                     });
+                    try { _ourFrameGetters.add(installed); } catch (eReg) {}
                 } catch (e2) {}
             }
             function _patchFrameNavScreen(win) {
@@ -6620,6 +6659,19 @@
                     }
                 } catch (e4) {}
             }
+            var _scanTimer = 0;
+            function _scanFramesSoon() {
+                if (_scanTimer) return;
+                try {
+                    _scanTimer = setTimeout(function () {
+                        _scanTimer = 0;
+                        try { _scanFrames(); } catch (eSc) {}
+                    }, 200);
+                } catch (eT) {
+                    _scanTimer = 0;
+                    try { _scanFrames(); } catch (eSc2) {}
+                }
+            }
 
 
 
@@ -6704,7 +6756,17 @@
                             } catch (eN) {}
                         }
                     }
-                    try { _scanFrames(); } catch (eS) {}
+
+
+
+
+
+
+
+
+
+
+                    _scanFramesSoon();
                 });
                 mo.observe(document.documentElement || document, { childList: true, subtree: true });
             } catch (eMO) {}
@@ -7421,40 +7483,51 @@
 
 
         var MAX_FLAT_COLORS = 2;
-        function rgbKey(c) {
-            return ((c[0] << 16) | (c[1] << 8) | c[2]) >>> 0;
-        }
-        function _distinctAtMost(cols, limit) {
-            var n = 0, seen = [];
-            for (var k = 0; k < cols.length; k++) {
-                var c = cols[k];
-                if (c === null) continue;
-                var known = false;
-                for (var j = 0; j < n; j++) {
-                    if (seen[j] === c) { known = true; break; }
-                }
-                if (known) continue;
-                seen[n++] = c;
-                if (n > limit) return false;
-            }
-            return true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        function _flatWithin(a, b, c, d, e, limit) {
+            var n = 1;
+            if (b !== -1 && b !== a) n++;
+            if (c !== -1 && c !== a && c !== b) n++;
+            if (d !== -1 && d !== a && d !== b && d !== c) n++;
+            if (e !== -1 && e !== a && e !== b && e !== c && e !== d) n++;
+            return n <= limit;
         }
 
         function _restoreFlatRegions(d, orig) {
             var w = d.width, h = d.height, data = d.data, rowBytes = w * 4;
-            function key(o) {
-                return ((orig[o] << 16) | (orig[o + 1] << 8) | orig[o + 2]) >>> 0;
-            }
             for (var y = 0; y < h; y++) {
                 var rowOff = y * rowBytes;
                 for (var x = 0; x < w; x++) {
-                    var i = rowOff + x * 4;
-                    var cols = [key(i)];
-                    if (x > 0) cols.push(key(i - 4));
-                    if (x < w - 1) cols.push(key(i + 4));
-                    if (y > 0) cols.push(key(i - rowBytes));
-                    if (y < h - 1) cols.push(key(i + rowBytes));
-                    if (!_distinctAtMost(cols, MAX_FLAT_COLORS)) continue;
+                    var i = rowOff + x * 4, j;
+                    var kc = ((orig[i] << 16) | (orig[i + 1] << 8) | orig[i + 2]) >>> 0;
+                    var kl = -1, kr = -1, ku = -1, kd = -1;
+                    if (x > 0) { j = i - 4; kl = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (x < w - 1) { j = i + 4; kr = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (y > 0) { j = i - rowBytes; ku = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (y < h - 1) { j = i + rowBytes; kd = ((orig[j] << 16) | (orig[j + 1] << 8) | orig[j + 2]) >>> 0; }
+                    if (!_flatWithin(kc, kl, kr, ku, kd, MAX_FLAT_COLORS)) continue;
                     data[i] = orig[i]; data[i+1] = orig[i+1]; data[i+2] = orig[i+2]; data[i+3] = orig[i+3];
                 }
             }
@@ -7504,28 +7577,25 @@
         function _restoreFlatRegionsExpanded(d, offsetX, offsetY, expanded, exOffsetX, exOffsetY) {
             var w = d.width, h = d.height, data = d.data;
             var exW = expanded.width, exH = expanded.height, exData = expanded.data;
-            function rawAt(absX, absY) {
-                var lx = absX - exOffsetX, ly = absY - exOffsetY;
-                if (lx < 0 || ly < 0 || lx >= exW || ly >= exH) return null;
-                var i = (ly * exW + lx) * 4;
-                return [exData[i], exData[i+1], exData[i+2], exData[i+3]];
-            }
             for (var ly = 0; ly < h; ly++) {
+                var ey = offsetY + ly - exOffsetY;
                 for (var lx = 0; lx < w; lx++) {
-                    var absX = offsetX + lx, absY = offsetY + ly;
-                    var center = rawAt(absX, absY);
-                    if (!center) continue;
+                    var ex = offsetX + lx - exOffsetX;
+
+                    if (ex < 0 || ey < 0 || ex >= exW || ey >= exH) continue;
+                    var ci = (ey * exW + ex) * 4, j;
 
 
 
-                    var cols = [rgbKey(center)];
-                    var nb = rawAt(absX - 1, absY); if (nb) cols.push(rgbKey(nb));
-                    nb = rawAt(absX + 1, absY); if (nb) cols.push(rgbKey(nb));
-                    nb = rawAt(absX, absY - 1); if (nb) cols.push(rgbKey(nb));
-                    nb = rawAt(absX, absY + 1); if (nb) cols.push(rgbKey(nb));
-                    if (_distinctAtMost(cols, MAX_FLAT_COLORS)) {
+                    var kc = ((exData[ci] << 16) | (exData[ci + 1] << 8) | exData[ci + 2]) >>> 0;
+                    var kl = -1, kr = -1, ku = -1, kd = -1;
+                    if (ex > 0) { j = ci - 4; kl = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (ex + 1 < exW) { j = ci + 4; kr = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (ey > 0) { j = ci - exW * 4; ku = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (ey + 1 < exH) { j = ci + exW * 4; kd = ((exData[j] << 16) | (exData[j + 1] << 8) | exData[j + 2]) >>> 0; }
+                    if (_flatWithin(kc, kl, kr, ku, kd, MAX_FLAT_COLORS)) {
                         var i = (ly * w + lx) * 4;
-                        data[i] = center[0]; data[i+1] = center[1]; data[i+2] = center[2]; data[i+3] = center[3];
+                        data[i] = exData[ci]; data[i+1] = exData[ci+1]; data[i+2] = exData[ci+2]; data[i+3] = exData[ci+3];
                     }
                 }
             }
@@ -7540,11 +7610,17 @@
         var _canvasNoiseMode = null; // null | 'wasm' | 'js'
         function _jsCanvasNoise(d, offsetX, offsetY) {
             var w = d.width, h = d.height;
+
+
+
+
+
+            var seed = _getSessionSeed();
             for (var ly = 0; ly < h; ly++) {
                 for (var lx = 0; lx < w; lx++) {
                     var absX = offsetX + lx, absY = offsetY + ly;
                     var i = (ly * w + lx) * 4;
-                    var hh = _hashPixelPosition(absX, absY, _getSessionSeed());
+                    var hh = _hashPixelPosition(absX, absY, seed);
                     d.data[i]   = Math.max(0, Math.min(255, d.data[i]   + ((hh & 3) - 1)));
                     d.data[i+1] = Math.max(0, Math.min(255, d.data[i+1] + ((hh >>> 4 & 3) - 1)));
                     d.data[i+2] = Math.max(0, Math.min(255, d.data[i+2] + ((hh >>> 8 & 3) - 1)));
@@ -8063,8 +8139,10 @@
 
 
 
+            var _sharedScan = false;
             try {
                 if (MW && MW.iframeHooks && typeof MW.iframeHooks.push === 'function') {
+                    _sharedScan = true;
                     MW.iframeHooks.push(function (el) {
                         if (!_isScriptlessSandbox(el)) return;
                         try {
@@ -8075,8 +8153,16 @@
                 }
             } catch (eIns) {}
             _scanFrames();
+
+
+
+
+
+
+
+
             try {
-                if (typeof MutationObserver !== 'undefined') {
+                if (!_sharedScan && typeof MutationObserver !== 'undefined') {
                     var mo = new MutationObserver(function() { _scanFrames(); });
                     mo.observe(document.documentElement, { childList: true, subtree: true });
                 }
