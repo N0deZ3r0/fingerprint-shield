@@ -995,8 +995,8 @@ function render(profile, page, host, sdHalves) {
     ['', 'in the page', 'clean (this tab)', ''], body));
   out.push('<p class="note">The clean column is this page\'s own realm: extension pages are ' +
     'not matched by <code>*://*/*</code>, so the content scripts never ran here. ' +
-    '<code>__t0</code> and <code>__p0</code> are ours and non-enumerable; they cancel in the ' +
-    'iframe diff CreepJS actually performs, which is why they are shown rather than failed.</p>');
+    'The status set is ours, and it is no longer a name on the window at all: a listener ' +
+    'for a fixed event type hands it out, so a name diff has nothing here to find.</p>');
 
   $('out').innerHTML = out.join('');
   const v = $('verdict');

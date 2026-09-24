@@ -4122,7 +4122,11 @@
                     // later. The site's already-installed worker is unregistered by that
                     // same file: refusing new registrations would leave the old one running.
                     var _swBlockedHere = (function () {
-                        try { if (window.__s0) return true; } catch (eS) {}
+                        try {
+                            var _se = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+                            window.dispatchEvent(_se);
+                            if (_se.detail && _se.detail.v && _se.detail.v.s) return true;
+                        } catch (eS) {}
                         try { var p = _prof(); return !!(p && p.swBlocked); } catch (eS2) { return false; }
                     })();
                     var _isFpSw = _swBlockedHere ||

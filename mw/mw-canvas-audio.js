@@ -21,23 +21,52 @@
     // every protection that was running, for free, without probing anything.
     //
     // Its only readers are popup.js checkProtectionsOnce and the afp-*-console-check
-    // files. That popup probe ALREADY runs through chrome.scripting with world: MAIN and
-    // ALREADY reads the non-enumerable window.__t0 in the same call, so a
-    // non-enumerable window property reaches exactly the same reader and nobody else.
-    // Same shape and the same reason as __w0 / __p0 — see [FIX clientCode-w0-enumerable].
-    function _statusMark(key) {
+    // files, and every one of them runs with world: MAIN, so a channel the page could in
+    // principle reach is unavoidable. What matters is that it is not a NAME the page can
+    // test for — see the long note at _status below.
+    // [FIX the-status-object-was-a-name-a-page-could-test-for] The status set used to be
+    // window.__t0, a non-enumerable own property. Non-enumerable answers CreepJS's
+    // getClientCode, and its getClientLitter diff cancels the name because our content
+    // scripts run in the probe's iframe too — but neither is the cheap test.
+    // `'__t0' in window` is one line, needs no baseline and no knowledge of this build,
+    // and a clean Chrome answers false to it on every origin.
+    //
+    // The note that stood here argued that HIDING the property is worse than leaving it,
+    // and that is still right: a symbol key shows up in getOwnPropertySymbols where a
+    // clean window has none at all, and Symbol.keyFor hands the name back; hiding a
+    // string key from enumeration alone makes reachable, listed and `in` disagree, which
+    // no real name does. What it never considered is not having a property.
+    //
+    // Six scripts write this object and none of them share a closure — profile-injector.js
+    // and five bundle modules — which is the only reason it was ever on window. A
+    // synchronous CustomEvent carries it instead: the first script to ask finds no
+    // responder, keeps the object in ITS closure and registers a listener; every later
+    // one gets that same object back through the event's detail. dispatchEvent is
+    // synchronous, so detail is filled by the time it returns. Own window properties
+    // added: none. The listener answers only if nothing has answered yet, so if a second
+    // owner ever appears the FIRST one keeps winning rather than the state splitting.
+    // CustomEvent is captured at document_start, before the page's first script, so a
+    // page that replaces it later cannot break the channel or observe it. A page can
+    // still reach the object, but only by knowing the event type, and nothing lists
+    // listeners — getEventListeners is a DevTools helper, not a page one.
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
         try {
-            var st = window.__t0;
-            if (!st) {
-                st = {};
-                try {
-                    Object.defineProperty(window, '__t0', {
-                        value: st, writable: true, configurable: true, enumerable: false
-                    });
-                } catch (eD) { window.__t0 = st; }
-            }
-            st[key] = true;
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
         } catch (e1) {}
+        return st;
+    }
+    function _statusMark(key) {
+        try { _status()[key] = true; } catch (e1) {}
     }
     // [FIX stealth-first-load-noised-the-canvas] Stealth turns the canvas and fonts
     // modules off, but the mode is unknown while this file installs its patches: it lives
@@ -872,7 +901,14 @@
                     // for instead of one. It is a FIELD of __t0 now — see the long note at
                     // its definition in mw-core.js for why hiding either name was measured
                     // as worse than owning one fewer.
-                    try { if (win.__t0 && win.__t0.p) return; } catch (eP0) {}
+                    // Read-only across the realm boundary: the event is built in the
+                    // CHILD's realm and dispatched there, so an unpatched child simply has
+                    // no listener and answers nothing. The parent never installs one.
+                    try {
+                        var _pe = new win.CustomEvent(_ST_EV, { detail: {} });
+                        win.dispatchEvent(_pe);
+                        if (_pe.detail && _pe.detail.v && _pe.detail.v.p) return;
+                    } catch (eP0) {}
                     try { if (win.__AFP_MW__) return; } catch (eMw) {}
                     var HCEP = win.HTMLCanvasElement && win.HTMLCanvasElement.prototype;
                     var C2DP = win.CanvasRenderingContext2D && win.CanvasRenderingContext2D.prototype;

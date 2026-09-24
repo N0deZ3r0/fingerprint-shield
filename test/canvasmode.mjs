@@ -65,13 +65,13 @@ window.__probe = (async function () {
   var waited = 0;
   if (${mode === 'wasm' ? 'true' : 'false'}) {
     for (var i = 0; i < 300; i++) {
-      try { if (window.__t0 && window.__t0.wasm) break; } catch (e) {}
+      try { var _s = (function(){try{var _e=new window.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});window.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})(); if (_s && _s.wasm) break; } catch (e) {}
       await wait(20); waited += 20;
     }
   }
   var hash = (function () { ${DRAW} })();
   var got = 'unknown';
-  try { got = (window.__t0 && window.__t0.wasm) ? 'wasm-available' : 'wasm-absent'; } catch (e) {}
+  try { var _s2 = (function(){try{var _e=new window.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});window.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})(); got = (_s2 && _s2.wasm) ? 'wasm-available' : 'wasm-absent'; } catch (e) {}
   return { hash: hash, waited: waited, wasm: got };
 })();
 <\/script></body></html>`;

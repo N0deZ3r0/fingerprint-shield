@@ -122,12 +122,16 @@
       Chrome charges the console line to the innermost script frame &mdash; our wrapper.
       Same values and the same getError() as a clean browser; silencing it would cost the
       error flag, which a script CAN read.</li>
-    <li><b>Two marker names are fixed.</b> <code>'__t0' in window</code> answers yes for us
-      and no for a clean browser, in the top document and in frames, and
-      <code>__AFP_PATCH_URL</code> is the worker&rsquo;s equivalent. Non-enumerable, so a diff
-      against a fresh iframe does not show them &mdash; but a name anyone can guess once needs
-      no diff. Deriving them per site is blocked by the markers being set before the seed
-      exists and by the in-browser checks that read them.</li>
+    <li><b>The worker marker is fixed, and the window channel is a constant.</b>
+      <code>__AFP_PATCH_URL</code> is a global of the worker scope: a page cannot read it
+      directly, but a worker the page creates can, and it answers for this build where a
+      clean browser has nothing. The window side carries no name at all any more &mdash; the
+      status set was <code>'__t0' in window</code>, one line needing no baseline, and a
+      listener for a fixed event type hands it out instead, so an own-name diff against a
+      clean browser is empty and nothing lists listeners. What is left is that the type is a
+      constant in this extension&rsquo;s source. Deriving it per site is blocked by the
+      channel being needed before the seed exists and by the in-browser checks that read
+      it.</li>
     <li><b>With the timezone module off, the Intl locale is the host&rsquo;s while the worker
       still answers the profile&rsquo;s.</b> <code>navigator.language</code> belongs to the
       navigator module; the window&rsquo;s Intl locale is installed under the timezone flag,
@@ -156,7 +160,7 @@
       stays there because it has to survive navigation &mdash; a previous document&rsquo;s
       verdict for the same route is what stops the proxies installing on a repeat load
       &mdash; and hiding it would mean five more wrapped doors that must agree with each
-      other, to conceal a build whose presence <code>__t0</code> already announces.</li>
+      other, to conceal a build whose worker marker already announces it.</li>
     <li><b>A wrapped property costs more to read than a native one, and they all cost the
       same.</b> By shape this extension is indistinguishable from a patched engine &mdash; 132
       of 149 readings match across a clean Chromium, a patched build claiming the same

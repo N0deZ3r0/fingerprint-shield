@@ -394,9 +394,12 @@ function afpCpuTier(cores, mem) {
 
   // --- status bag ---
   try {
-    // [FIX status-was-a-page-readable-key] window.__t0, not sessionStorage — the old key
-    // was self-describing JSON on an origin where a clean Chrome stores nothing.
-    const st = window.__t0 || {};
+    // [FIX the-status-object-was-a-name-a-page-could-test-for] The set is carried by a
+    // synchronous CustomEvent now, not by window.__t0 and not by sessionStorage: neither
+    // of those can exist without giving a page a name to test for.
+    const _pe = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+    window.dispatchEvent(_pe);
+    const st = (_pe.detail && _pe.detail.v) || {};
     ok('protection status marks', true, JSON.stringify(st));
   } catch (e) {}
 

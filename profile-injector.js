@@ -64,20 +64,32 @@
         { type: 'text/pdf', description: 'Portable Document Format', suffixes: 'pdf' }
     ];
 
+    // The status set is carried by a synchronous CustomEvent, not by an own window
+    // property — see [FIX the-status-object-was-a-name-a-page-could-test-for] in
+    // mw/mw-canvas-audio.js for the whole argument. The first script to ask owns the
+    // object; every later one gets it back through the event's detail.
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
+        try {
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
+        } catch (e1) {}
+        return st;
+    }
     function seedStatusFromProfile(p) {
         try {
             var f = (p && p.features) || {};
             // [FIX status-was-a-page-readable-key] window.__t0, non-enumerable, instead
             // of sessionStorage['v.ui.t'] — see mw/mw-canvas-audio.js _statusMark.
-            var st = window.__t0;
-            if (!st) {
-                st = {};
-                try {
-                    Object.defineProperty(window, '__t0', {
-                        value: st, writable: true, configurable: true, enumerable: false
-                    });
-                } catch (eD) { window.__t0 = st; }
-            }
+            var st = _status();
             // [CLEANUP] 'audio' stood in this list. There is no `audio` feature flag any
             // more — it went with the AudioContext noise (see defaults.js) — so
             // f['audio'] was undefined, which is `!== false`, and st.audio was set to true

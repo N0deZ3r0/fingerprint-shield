@@ -70,11 +70,16 @@
   ok('PROFILE', 'feature flags resolved', !featBad,
     (featOff.length ? 'off: ' + featOff.join(',') : 'all on') + ' — ' + featSource);
 
-  // [FIX status-was-a-page-readable-key] window.__t0, not sessionStorage — the old key
-  // was self-describing JSON on an origin where a clean Chrome stores nothing.
+  // [FIX the-status-object-was-a-name-a-page-could-test-for] The set is carried by a
+  // synchronous CustomEvent now, not by window.__t0 and not by sessionStorage: neither
+  // of those can exist without giving a page a name to test for.
   let status = {};
-  try { status = window.__t0 || {}; } catch (e) {}
-  ok('PROFILE', 'status marks window.__t0', true, JSON.stringify(status));
+  try {
+    const pe = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+    window.dispatchEvent(pe);
+    status = (pe.detail && pe.detail.v) || {};
+  } catch (e) {}
+  ok('PROFILE', 'status marks (event channel)', true, JSON.stringify(status));
 
   // ── Navigator ──────────────────────────────────────────────────
   section('NAVIGATOR');

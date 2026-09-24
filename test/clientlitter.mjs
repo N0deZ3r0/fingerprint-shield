@@ -11,7 +11,7 @@
  *     to escape the other collector (getClientCode reads Object.keys), and this one caught
  *     them anyway: measured on abrahamjuliot.github.io, the list was ["0", "__w0", "__w1"].
  *   - What DOES cancel is anything the iframe has too. Our content scripts run in a blank
- *     iframe, so __p0/__t0/__r0/__s0 subtract out; the WASM pair was injected into the top
+ *     iframe, and the status set is not a window name at all any more; the WASM pair was
  *     frame only, which is exactly why it stood out.
  *
  * "0" is the probe's own iframe, indexed on window while it is still attached — every

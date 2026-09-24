@@ -513,7 +513,11 @@ async function checkProtectionsOnce(tab) {
         // window.__w0/__w1 two lines down, so nothing about this probe had to change
         // except which object it looks at.
         var s = {};
-        try { s = window.__t0 || {}; } catch (e) {}
+        try {
+          var _pe = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+          window.dispatchEvent(_pe);
+          s = (_pe.detail && _pe.detail.v) || {};
+        } catch (e) {}
         return {
           canvas: !!s.canvas, webgl: !!s.webgl,
           tz: !!s.tz, webrtc: !!s.webrtc, battery: !!s.battery,
@@ -1096,13 +1100,13 @@ async function updateWebrtcToggle() {
  * user believes in a substitution that this site has deliberately switched off.
  *
  * THE SOURCE IS THE DECISION, NOT A RE-DERIVATION. `_standDownNow()` publishes its frozen
- * answer on `window.__t0.sd` (that is how child frames inherit it), so the popup reads that
+ * answer on the status set as `sd` (that is how child frames inherit it), so the popup reads
  * one boolean rather than re-reading `v.ui.tt` / `v.ui.wb` and re-implementing the route and
  * timeOrigin matching audit.js does — a second implementation of a rule this fiddly would
  * disagree with the first on some origin, and the popup would be confidently wrong.
  *
  * It rides in the hostname line, amber, for the reason the exit-country warning does: a new
- * row does not fit under Chrome's 600px cap. Only when it is TRUE — an absent `__t0` (a
+ * row does not fit under Chrome's 600px cap. Only when it is TRUE — an absent set (a
  * chrome:// tab, a page our content scripts never reached) says nothing rather than "fine".
  */
 async function showStandDown(host) {
@@ -1111,7 +1115,13 @@ async function showStandDown(host) {
     if (!tab || !tab.id) return;
     const res = await chrome.scripting.executeScript({
       target: { tabId: tab.id }, world: 'MAIN',
-      func: () => { try { return !!(window.__t0 && window.__t0.sd); } catch (e) { return false; } }
+      func: () => {
+        try {
+          const pe = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+          window.dispatchEvent(pe);
+          return !!(pe.detail && pe.detail.v && pe.detail.v.sd);
+        } catch (e) { return false; }
+      }
     });
     if (!(res && res[0] && res[0].result === true)) return;
     // [FIX the-stand-down-note-erased-the-webrtc-one] The answer arrives after

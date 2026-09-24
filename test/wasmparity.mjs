@@ -176,12 +176,26 @@ const loaderBody = (() => {
 
 /** The two host objects the body touches, and nothing else — verified by section 2. */
 class FakeCustomEvent {
-  constructor(type) { this.type = type; }
+  constructor(type, init) { this.type = type; this.detail = init && init.detail; }
 }
-/** A FRESH window per load: background.js:970 short-circuits on window.__t0, so a reused
+// [FIX the-status-object-was-a-name-a-page-could-test-for] The status set is no longer
+// an own property of window; background.js asks for it by dispatching this type and
+// reading what the responder writes into detail. The fake window plays the responder.
+const ST_EV = 'js.runtime.bridge.v2.s';
+/** A FRESH window per load: background.js:970 short-circuits on the status set, so a reused
  *  object would make the second load report `cached` and measure the first one's wrapper. */
-const mkWin = () => ({
-  dispatchEvent(e) { this.__evt = e.type; return true; }
+// `status` is what this window hands back — undefined for a window nothing has marked.
+// The status dispatch is deliberately NOT recorded in __evt: that field exists to catch
+// a stray ui:w, and a probe that every call makes is not one.
+const mkWin = (status) => ({
+  dispatchEvent(e) {
+    if (e.type === ST_EV) {
+      if (status && e.detail) e.detail.v = status;
+      return true;
+    }
+    this.__evt = e.type;
+    return true;
+  }
 });
 /**
  * A THIRD host object, and the only one that is not simply a stand-in: the real
@@ -838,14 +852,13 @@ t.section('12) the fallback contract');
   t.eq(bad.__w0, undefined, 'and leaves window.__w0 unset');
   t.eq(bad.__evt, undefined, 'and dispatches no ui:w');
 
-  // The other early return: background.js:970. __t0.wasm is the status object
+  // The other early return: background.js:970. `wasm` on the status set is the object
   // [FIX wasm-markers-were-client-litter] introduced because mw-canvas-audio TAKES __w0/__w1
   // off window as soon as they land, so their absence stopped meaning "not loaded".
-  const cached = mkWin();
-  cached.__t0 = { wasm: true };
+  const cached = mkWin({ wasm: true });
   const res2 = await newLoader()(cached, FakeCustomEvent, spyWasm)(BYTES, SEED, TZ, LANG);
   t.eq(JSON.stringify(res2), JSON.stringify({ success: true, cached: true }),
-    'a window whose __t0.wasm is already set short-circuits to {success, cached}');
+    'a window whose status set already says wasm short-circuits to {success, cached}');
   t.eq(cached.__w0, undefined, 'and instantiates nothing, so __w0 is left alone');
 }
 

@@ -14,13 +14,30 @@
 // precisely where this runs.
 (function () {
     'use strict';
-    try {
-        Object.defineProperty(window, '__s0', {
-            value: true, writable: true, configurable: true, enumerable: false
-        });
-    } catch (e) {
-        try { window.__s0 = true; } catch (e2) {}
+    // [FIX the-status-object-was-a-name-a-page-could-test-for] This used to be its own
+    // non-enumerable own property of window. Non-enumerable keeps it out of
+    // Object.keys and so out of CreepJS getClientCode, but it does nothing about
+    // `'__r0' in window`, which a clean browser answers false to everywhere and which
+    // needs no baseline at all. The flag is a field of the shared status set now, and
+    // that set is carried by a synchronous CustomEvent rather than by a name — see the
+    // long note in mw/mw-canvas-audio.js. Own window properties added here: none.
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
+        try {
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
+        } catch (e1) {}
+        return st;
     }
+    try { _status().s = true; } catch (e) {}
     try {
         if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
             navigator.serviceWorker.getRegistrations().then(function (regs) {

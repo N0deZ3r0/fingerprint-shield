@@ -126,7 +126,7 @@ ok(ours.__cores !== clean.__cores,
   (ours.__cores === clean.__cores ? ' (IDENTICAL: nothing was tested)' : ''));
 
 // window itself is excluded from the strict comparison: every page adds its own globals and
-// the two realms here are not the same page twice. mw-core's non-enumerable __p0 / __t0 are
+// the two realms here are not the same page twice. The status set is on an event, not a name,
 // documented exemptions in dev-ownprops.html and are invisible to Object.keys.
 let diffs = 0;
 for (const path of [...PATHS, '(new div)']) {

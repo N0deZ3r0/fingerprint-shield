@@ -149,16 +149,17 @@ from the audit page, so they are not renumbered.
 16. **A WebGL warning about an unknown constant names us.** Chrome attributes `INVALID_ENUM`
     to the nearest script frame, which is our wrapper.
 
-17. **The marker names are fixed.** `'__t0' in window` answers yes for this build and no
-    for a clean browser, in the top document and in frames, and `__AFP_PATCH_URL` is the
-    worker’s equivalent. They are non-enumerable, so a name diff against a fresh iframe
-    does not show them — but a constant anyone can guess once needs no diff. Deriving them
-    per site is blocked by the markers being set before the seed exists and by the
-    in-browser checks that read them. There were two names on the window until 2.5.27; the
-    second is a field of the first now. Hiding either was measured as worse than owning one
-    fewer — a clean window has zero own symbols, so a symbol key makes the count anomalous
-    and `Symbol.keyFor` hands the name back, while hiding from enumeration alone makes
-    reachable, listed and `in` disagree, which no browser does for any name.
+17. **The worker marker is fixed, and the window channel is a constant.**
+    `__AFP_PATCH_URL` is a global of the worker scope: a page cannot read it directly, but
+    a worker the page creates can, and it answers for this build where a clean browser has
+    nothing. The window side carries no name at all any more. The status set used to be
+    `'__t0' in window` — one line, no baseline, false in a clean browser on every origin —
+    and a listener for a fixed event type hands it out instead, so an own-name diff against
+    a clean browser is empty and nothing in the platform lists listeners. What is left is
+    that the type is a constant in this extension's source: a detector that reads the
+    source can dispatch it and be handed the same object. Deriving it per site is blocked
+    by what blocked deriving the old names — the channel is needed before the seed exists,
+    and the in-browser checks read it.
 
 18. **The Intl locale and `navigator.language` answer to different switches.** The language
     claim belongs to the navigator module; the window's Intl locale is installed under the

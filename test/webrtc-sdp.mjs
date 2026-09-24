@@ -54,7 +54,7 @@ const PAGE = `<!doctype html><html><body><script>
 window.__run = (async () => {
   const out = { evented: [], sdpCandidates: [], stats: [], err: null };
   try {
-    try { out.marker = !!window.__r0; } catch (e) { out.marker = 'ERR'; }
+    try { var _s = (function(){try{var _e=new window.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});window.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})(); out.marker = !!(_s && _s.r); } catch (e) { out.marker = 'ERR'; }
   const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     pc.createDataChannel('probe');
     pc.onicecandidate = (e) => out.evented.push(e.candidate ? e.candidate.candidate : null);
@@ -151,9 +151,9 @@ async function run({ extension, storage, stealth }) {
       await p.reload({ waitUntil: 'load' });
     }
     const out = await p.evaluate(async () => await window.__run);
-    // The popup counts this page's active modules by reading window.__t0 in the page's own
+    // The popup counts this page's active modules by asking for the status set in its own
     // realm; what it reports has to agree with what the page can actually see.
-    out.statusMark = await p.evaluate(() => { try { return !!(window.__t0 && window.__t0.webrtc); } catch (e) { return null; } });
+    out.statusMark = await p.evaluate(() => { try { var s = (function(){try{var _e=new window.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});window.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})(); return !!(s && s.webrtc); } catch (e) { return null; } });
     out.mode = mode;
     return out;
   } finally {
@@ -257,7 +257,7 @@ try {
   // the SDP read afterwards was not — measured in a real browser, on a real excepted host.
   // rtc-off.js is registered for the excepted hosts and answers at document_start, which
   // is what makes the event agree with the other two.
-  eq(off.marker, true, 'switch OFF: the document_start marker (__r0) is present on an excepted host');
+  eq(off.marker, true, 'switch OFF: the document_start marker is present on an excepted host');
   ok(off.evented.filter((c) => c && c.indexOf(' srflx ') !== -1).length > 0,
     'switch OFF: onicecandidate delivers the srflx candidate too — no half-applied switch');
   eq(v.marker, false, 'switch ON: no marker, so nothing is registered for a protected host');

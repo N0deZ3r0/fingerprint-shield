@@ -115,12 +115,21 @@
   // test/run.mjs does not do.
   //
   // The marker is the signal that still works, and it is the one dev-ownprops.html and
-  // test/framerealm.mjs already use for the same question: mw-core defines a non-enumerable
-  // __p0 on every realm it bootstraps, and mw-cleanup leaves it there on purpose. The three
+  // test/framerealm.mjs already use for the same question. [FIX
+  // the-status-object-was-a-name-a-page-could-test-for] It is no longer a NAME: mw-core
+  // hands the status set out through a listener for a fixed event type, so asking the
+  // realm means dispatching that event rather than testing `'__t0' in W`. The three
   // original signals are kept — a future build that regains one of them should still be
-  // caught here, and by then the marker may be gone (README "Limits" names it as a signature).
+  // caught here.
+  const bootstrapped = (function () {
+    try {
+      const e = new W.CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+      W.dispatchEvent(e);
+      return !!(e.detail && e.detail.v && e.detail.v.p);
+    } catch (x) { return false; }
+  })();
   const baselineDirty =
-    ('__p0' in W) || ('__t0' in W) ||
+    bootstrapped ||
     Object.getOwnPropertyNames(W.navigator).length > 0 ||
     Object.getOwnPropertySymbols(refPlugins).length > 0 ||
     !/\[native code\]/.test(nativeStr(W.PluginArray.prototype.item));

@@ -58,10 +58,11 @@ const PAGE = `<!doctype html><html><head><meta charset=utf-8></head><body>
 function snap(w) {
   var o = {}, T = function (k, fn) { try { o[k] = fn(); } catch (e) { o[k] = 'ERR:' + e.name; } };
   if (!w) return { dead: true };
-  // [FIX two-marker-names-where-one-would-do] The bootstrap flag is a FIELD of __t0 now,
-  // not a global of its own: the window carried two names a page could test for and now
-  // carries one. Read through the new place, so this suite fails if the move regresses.
-  T('p0',    function () { return !!(w.__t0 && w.__t0.p); });
+  // [FIX the-status-object-was-a-name-a-page-could-test-for] The bootstrap flag is a field
+  // of the status set, and that set is no longer a window property at all: it is handed out
+  // by a listener when this exact event type is dispatched into the realm. Read it the way
+  // every other probe does, so this suite fails if the channel regresses to a name.
+  T('p0',    function () { var s = (function(){try{var _e=new w.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});w.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})(); return !!(s && s.p); });
   T('mw',    function () { return !!w.__AFP_MW__; });
   T('cores', function () { return w.navigator.hardwareConcurrency; });
   T('tz',    function () { return w.Intl.DateTimeFormat().resolvedOptions().timeZone; });

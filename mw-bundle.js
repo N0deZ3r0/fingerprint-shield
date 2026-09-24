@@ -67,20 +67,32 @@
         { type: 'text/pdf', description: 'Portable Document Format', suffixes: 'pdf' }
     ];
 
+
+
+
+
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
+        try {
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
+        } catch (e1) {}
+        return st;
+    }
     function seedStatusFromProfile(p) {
         try {
             var f = (p && p.features) || {};
 
 
-            var st = window.__t0;
-            if (!st) {
-                st = {};
-                try {
-                    Object.defineProperty(window, '__t0', {
-                        value: st, writable: true, configurable: true, enumerable: false
-                    });
-                } catch (eD) { window.__t0 = st; }
-            }
+            var st = _status();
 
 
 
@@ -593,6 +605,40 @@
     'use strict';
 
 
+
+
+
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+
+
+
+
+
+
+    function _statusOf(w) {
+        try {
+            var ev = new w.CustomEvent(_ST_EV, { detail: {} });
+            w.dispatchEvent(ev);
+            return (ev.detail && ev.detail.v) || null;
+        } catch (e) { return null; }
+    }
+    function _status() {
+        try {
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
+        } catch (e1) {}
+        return st;
+    }
+
+
     function _bagRef() {
         return {
             getProfile: _prof,
@@ -616,20 +662,9 @@
 
 
 
-            getStatus: function () { try { return window.__t0 || {}; } catch (e) { return {}; } },
+            getStatus: function () { try { return _status(); } catch (e) { return {}; } },
             markStatus: function (key) {
-                try {
-                    var st = window.__t0;
-                    if (!st) {
-                        st = {};
-                        try {
-                            Object.defineProperty(window, '__t0', {
-                                value: st, writable: true, configurable: true, enumerable: false
-                            });
-                        } catch (eD) { window.__t0 = st; }
-                    }
-                    st[key] = true;
-                } catch (e) {}
+                try { _status()[key] = true; } catch (e) {}
             },
             setApi: function () {}, getApi: function () { try { return window.__AFP_MW__ || null; } catch (e) { return null; } },
             setMn: function () {}, getMn: function () { try { var a = window.__AFP_MW__; return (a && a.mn) || null; } catch (e) { return null; } }
@@ -893,20 +928,9 @@
 
 
     try {
-        if (window.__t0 && window.__t0.p) return;
+        if (_status().p) return;
     } catch (eP0) {}
-    try {
-        var _st0p = window.__t0;
-        if (!_st0p) {
-            _st0p = {};
-            try {
-                Object.defineProperty(window, '__t0', {
-                    value: _st0p, writable: true, configurable: true, enumerable: false
-                });
-            } catch (eD0) { window.__t0 = _st0p; }
-        }
-        _st0p.p = true;
-    } catch (eDef) {}
+    try { _status().p = true; } catch (eDef) {}
 
 
 
@@ -1145,18 +1169,16 @@
     }
     try {
         if (window.parent !== window) {
-            var _phi = window.parent.__t0 && window.parent.__t0.hi;
+            var _pst = _statusOf(window.parent);
+            var _phi = _pst && _pst.hi;
             if (_phi && typeof _phi === 'object' && _phi.timeZone) _hostIntl = _phi;
         }
     } catch (eInh) {}
     try {
-        var _st0 = window.__t0;
-        if (_st0 && typeof _st0 === 'object') {
-            Object.defineProperty(_st0, 'hi', {
-                get: function () { return _callerIsOurs() ? _hostIntl : undefined; },
-                configurable: true, enumerable: false
-            });
-        }
+        Object.defineProperty(_status(), 'hi', {
+            get: function () { return _callerIsOurs() ? _hostIntl : undefined; },
+            configurable: true, enumerable: false
+        });
     } catch (ePub) {}
     function _hostResolved() { return _hostIntl; }
 
@@ -2150,12 +2172,12 @@
         return tag === myTag || (scope !== '' && scope === myScope);
     }
     function _sdPublish(v) {
-        try { var st = window.__t0; if (st && typeof st === 'object') st.sd = !!v; } catch (e) {}
+        try { _status().sd = !!v; } catch (e) {}
     }
     function _sdInherited() {
         try {
             if (window.parent === window) return null;
-            var ps = window.parent.__t0;
+            var ps = _statusOf(window.parent);
             if (ps && typeof ps.sd === 'boolean') return ps.sd;
         } catch (e) {}
         return null;
@@ -2846,19 +2868,48 @@
 
 
 
-    function _statusMark(key) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
         try {
-            var st = window.__t0;
-            if (!st) {
-                st = {};
-                try {
-                    Object.defineProperty(window, '__t0', {
-                        value: st, writable: true, configurable: true, enumerable: false
-                    });
-                } catch (eD) { window.__t0 = st; }
-            }
-            st[key] = true;
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
         } catch (e1) {}
+        return st;
+    }
+    function _statusMark(key) {
+        try { _status()[key] = true; } catch (e1) {}
     }
     var _markStatus = (MW && MW.markStatus) ? function (k) { try { MW.markStatus(k); } catch (e) { _statusMark(k); } } : _statusMark;
     var _def = MW.def;
@@ -5027,19 +5078,48 @@
 
 
 
-    function _statusMark(key) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
         try {
-            var st = window.__t0;
-            if (!st) {
-                st = {};
-                try {
-                    Object.defineProperty(window, '__t0', {
-                        value: st, writable: true, configurable: true, enumerable: false
-                    });
-                } catch (eD) { window.__t0 = st; }
-            }
-            st[key] = true;
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
         } catch (e1) {}
+        return st;
+    }
+    function _statusMark(key) {
+        try { _status()[key] = true; } catch (e1) {}
     }
     var _markStatus = (MW && MW.markStatus) ? function (k) { try { MW.markStatus(k); } catch (e) { _statusMark(k); } } : _statusMark;
     var _def = MW.def;
@@ -7265,19 +7345,48 @@
 
 
 
-    function _statusMark(key) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
         try {
-            var st = window.__t0;
-            if (!st) {
-                st = {};
-                try {
-                    Object.defineProperty(window, '__t0', {
-                        value: st, writable: true, configurable: true, enumerable: false
-                    });
-                } catch (eD) { window.__t0 = st; }
-            }
-            st[key] = true;
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
         } catch (e1) {}
+        return st;
+    }
+    function _statusMark(key) {
+        try { _status()[key] = true; } catch (e1) {}
     }
 
 
@@ -8112,7 +8221,14 @@
 
 
 
-                    try { if (win.__t0 && win.__t0.p) return; } catch (eP0) {}
+
+
+
+                    try {
+                        var _pe = new win.CustomEvent(_ST_EV, { detail: {} });
+                        win.dispatchEvent(_pe);
+                        if (_pe.detail && _pe.detail.v && _pe.detail.v.p) return;
+                    } catch (eP0) {}
                     try { if (win.__AFP_MW__) return; } catch (eMw) {}
                     var HCEP = win.HTMLCanvasElement && win.HTMLCanvasElement.prototype;
                     var C2DP = win.CanvasRenderingContext2D && win.CanvasRenderingContext2D.prototype;
@@ -9092,19 +9208,48 @@ if (!_STEALTH)     (function() {
 
 
 
-    function _statusMark(key) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    function _status() {
         try {
-            var st = window.__t0;
-            if (!st) {
-                st = {};
-                try {
-                    Object.defineProperty(window, '__t0', {
-                        value: st, writable: true, configurable: true, enumerable: false
-                    });
-                } catch (eD) { window.__t0 = st; }
-            }
-            st[key] = true;
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
         } catch (e1) {}
+        return st;
+    }
+    function _statusMark(key) {
+        try { _status()[key] = true; } catch (e1) {}
     }
     var _markStatus = (MW && MW.markStatus) ? function (k) { try { MW.markStatus(k); } catch (e) { _statusMark(k); } } : _statusMark;
     var _def = MW.def;
@@ -10088,7 +10233,7 @@ if (!_STEALTH)     (function() {
                     if (v === false) return false;
                     if (v === true) return true;
                 } catch (eOn) {}
-                try { return !window.__r0; } catch (eM) {}
+                try { return !_status().r; } catch (eM) {}
                 return true;
             };
             var _isPrivateIP = function(ip) {
@@ -10400,13 +10545,10 @@ if (!_STEALTH)     (function() {
 
             _markStatus('webrtc');
             try {
-                var _st0 = window.__t0;
-                if (_st0) {
-                    Object.defineProperty(_st0, 'webrtc', {
-                        get: function () { return _rtcOn(); },
-                        configurable: true, enumerable: true
-                    });
-                }
+                Object.defineProperty(_status(), 'webrtc', {
+                    get: function () { return _rtcOn(); },
+                    configurable: true, enumerable: true
+                });
             } catch (eSt) {}
         } catch(_) {}
     })();
@@ -15337,7 +15479,11 @@ if (!_STEALTH)     (function() {
 
 
                     var _swBlockedHere = (function () {
-                        try { if (window.__s0) return true; } catch (eS) {}
+                        try {
+                            var _se = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+                            window.dispatchEvent(_se);
+                            if (_se.detail && _se.detail.v && _se.detail.v.s) return true;
+                        } catch (eS) {}
                         try { var p = _prof(); return !!(p && p.swBlocked); } catch (eS2) { return false; }
                     })();
                     var _isFpSw = _swBlockedHere ||

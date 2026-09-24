@@ -800,12 +800,20 @@ assert(/var _PATCH_MARK = '([^']+)'/.test(workers), 'worker patch marker is a na
       assert(!/(session|local)Storage\.setItem\(\s*'v\.ui\.t'/.test(src),
         `${f} does not write the status set to web storage`);
     }
-    // The replacement is the same shape as __w0/__p0: non-enumerable, no "afp" in the
-    // name, and read by the one consumer that needs it — popup.js, whose probe already
-    // runs in the page realm and already reads window.__w0/__w1 in the same call.
-    assert(/Object\.defineProperty\(window, '__t0'/.test(read('mw/mw-core.js')),
-      'mw-core publishes the status set as a non-enumerable window property');
-    assert(/window\.__t0/.test(read('popup.js')), 'the popup reads it from there');
+    // [FIX the-status-object-was-a-name-a-page-could-test-for] The replacement is not a
+    // property at all. window.__t0 was non-enumerable, which answers CreepJS's
+    // getClientCode and cancels in its getClientLitter diff against a fresh iframe —
+    // but not `'__t0' in window`, one line that needs no baseline and that a clean
+    // Chrome answers false to on every origin. A synchronous CustomEvent carries the
+    // object instead, so the own-name diff against a clean browser is empty. Both
+    // halves are pinned here: the responder must exist, and the name must be gone, or
+    // this quietly becomes a channel nobody installs.
+    const _core = read('mw/mw-core.js').replace(/\/\/[^\n]*/g, '');
+    assert(/addEventListener\(_ST_EV/.test(_core),
+      'mw-core carries the status set on an event listener, not a window property');
+    assert(!/window\.__t0/.test(_core), 'and leaves no __t0 own property behind');
+    assert(/js\.runtime\.bridge\.v2\.s/.test(read('popup.js')),
+      'the popup reads it through the same event type');
     assert(!/sessionStorage/.test(read('popup.js').replace(/\/\/[^\n]*/g, '')),
       'and no longer from sessionStorage');
   }

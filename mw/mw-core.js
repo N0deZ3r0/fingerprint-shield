@@ -2,6 +2,40 @@
 (function () {
     'use strict';
 
+    // The status set is carried by a synchronous CustomEvent, not by an own window
+    // property — see [FIX the-status-object-was-a-name-a-page-could-test-for] in
+    // mw/mw-canvas-audio.js for the whole argument. The first script to ask owns the
+    // object; every later one gets it back through the event's detail.
+    var _ST_EV = 'js.runtime.bridge.v2.s';
+    var _CE0 = window.CustomEvent;
+    // The same channel read across a realm boundary, in either direction: the parent
+    // asking a frame whether the bundle bootstrapped it, a frame asking the parent for
+    // the host zone or the stand-down answer. READ ONLY — the event is built in the OTHER
+    // realm and dispatched there, so a realm with no responder answers nothing and we
+    // never install one on its behalf. A cross-origin parent throws on the first line,
+    // which is the same silence `window.parent.__t0` used to give.
+    function _statusOf(w) {
+        try {
+            var ev = new w.CustomEvent(_ST_EV, { detail: {} });
+            w.dispatchEvent(ev);
+            return (ev.detail && ev.detail.v) || null;
+        } catch (e) { return null; }
+    }
+    function _status() {
+        try {
+            var ev = new _CE0(_ST_EV, { detail: {} });
+            window.dispatchEvent(ev);
+            if (ev.detail && ev.detail.v) return ev.detail.v;
+        } catch (e0) {}
+        var st = {};
+        try {
+            window.addEventListener(_ST_EV, function (e2) {
+                try { if (e2 && e2.detail && !e2.detail.v) e2.detail.v = st; } catch (e3) {}
+            }, true);
+        } catch (e1) {}
+        return st;
+    }
+
     // Bag helpers MUST be first — resolve bag on every call (inject may arrive later)
     function _bagRef() {
         return {
@@ -26,20 +60,9 @@
             // an origin where a clean Chrome has no keys at all, and its only readers
             // (popup.js, the afp-*-console-check files) already read window.__w0/__w1 the
             // same way.
-            getStatus: function () { try { return window.__t0 || {}; } catch (e) { return {}; } },
+            getStatus: function () { try { return _status(); } catch (e) { return {}; } },
             markStatus: function (key) {
-                try {
-                    var st = window.__t0;
-                    if (!st) {
-                        st = {};
-                        try {
-                            Object.defineProperty(window, '__t0', {
-                                value: st, writable: true, configurable: true, enumerable: false
-                            });
-                        } catch (eD) { window.__t0 = st; }
-                    }
-                    st[key] = true;
-                } catch (e) {}
+                try { _status()[key] = true; } catch (e) {}
             },
             setApi: function () {}, getApi: function () { try { return window.__AFP_MW__ || null; } catch (e) { return null; } },
             setMn: function () {}, getMn: function () { try { var a = window.__AFP_MW__; return (a && a.mn) || null; } catch (e) { return null; } }
@@ -303,20 +326,9 @@
     //
     // The parent-side reader is the frame bridge in mw-canvas-audio; it moved with this.
     try {
-        if (window.__t0 && window.__t0.p) return;
+        if (_status().p) return;
     } catch (eP0) {}
-    try {
-        var _st0p = window.__t0;
-        if (!_st0p) {
-            _st0p = {};
-            try {
-                Object.defineProperty(window, '__t0', {
-                    value: _st0p, writable: true, configurable: true, enumerable: false
-                });
-            } catch (eD0) { window.__t0 = _st0p; }
-        }
-        _st0p.p = true;
-    } catch (eDef) {}
+    try { _status().p = true; } catch (eDef) {}
 
     // STEALTH MODE: fewer patches → lower anti_detect / puppeteer_stealth score.
     // Applied per page load (toggle + Apply + reload). Live switch mid-page is not reliable.
@@ -521,8 +533,8 @@
     // frame takes the parent's capture, made in a realm nothing had patched, and every
     // realm publishes its own on __t0 for the frames below it.
     // [FIX the-host-capture-was-readable-on-the-marker] The first version put the capture
-    // on __t0 as a plain property, and __t0 is a KNOWN marker (the audit lists it): the
-    // host's real zone and locale, readable by any page as window.__t0.hi — the one thing
+    // on the status set as a plain property, and that set used to be a KNOWN marker the
+    // audit listed: the host's real zone and locale, readable by any page — the one thing
     // this extension exists to hide, published by the fix for a frame split. So it is a
     // getter that answers only when the CALLER is this bundle, decided from V8's CallSite
     // objects rather than the stack string: prepareStackTrace is set for the duration of
@@ -555,18 +567,16 @@
     }
     try {
         if (window.parent !== window) {
-            var _phi = window.parent.__t0 && window.parent.__t0.hi;
+            var _pst = _statusOf(window.parent);
+            var _phi = _pst && _pst.hi;
             if (_phi && typeof _phi === 'object' && _phi.timeZone) _hostIntl = _phi;
         }
     } catch (eInh) {}
     try {
-        var _st0 = window.__t0;
-        if (_st0 && typeof _st0 === 'object') {
-            Object.defineProperty(_st0, 'hi', {
-                get: function () { return _callerIsOurs() ? _hostIntl : undefined; },
-                configurable: true, enumerable: false
-            });
-        }
+        Object.defineProperty(_status(), 'hi', {
+            get: function () { return _callerIsOurs() ? _hostIntl : undefined; },
+            configurable: true, enumerable: false
+        });
     } catch (ePub) {}
     function _hostResolved() { return _hostIntl; }
 
@@ -1560,12 +1570,12 @@
         return tag === myTag || (scope !== '' && scope === myScope);
     }
     function _sdPublish(v) {
-        try { var st = window.__t0; if (st && typeof st === 'object') st.sd = !!v; } catch (e) {}
+        try { _status().sd = !!v; } catch (e) {}
     }
     function _sdInherited() {
         try {
             if (window.parent === window) return null;
-            var ps = window.parent.__t0;
+            var ps = _statusOf(window.parent);
             if (ps && typeof ps.sd === 'boolean') return ps.sd;
         } catch (e) {}
         return null;

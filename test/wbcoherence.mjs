@@ -341,11 +341,12 @@ try {
     // [FIX the-host-capture-was-readable-on-the-marker] The frame inherited the host's
     // capture (asserted below through its readings), and the page reads nothing of it.
     const leak = await p.evaluate(`(function () {
-      var t = window.__t0, out = { top: 'absent', frame: 'absent' };
+      var t = (function(){try{var _e=new window.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});window.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})(), out = { top: 'absent', frame: 'absent' };
       try { out.top = t && ('hi' in t) ? String(t.hi) : 'absent'; } catch (e) { out.top = 'threw ' + e.name; }
       try {
         var fr = document.createElement('iframe'); fr.style.display = 'none'; document.documentElement.appendChild(fr);
-        var ft = fr.contentWindow.__t0; out.frame = ft && ('hi' in ft) ? String(ft.hi) : 'absent'; fr.remove();
+        var fw = fr.contentWindow;
+        var ft = (function(){try{var _e=new fw.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});fw.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})(); out.frame = ft && ('hi' in ft) ? String(ft.hi) : 'absent'; fr.remove();
       } catch (e2) { out.frame = 'threw ' + e2.name; }
       return out;
     })()`);

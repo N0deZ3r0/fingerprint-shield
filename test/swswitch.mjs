@@ -33,7 +33,8 @@ const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed
 const SW = 'self.addEventListener("install", function () {}); self.addEventListener("message", function (e) { e.source.postMessage("alive"); });';
 const PAGE = `<!doctype html><html><body><script>
 window.__try = async function () {
-  const out = { marker: !!window.__s0 };
+  const _s = (function(){try{var _e=new window.CustomEvent('js.runtime.bridge.v2.s',{detail:{}});window.dispatchEvent(_e);return (_e.detail&&_e.detail.v)||null;}catch(_x){return null;}})();
+  const out = { marker: !!(_s && _s.s) };
   try { out.before = (await navigator.serviceWorker.getRegistrations()).length; } catch (e) { out.before = 'ERR'; }
   try {
     const r = await navigator.serviceWorker.register('/plain-sw.js');

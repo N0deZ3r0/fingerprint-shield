@@ -291,9 +291,11 @@ try {
   const standDown = async (on) => {
     await site.evaluate((v) => {
       try {
-        if (!window.__t0 || typeof window.__t0 !== 'object') window.__t0 = {};
-        window.__t0.sd = v;
-      } catch (e) { /* the marker is non-configurable in some builds */ }
+        // The set has no name on window any more — ask its owner for it and write there.
+        const e0 = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+        window.dispatchEvent(e0);
+        if (e0.detail && e0.detail.v) e0.detail.v.sd = v;
+      } catch (e) { /* no responder in this realm */ }
     }, on);
     await popup.evaluate(async () => { await window.updateWebrtcToggle(); });
     // showStandDown is async and runs after updateWebrtcToggle returns.

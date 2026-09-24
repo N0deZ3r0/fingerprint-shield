@@ -967,7 +967,11 @@ async function loadWasmToMain(tabId) {
             // window as soon as they land, so their absence no longer means "not loaded".
             // The status object is where the answer lives now — and unlike the pair, it
             // exists in a fresh iframe too, so CreepJS's litter diff never sees it.
-            try { if (window.__t0 && window.__t0.wasm) return { success: true, cached: true }; } catch (eC) {}
+            try {
+                const _pe = new CustomEvent('js.runtime.bridge.v2.s', { detail: {} });
+                window.dispatchEvent(_pe);
+                if (_pe.detail && _pe.detail.v && _pe.detail.v.wasm) return { success: true, cached: true };
+            } catch (eC) {}
 
             try {
                 let wasmMemory;
