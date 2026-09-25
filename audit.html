@@ -122,16 +122,16 @@
       Chrome charges the console line to the innermost script frame &mdash; our wrapper.
       Same values and the same getError() as a clean browser; silencing it would cost the
       error flag, which a script CAN read.</li>
-    <li><b>The worker marker is fixed, and the window channel is a constant.</b>
-      <code>__AFP_PATCH_URL</code> is a global of the worker scope: a page cannot read it
-      directly, but a worker the page creates can, and it answers for this build where a
-      clean browser has nothing. The window side carries no name at all any more &mdash; the
-      status set was <code>'__t0' in window</code>, one line needing no baseline, and a
-      listener for a fixed event type hands it out instead, so an own-name diff against a
-      clean browser is empty and nothing lists listeners. What is left is that the type is a
-      constant in this extension&rsquo;s source. Deriving it per site is blocked by the
-      channel being needed before the seed exists and by the in-browser checks that read
-      it.</li>
+    <li><b>The channel is a constant in this extension&rsquo;s source.</b> Nothing this
+      build adds to a window or to a worker scope carries a name any more. The status set
+      was <code>'__t0' in window</code>, one line needing no baseline, and
+      <code>__AFP_PATCH_URL</code> was its equivalent in the worker, readable by any worker
+      the page creates. Both are handed out by listeners for two fixed event types now, so
+      an own-name diff against a clean browser is empty in both scopes and nothing lists
+      listeners. What is left is the types themselves: a detector that reads this source can
+      dispatch them and be handed the same objects &mdash; knowledge of the build rather than
+      one line. Deriving them per site is blocked by the channel being needed before the seed
+      exists and by the in-browser checks that read it.</li>
     <li><b>With the timezone module off, the Intl locale is the host&rsquo;s while the worker
       still answers the profile&rsquo;s.</b> <code>navigator.language</code> belongs to the
       navigator module; the window&rsquo;s Intl locale is installed under the timezone flag,

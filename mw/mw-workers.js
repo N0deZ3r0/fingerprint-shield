@@ -2844,10 +2844,19 @@
                 // [FIX nested-workers-were-never-reached] Last, so a failure here cannot
                 // cost the patches above. The URL is omitted when this very text is what
                 // goes INTO the shared blob (skipPatchUrl) — otherwise _patchBlobUrl would
-                // call back into _buildPatchCode forever. Children set the global
+                // call back into _buildPatchCode forever. Children install the responder
                 // themselves before importScripts, so the blob's own copy needs nothing
                 // baked in and the same text serves every depth.
-                skipPatchUrl ? '' : ('self.__AFP_PATCH_URL=' + JSON.stringify(_patchBlobUrl() || '') + ';'),
+                //
+                // [FIX the-worker-baton-was-a-name-too] This was self.__AFP_PATCH_URL, an own
+                // property of the worker scope that STAYS — _nestShim needs it whenever the
+                // worker builds a child, so it cannot be read and deleted the way
+                // __AFP_CHILD_LOC is. A page cannot read a worker's globals, but a worker the
+                // page creates can, and a clean browser has nothing there. It is a listener
+                // now, for the same reason and in the same shape as the window's status set:
+                // the head and the imported blob are two scripts in one scope with no shared
+                // closure, which is the only thing a global was buying.
+                skipPatchUrl ? '' : ('(function(){var _v=' + ('{u:' + JSON.stringify(_patchBlobUrl() || '') + '}') + ';try{self.addEventListener("js.runtime.bridge.v2.w",function(e){try{if(e&&e.detail&&!e.detail.v)e.detail.v=_v;}catch(_a){}},true);}catch(_b){}})();'),
                 '(' + _nestShim.toString() + ')(_M,_MC,' + _nestShimArgs() + ');',
                 '}catch(e){}})();'
             ].join('');
@@ -3781,11 +3790,18 @@
 
         function _nestShim(_M, _MC, MARK, IMP, QHEAD, QTAIL) {
             try {
+                function _wbag() {
+                    try {
+                        var _e = new CustomEvent('js.runtime.bridge.v2.w', { detail: {} });
+                        self.dispatchEvent(_e);
+                        return (_e.detail && _e.detail.v) || null;
+                    } catch (_x) { return null; }
+                }
                 function wrapCtor(Ctor, nm) {
                     if (typeof Ctor !== 'function') return;
                     var inner = function (url, opts) {
                         var patch = null;
-                        try { patch = self.__AFP_PATCH_URL || null; } catch (e0) {}
+                        try { var _b = _wbag(); patch = (_b && _b.u) || null; } catch (e0) {}
                         if (!patch || !url) return Reflect.construct(Ctor, [url, opts], Ctor);
                         var bu = null;
                         try {
@@ -3803,8 +3819,7 @@
                                 if (x.status === 0 || (x.status >= 200 && x.status < 300)) src = x.responseText;
                             } catch (e1) {}
                             if (src && src.indexOf(MARK) !== -1) return Reflect.construct(Ctor, [url, opts], Ctor);
-                            var head = 'self.__AFP_PATCH_URL=' + JSON.stringify(patch) + ';' +
-                                'self.__AFP_CHILD_LOC=' + JSON.stringify(abs) + ';';
+                            var head = '(function(){var _v=' + ('{u:' + JSON.stringify(patch) + ',l:' + JSON.stringify(abs) + '}') + ';try{self.addEventListener("js.runtime.bridge.v2.w",function(e){try{if(e&&e.detail&&!e.detail.v)e.detail.v=_v;}catch(_a){}},true);}catch(_b){}})();';
                             var body;
                             if (opts && opts.type === 'module') {
                                 // import(), never a static import: a static one is hoisted
@@ -3881,11 +3896,18 @@
         function _locShim(abs, _M) {
             try {
                 // A child worker is created from a blob by _nestShim, so the URL baked into
-                // the shared patch blob is the wrong one for it. The child's preamble sets
-                // this global, and it wins here; read once and removed so a grandchild
-                // cannot inherit its parent's location.
+                // the shared patch blob is the wrong one for it. The child's preamble carries
+                // its own location in the same bag the patch URL travels in, and it wins
+                // here; cleared once read so a grandchild cannot inherit its parent's.
                 try {
-                    if (self.__AFP_CHILD_LOC) { abs = self.__AFP_CHILD_LOC; delete self.__AFP_CHILD_LOC; }
+                    var _lb = (function () {
+                        try {
+                            var _e = new CustomEvent('js.runtime.bridge.v2.w', { detail: {} });
+                            self.dispatchEvent(_e);
+                            return (_e.detail && _e.detail.v) || null;
+                        } catch (_x) { return null; }
+                    })();
+                    if (_lb && _lb.l) { abs = _lb.l; _lb.l = null; }
                 } catch (eCL) {}
                 if (typeof WorkerLocation === 'undefined' || !WorkerLocation.prototype) return;
                 var u = new URL(abs);

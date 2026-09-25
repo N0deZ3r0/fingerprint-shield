@@ -14204,7 +14204,16 @@ if (!_STEALTH)     (function() {
 
 
 
-                skipPatchUrl ? '' : ('self.__AFP_PATCH_URL=' + JSON.stringify(_patchBlobUrl() || '') + ';'),
+
+
+
+
+
+
+
+
+
+                skipPatchUrl ? '' : ('(function(){var _v=' + ('{u:' + JSON.stringify(_patchBlobUrl() || '') + '}') + ';try{self.addEventListener("js.runtime.bridge.v2.w",function(e){try{if(e&&e.detail&&!e.detail.v)e.detail.v=_v;}catch(_a){}},true);}catch(_b){}})();'),
                 '(' + _nestShim.toString() + ')(_M,_MC,' + _nestShimArgs() + ');',
                 '}catch(e){}})();'
             ].join('');
@@ -15138,11 +15147,18 @@ if (!_STEALTH)     (function() {
 
         function _nestShim(_M, _MC, MARK, IMP, QHEAD, QTAIL) {
             try {
+                function _wbag() {
+                    try {
+                        var _e = new CustomEvent('js.runtime.bridge.v2.w', { detail: {} });
+                        self.dispatchEvent(_e);
+                        return (_e.detail && _e.detail.v) || null;
+                    } catch (_x) { return null; }
+                }
                 function wrapCtor(Ctor, nm) {
                     if (typeof Ctor !== 'function') return;
                     var inner = function (url, opts) {
                         var patch = null;
-                        try { patch = self.__AFP_PATCH_URL || null; } catch (e0) {}
+                        try { var _b = _wbag(); patch = (_b && _b.u) || null; } catch (e0) {}
                         if (!patch || !url) return Reflect.construct(Ctor, [url, opts], Ctor);
                         var bu = null;
                         try {
@@ -15160,8 +15176,7 @@ if (!_STEALTH)     (function() {
                                 if (x.status === 0 || (x.status >= 200 && x.status < 300)) src = x.responseText;
                             } catch (e1) {}
                             if (src && src.indexOf(MARK) !== -1) return Reflect.construct(Ctor, [url, opts], Ctor);
-                            var head = 'self.__AFP_PATCH_URL=' + JSON.stringify(patch) + ';' +
-                                'self.__AFP_CHILD_LOC=' + JSON.stringify(abs) + ';';
+                            var head = '(function(){var _v=' + ('{u:' + JSON.stringify(patch) + ',l:' + JSON.stringify(abs) + '}') + ';try{self.addEventListener("js.runtime.bridge.v2.w",function(e){try{if(e&&e.detail&&!e.detail.v)e.detail.v=_v;}catch(_a){}},true);}catch(_b){}})();';
                             var body;
                             if (opts && opts.type === 'module') {
 
@@ -15242,7 +15257,14 @@ if (!_STEALTH)     (function() {
 
 
                 try {
-                    if (self.__AFP_CHILD_LOC) { abs = self.__AFP_CHILD_LOC; delete self.__AFP_CHILD_LOC; }
+                    var _lb = (function () {
+                        try {
+                            var _e = new CustomEvent('js.runtime.bridge.v2.w', { detail: {} });
+                            self.dispatchEvent(_e);
+                            return (_e.detail && _e.detail.v) || null;
+                        } catch (_x) { return null; }
+                    })();
+                    if (_lb && _lb.l) { abs = _lb.l; _lb.l = null; }
                 } catch (eCL) {}
                 if (typeof WorkerLocation === 'undefined' || !WorkerLocation.prototype) return;
                 var u = new URL(abs);

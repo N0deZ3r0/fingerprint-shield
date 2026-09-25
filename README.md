@@ -149,17 +149,18 @@ from the audit page, so they are not renumbered.
 16. **A WebGL warning about an unknown constant names us.** Chrome attributes `INVALID_ENUM`
     to the nearest script frame, which is our wrapper.
 
-17. **The worker marker is fixed, and the window channel is a constant.**
-    `__AFP_PATCH_URL` is a global of the worker scope: a page cannot read it directly, but
-    a worker the page creates can, and it answers for this build where a clean browser has
-    nothing. The window side carries no name at all any more. The status set used to be
+17. **The channel is a constant in this extension's source.** Nothing this build adds to a
+    window or to a worker scope carries a name any more. The status set was
     `'__t0' in window` — one line, no baseline, false in a clean browser on every origin —
-    and a listener for a fixed event type hands it out instead, so an own-name diff against
-    a clean browser is empty and nothing in the platform lists listeners. What is left is
-    that the type is a constant in this extension's source: a detector that reads the
-    source can dispatch it and be handed the same object. Deriving it per site is blocked
-    by what blocked deriving the old names — the channel is needed before the seed exists,
-    and the in-browser checks read it.
+    and `__AFP_PATCH_URL` was its equivalent in the worker, readable by any worker the page
+    creates. Both, and the WebRTC and Service Worker flags with them, are handed out by
+    listeners for two fixed event types now, so an own-name diff against a clean browser is
+    empty in both scopes and nothing in the platform lists listeners. What is left is the
+    types themselves: a detector that reads this source can dispatch them and be handed the
+    same objects. That is knowledge of the build rather than one line — a different class,
+    but not nothing. Deriving them per site is blocked by what blocked deriving the names:
+    the channel is needed before the seed exists, and the in-browser checks read it without
+    ever being given the master seed.
 
 18. **The Intl locale and `navigator.language` answer to different switches.** The language
     claim belongs to the navigator module; the window's Intl locale is installed under the

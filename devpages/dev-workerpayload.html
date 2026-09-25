@@ -78,10 +78,11 @@
   // _patchBlobUrl creates a SHARED copy of the patch text that nested workers importScripts
   // — that one has no worker source by design, and it is created first, which used to make
   // this page report the payload as "replaced, not appended".
-  // They are told apart by the ASSIGNED patch URL, not by the bare name: _nestShim builds
-  // the same string for its children, so its own source contains "self.__AFP_PATCH_URL="
-  // in BOTH blobs. Only the real assignment is followed by a quoted blob: URL.
-  const ASSIGNED = /self\.__AFP_PATCH_URL="blob:/;
+  // They are told apart by the ASSIGNED patch URL, not by the bare shape: _nestShim builds
+  // the same head for its children, so its own source contains the responder template in
+  // BOTH blobs. Only the real one has the URL already substituted into the literal — in
+  // _nestShim's source that position is a JSON.stringify call, not a quoted blob: URL.
+  const ASSIGNED = /var _v=\{u:"blob:/;
   let payload = null, shared = null;
   for (const c of CAPTURED) {
     const t = await c.blob.text();

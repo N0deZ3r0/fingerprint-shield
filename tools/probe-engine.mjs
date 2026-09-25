@@ -129,7 +129,11 @@ const READ = `(function () {
   // And the other half a walk cannot reach: a property that exists but is not LISTED. Direct
   // access answers even when every enumeration door has been wrapped, so the names this
   // build is known to use are asked for by hand rather than looked up.
-  ['__t0', '__p0', '__w0', '__w1', '__r0', '__s0', '__AFP_MW__', '__AFP_PATCH_URL'].forEach(function (n) {
+  // [FIX the-status-object-was-a-name-a-page-could-test-for] and
+  // [FIX the-worker-baton-was-a-name-too] left only the two transients here: everything
+  // else moved onto listeners for a fixed event type and adds no own name to any scope.
+  // The list is kept so a build that brings one back is still printed.
+  ['__t0', '__p0', '__w0', '__w1', '__r0', '__s0', '__AFP_MW__', '__AFP_PATCH_URL', '__AFP_CHILD_LOC'].forEach(function (n) {
     var present = 'no';
     try { present = (window[n] !== undefined) ? 'yes' : 'no'; } catch (e) { present = 'threw'; }
     var listed = 'no';
