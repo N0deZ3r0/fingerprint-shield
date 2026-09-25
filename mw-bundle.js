@@ -9495,99 +9495,6 @@ if (!_STEALTH)     (function() {
             }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-            var _moPending = (typeof Set === 'function') ? new Set() : null;
-            var _moClearQueued = false;
-            function _noteOurWrite(el) {
-                if (!_moPending) return;
-                try {
-                    _moPending.add(el);
-                    if (!_moClearQueued && typeof Promise === 'function') {
-                        _moClearQueued = true;
-                        Promise.resolve().then(function () {
-                            _moClearQueued = false;
-                            try { _moPending.clear(); } catch (eC) {}
-                        });
-                    }
-                } catch (e) {}
-            }
-            function _keepRecord(r) {
-                try {
-                    if (!_moPending || !r || r.type !== 'attributes') return true;
-                    if (r.attributeName !== 'style') return true;
-                    return !_moPending.has(r.target);
-                } catch (e) { return true; }
-            }
-            function _filterRecords(list) {
-                var keep = [];
-                try {
-                    for (var i = 0; i < list.length; i++) if (_keepRecord(list[i])) keep.push(list[i]);
-                } catch (e) { return list; }
-                return keep;
-            }
-            try {
-                var _OrigMO = window.MutationObserver;
-                if (typeof _OrigMO === 'function' && _OrigMO.prototype && typeof Reflect !== 'undefined') {
-                    var _MO = _mnCtor(function MutationObserver(callback) {
-                        var cb = callback;
-                        if (typeof cb === 'function') {
-                            var inner = cb;
-                            cb = function (records, observer) {
-                                var keep = _filterRecords(records);
-
-
-                                if (!keep.length) return;
-                                return inner.call(this, keep, observer);
-                            };
-                        }
-                        return Reflect.construct(_OrigMO, [cb], new.target || _MO);
-                    }, 'MutationObserver', _OrigMO.length);
-                    _MO.prototype = _OrigMO.prototype;
-                    try {
-                        Object.defineProperty(_OrigMO.prototype, 'constructor',
-                            { value: _MO, writable: true, configurable: true });
-                    } catch (eMC) {}
-                    var _origTake = _OrigMO.prototype.takeRecords;
-                    if (typeof _origTake === 'function') {
-                        _OrigMO.prototype.takeRecords = _mn(function takeRecords() {
-                            return _filterRecords(_origTake.call(this));
-                        });
-                    }
-                    window.MutationObserver = _MO;
-                }
-            } catch (eMO) {}
-
-
             var _fontMeasuring = false;
 
 
@@ -9608,7 +9515,6 @@ if (!_STEALTH)     (function() {
                 var prio = '';
                 try { prio = st.getPropertyPriority('font-family'); } catch (e) {}
                 _fontMeasuring = true;
-                _noteOurWrite(el);
                 try {
                     st.setProperty('font-family', filtered, prio);
                     return { value: nativeRead() };
