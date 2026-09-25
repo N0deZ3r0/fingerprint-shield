@@ -100,6 +100,13 @@ if (withBrowser) SUITES.push(['cost budget (Chromium)', ['test/costceiling.mjs']
 // hung and did not come back). Structural check first: the installed getter must be the same
 // function object after a burst as before it.
 if (withBrowser) SUITES.push(['frame scan cost (Chromium)', ['test/framescan.mjs']]);
+// The other thing a page can watch without knowing anything about this build: whether
+// MEASURING mutates. The fonts module answers "how wide in a font you do not have?" by
+// swapping the element's own inline family, and a clean browser's getBoundingClientRect
+// writes nothing at all — so a MutationObserver on the probe's own style attribute was a
+// generic yes/no. Three checks, because the cheap way to pass the first is to break
+// MutationObserver for everyone.
+if (withBrowser) SUITES.push(['measuring does not mutate (Chromium)', ['test/measurewrite.mjs']]);
 // Each of the 13 popup switches, on and off, against the real extension and a clean browser
 // beside it. dev-perflag.html asks whether a reference is still patched; this asks whether
 // the value is the profile's — a patched reference returning the host's answer passes that
