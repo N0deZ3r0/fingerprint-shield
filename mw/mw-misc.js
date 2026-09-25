@@ -309,6 +309,99 @@ if (!_STEALTH)     (function() {
                 if (!dropped) return null;
                 return kept.length ? kept.join(', ') : 'sans-serif';
             }
+            // [FIX measuring-mutated-the-element-a-page-was-watching] The substitution below
+            // writes the element's own style attribute, takes the reading and writes it back.
+            // A clean browser's getBoundingClientRect / offsetWidth NEVER mutates the DOM, and
+            // a MutationObserver sees attribute writes whatever they are and whoever undoes
+            // them — records are delivered at the microtask checkpoint, so restoring
+            // synchronously hides nothing:
+            //
+            //     el.style.fontFamily = 'Zapfino';
+            //     new MutationObserver(() => hit = true)
+            //       .observe(el, { attributes: true, attributeFilter: ['style'] });
+            //     el.getBoundingClientRect();          // hit === true here, false in a clean browser
+            //
+            // That is a worse tell than any name this build used to leave on window: it asks
+            // a generic question — does measuring mutate? — and needs to know nothing about
+            // this extension. It fires on exactly the elements a font prober makes, which are
+            // the same elements a real page lays out with an inline family; the report that
+            // found it (proxy-store.com, an Inter variable font failing to decode with our
+            // frame on the stack) is a page doing ordinary layout, not a probe.
+            //
+            // Measuring a clone instead is the usual answer and is rejected above for a
+            // reason that still holds: a clone inherits a different context and measures
+            // differently, which trades this tell for a worse one. So the write stays and
+            // the RECORD is withdrawn. Every element written here is remembered until the
+            // next microtask, and a style record naming one of them is dropped before the
+            // page's callback sees it — including through takeRecords(), which a page can
+            // call synchronously in the same task.
+            //
+            // The ordering is what makes this exact rather than hopeful. Queueing a mutation
+            // record also queues the notify-observers microtask, and that happens on our
+            // write; the microtask that forgets the element is queued AFTER it. So the
+            // callback always runs while the element is still remembered, and the next task
+            // starts with nothing remembered. The residual is narrow and stated: a page that
+            // writes style on an element WE measured, in the same task, loses that one record.
+            var _moPending = (typeof Set === 'function') ? new Set() : null;
+            var _moClearQueued = false;
+            function _noteOurWrite(el) {
+                if (!_moPending) return;
+                try {
+                    _moPending.add(el);
+                    if (!_moClearQueued && typeof Promise === 'function') {
+                        _moClearQueued = true;
+                        Promise.resolve().then(function () {
+                            _moClearQueued = false;
+                            try { _moPending.clear(); } catch (eC) {}
+                        });
+                    }
+                } catch (e) {}
+            }
+            function _keepRecord(r) {
+                try {
+                    if (!_moPending || !r || r.type !== 'attributes') return true;
+                    if (r.attributeName !== 'style') return true;
+                    return !_moPending.has(r.target);
+                } catch (e) { return true; }
+            }
+            function _filterRecords(list) {
+                var keep = [];
+                try {
+                    for (var i = 0; i < list.length; i++) if (_keepRecord(list[i])) keep.push(list[i]);
+                } catch (e) { return list; }
+                return keep;
+            }
+            try {
+                var _OrigMO = window.MutationObserver;
+                if (typeof _OrigMO === 'function' && _OrigMO.prototype && typeof Reflect !== 'undefined') {
+                    var _MO = _mnCtor(function MutationObserver(callback) {
+                        var cb = callback;
+                        if (typeof cb === 'function') {
+                            var inner = cb;
+                            cb = function (records, observer) {
+                                var keep = _filterRecords(records);
+                                // A clean browser would not have called back at all, so an
+                                // empty remainder must stay silent rather than arrive empty.
+                                if (!keep.length) return;
+                                return inner.call(this, keep, observer);
+                            };
+                        }
+                        return Reflect.construct(_OrigMO, [cb], new.target || _MO);
+                    }, 'MutationObserver', _OrigMO.length);
+                    _MO.prototype = _OrigMO.prototype;
+                    try {
+                        Object.defineProperty(_OrigMO.prototype, 'constructor',
+                            { value: _MO, writable: true, configurable: true });
+                    } catch (eMC) {}
+                    var _origTake = _OrigMO.prototype.takeRecords;
+                    if (typeof _origTake === 'function') {
+                        _OrigMO.prototype.takeRecords = _mn(function takeRecords() {
+                            return _filterRecords(_origTake.call(this));
+                        });
+                    }
+                    window.MutationObserver = _MO;
+                }
+            } catch (eMO) {}
             // Re-entrancy: the native read below happens while our substitution is in place,
             // and layout code inside it may read another element.
             var _fontMeasuring = false;
@@ -331,6 +424,7 @@ if (!_STEALTH)     (function() {
                 var prio = '';
                 try { prio = st.getPropertyPriority('font-family'); } catch (e) {}
                 _fontMeasuring = true;
+                _noteOurWrite(el);
                 try {
                     st.setProperty('font-family', filtered, prio);
                     return { value: nativeRead() };
