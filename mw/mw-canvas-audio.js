@@ -35,7 +35,7 @@
     // and that is still right: a symbol key shows up in getOwnPropertySymbols where a
     // clean window has none at all, and Symbol.keyFor hands the name back; hiding a
     // string key from enumeration alone makes reachable, listed and `in` disagree, which
-    // no real name does. What it never considered is not having a property.
+    // no real name does. What THAT note never considered is not having a property at all.
     //
     // Six scripts write this object and none of them share a closure — profile-injector.js
     // and five bundle modules — which is the only reason it was ever on window. A
