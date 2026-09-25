@@ -60,16 +60,27 @@ function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
 window.T = async function () {
   var out = {};
 
-  // TELL — an inline family this build would filter, measured through both APIs.
+  // TELL A — the callback path. The queue is left alone, so a record that survived the
+  // filter would arrive at the checkpoint.
   var probe = mk('Zapfino');
   var hits = 0;
   var mo = new MutationObserver(function (recs) { hits += recs.length; });
   mo.observe(probe, { attributes: true, attributeFilter: ['style'] });
   out.width = probe.getBoundingClientRect().width;
   out.offset = probe.offsetWidth;
-  out.taken = mo.takeRecords().length;   // same task, before any checkpoint
   await tick();
   out.onMeasure = hits;
+
+  // TELL B — the synchronous path, on a SECOND element with its own observer. Asking
+  // takeRecords() drains the queue, so doing it to the element above would have made the
+  // check above pass for the wrong reason: the callback cannot fire on records already
+  // taken. Separate element, separate observer, neither zero explains the other.
+  var probe2 = mk('Zapfino');
+  var mo2 = new MutationObserver(function () {});
+  mo2.observe(probe2, { attributes: true, attributeFilter: ['style'] });
+  probe2.getBoundingClientRect();
+  out.taken = mo2.takeRecords().length;
+  mo2.disconnect();
 
   // CONTROL 1 — the page's own write on the very element we measured, a task later.
   hits = 0;
