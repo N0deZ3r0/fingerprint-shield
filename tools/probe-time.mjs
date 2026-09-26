@@ -219,6 +219,23 @@ async function sweep(withExtension) {
       await new Promise((r) => setTimeout(r, 2000));
     }
     const page = await ctx.newPage();
+    // [FIX the-navigation-deadline-was-this-machine-s] Every goto below took Playwright's
+    // 30 s default, which is a bet that the runner is as fast as the machine this sweep was
+    // written on — the same class of bet as a fixed sleep, and test/all.mjs already counts
+    // those. Measured: this suite is 35.6 s on the development machine and 124 s on the CI
+    // Windows runner, 3.5x, while the rest of the browser set is 1.1x to 1.5x slower there.
+    // It is the heaviest navigation sweep in the set — five loads plus a reload, the first of
+    // them against a COLD extension install that is still writing its rules — so it is the
+    // first to reach the ceiling, and it reached it three runs in a row with a timeout rather
+    // than a contradiction. What failed was the deadline, not the sweep: the same code
+    // passes here in 35.6 s, and the change measured against it is worth three percent
+    // (37 s with the MutationObserver filter walking every batch, 36 s without it at all).
+    //
+    // 120 s is the default scaled past what was measured rather than to it, because the
+    // number that matters is the ONE navigation that blew through 30 s while the same one
+    // costs a couple of seconds here. A genuine hang now takes 120 s to report instead of
+    // 30; that is the cost, and it is smaller than a red run that means nothing.
+    page.setDefaultNavigationTimeout(120000);
     if (!COLD) {
       for (let i = 0; i < 4; i++) await page.goto(URL_ + '?warm=' + i, { waitUntil: 'load' });
       await page.reload({ waitUntil: 'load' });
