@@ -365,6 +365,18 @@ if (!_STEALTH)     (function() {
                 } catch (e) { return true; }
             }
             function _filterRecords(list) {
+                // The common case by far: no measurement happened in this task, so there is
+                // nothing of ours to withdraw and the batch is handed back as it came — same
+                // array, no copy, no per-record call. _moPending is cleared every microtask,
+                // and mutation records are delivered at the microtask checkpoint, so a batch
+                // that follows a measurement is the only kind that can hold one of our
+                // writes. Measured on test/timeaxis.mjs, the heaviest navigation sweep in the
+                // set: 37 s with the filter walking every batch, 36 s without the wrapper at
+                // all. Three percent is not what a slow runner failed on, but it is not free
+                // either, and this hands most of it back.
+                try {
+                    if (!_moPending || _moPending.size === 0) return list;
+                } catch (e) { return list; }
                 var keep = [];
                 try {
                     for (var i = 0; i < list.length; i++) if (_keepRecord(list[i])) keep.push(list[i]);

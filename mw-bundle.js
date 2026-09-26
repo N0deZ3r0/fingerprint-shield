@@ -9549,6 +9549,18 @@ if (!_STEALTH)     (function() {
                 } catch (e) { return true; }
             }
             function _filterRecords(list) {
+
+
+
+
+
+
+
+
+
+                try {
+                    if (!_moPending || _moPending.size === 0) return list;
+                } catch (e) { return list; }
                 var keep = [];
                 try {
                     for (var i = 0; i < list.length; i++) if (_keepRecord(list[i])) keep.push(list[i]);
