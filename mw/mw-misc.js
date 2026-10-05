@@ -239,10 +239,29 @@ if (!_STEALTH)     (function() {
             var _sfG = { serif:1,'sans-serif':1,monospace:1,cursive:1,fantasy:1,
                 'system-ui':1,'ui-serif':1,'ui-sans-serif':1,'ui-monospace':1,'ui-rounded':1,
                 math:1,emoji:1,fangsong:1 };
+            // [FIX the-web-font-exemption-reached-only-one-predicate] A family registered
+            // through @font-face is not a claim about this machine — the page shipped the
+            // file — so it must pass, and _isWebFont below is the test for it. That
+            // exemption was written for _filteredFamily and threaded into nothing else,
+            // and this predicate's one caller is the document.fonts.load() wrapper. So
+            // load() judged a site's own webfont blocked and resolved empty. Measured
+            // against a real @font-face with the server counting requests:
+            //
+            //     clean   load('16px SiteFont')           1 face,  1 font request
+            //     ours    load('16px SiteFont')           0 faces, 0 font requests
+            //     ours    load('bold 16px/1.2 SiteFont')  0 faces, 0 font requests
+            //
+            // Zero requests is the part that matters: the font never loads at all, so every
+            // site that waits on load() before revealing text keeps its fallback forever and
+            // an icon font stays boxes — which is the outcome the note above _isWebFont names
+            // as the reason the exemption exists. A page also reads the difference in one
+            // line by loading its OWN family and counting what comes back.
             function isBlocked(fams) {
                 // [FIX host-mode] The machine's fonts are the machine's.
                 if (_hostHwNow()) return false;
-                return fams.length > 0 && fams.some(function(f) { return !_sfG[f] && !sf[f]; });
+                return fams.length > 0 && fams.some(function(f) {
+                    return !_sfG[f] && !sf[f] && !_isWebFont(f);
+                });
             }
 
             // ===== DOM FONT ENUMERATION =====
@@ -307,7 +326,33 @@ if (!_STEALTH)     (function() {
                     else dropped = true;
                 }
                 if (!dropped) return null;
-                return kept.length ? kept.join(', ') : 'sans-serif';
+                // [FIX the-two-sides-fell-back-to-different-generics]
+                // [FIX dom-font-enumeration-contradicted-canvas] made DOM layout filter the
+                // same families canvas measureText filters, so one page would stop reporting a
+                // family as absent on one path and present on the other. It did not make the
+                // two agree on WHAT to measure instead: canvas normalises to
+                // _lastGeneric(fams), which answers 'monospace' when the declaration names no
+                // generic, and this line answered 'sans-serif'. Both substitute, to different
+                // things, and the gap is the same size as the one that fix removed. Measured,
+                // one 64px string, a family this machine HAS but the profile does not allow:
+                //
+                //     clean   canvas 582.531   DOM 582.531   disagreement   0.000 px
+                //     ours    canvas 998.556   DOM 832.563   disagreement 165.994 px
+                //
+                // Aligned on the canvas side rather than the other way round, because that
+                // string is what the width is hashed under and what the canvas suites and dev
+                // pages already measure; moving it would change a fingerprint to fix a
+                // disagreement. When the page DOES name a generic the two already agreed —
+                // kept.join keeps it and _lastGeneric picks the same one — so this changes
+                // only the no-generic case.
+                //
+                // The residual, stated rather than hidden: neither side equals what a clean
+                // browser does with a family it cannot find, which is the user's standard font
+                // (773.250 on this rig against 998.556 for monospace). A canvas font string
+                // must name a family, so "the default" is not expressible here; what is
+                // achievable is that both paths name the same one, and that is what a page can
+                // check.
+                return kept.length ? kept.join(', ') : 'monospace';
             }
             // [FIX measuring-mutated-the-element-a-page-was-watching] The substitution below
             // writes the element's own style attribute, takes the reading and writes it back.
@@ -2034,9 +2079,28 @@ if (!_STEALTH)     (function() {
             // pixel grid is left exactly as the browser reported it; a text-derived rect
             // (254.932602 for one <span>) does not, and is noised as before.
             var _gridCache = new WeakMap();
+            // [FIX the-grid-test-asked-our-own-answer] This read window.devicePixelRatio,
+            // which by this point is this build's own accessor and answers the PROFILE's
+            // claim. The question here is about the engine that laid the rect out, and the
+            // engine snaps to the HOST's ratio, so the two must not be confused. The
+            // devicePixelRatio note in mw-timezone-screen.js records a real host at 1.5
+            // against a profile claiming 1, so the mismatch is not hypothetical, and it is
+            // wrong in both directions: claiming 1 on a 1.25 host judges 10.4 — a value on
+            // the engine's grid, identical on every Blink browser, carrying nothing — as
+            // off-grid and noises it, which is the loss [FIX known-rect-was-noised] exists
+            // to avoid; claiming 2 on a host at 1 passes 10.5 as aligned and leaves real
+            // text entropy untouched. MW.hostDpr is the platform's own getter, handed
+            // forward from the one module that still had it.
+            var _hostDprFn = null;
+            try { _hostDprFn = (MW && typeof MW.hostDpr === 'function') ? MW.hostDpr : null; } catch (eHD) {}
             function _onPixelGrid(v) {
                 var dpr = 1;
-                try { dpr = window.devicePixelRatio || 1; } catch (e) {}
+                try {
+                    // The host's ratio when it is reachable; our own answer is the fallback
+                    // rather than the first choice, so a build where the publisher did not
+                    // run behaves as it did before instead of not at all.
+                    dpr = (_hostDprFn ? _hostDprFn() : (window.devicePixelRatio || 1)) || 1;
+                } catch (e) {}
                 var s = v * dpr;
                 return Math.abs(s - Math.round(s)) < 1e-6;
             }

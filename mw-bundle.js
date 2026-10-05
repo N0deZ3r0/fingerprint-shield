@@ -4600,6 +4600,29 @@
             return (d && d.get) ? _winOracle(d.get) : null;
         })();
         var _natDpr = window.devicePixelRatio;
+
+
+
+
+
+
+
+
+
+
+
+
+        try {
+            if (MW) MW.hostDpr = function () {
+                try {
+                    if (_natDprGet) {
+                        var v = _natDprGet.call(window);
+                        if (typeof v === 'number' && v > 0) return v;
+                    }
+                } catch (e) {}
+                return (typeof _natDpr === 'number' && _natDpr > 0) ? _natDpr : 1;
+            };
+        } catch (eHd) {}
         _def(window, 'devicePixelRatio', function () {
 
 
@@ -8579,6 +8602,53 @@ if (!_STEALTH)     (function() {
 
 
 
+
+
+
+
+
+
+
+
+
+            var _natFontsForEach = null, _natFontSetSize = null;
+            try {
+                _natFontsForEach = document.fonts && document.fonts.forEach;
+                var _dFS = document.fonts &&
+                    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(document.fonts), 'size');
+                _natFontSetSize = (_dFS && _dFS.get) || null;
+            } catch (eFF) {}
+            function _isWebFont(fam) {
+                try {
+                    if (typeof _natFontsForEach !== 'function') return false;
+                    var found = false;
+                    _natFontsForEach.call(document.fonts, function (ff) {
+                        if (found) return;
+                        if (String(ff.family || '').replace(/^['"]|['"]$/g, '').toLowerCase() === fam) found = true;
+                    });
+                    return found;
+                } catch (e) { return false; }
+            }
+
+
+
+            function _fontSetCount() {
+                try { return _natFontSetSize ? Number(_natFontSetSize.call(document.fonts)) : -1; }
+                catch (e) { return -1; }
+            }
+
+
+
+
+
+
+
+
+
+
+
+
+
             var _allowCache = null, _allowRef = null;
             function _allowed(name) {
 
@@ -8643,14 +8713,19 @@ if (!_STEALTH)     (function() {
 
 
 
-            var _fiMap = null, _fiRef = 0, _FI_CAP = 512;
+            var _fiMap = null, _fiRef = 0, _fiFaces = -1, _FI_CAP = 512;
             function _fontInfo(fontStr) {
                 var ref = _hostHwNow() ? 'H' : ((_prof() && _prof().allowedFonts) || 0);
-                if (!_fiMap || _fiRef !== ref) { _fiMap = new Map(); _fiRef = ref; }
+                var faces = _fontSetCount();
+                if (!_fiMap || _fiRef !== ref || _fiFaces !== faces) {
+                    _fiMap = new Map(); _fiRef = ref; _fiFaces = faces;
+                }
                 var hit = _fiMap.get(fontStr);
                 if (hit) return hit;
                 var fams = _families(fontStr);
-                var blocked = fams.some(function (f) { return !_generics[f] && !_allowed(f); });
+                var blocked = fams.some(function (f) {
+                    return !_generics[f] && !_allowed(f) && !_isWebFont(f);
+                });
 
 
 
@@ -9423,10 +9498,29 @@ if (!_STEALTH)     (function() {
             var _sfG = { serif:1,'sans-serif':1,monospace:1,cursive:1,fantasy:1,
                 'system-ui':1,'ui-serif':1,'ui-sans-serif':1,'ui-monospace':1,'ui-rounded':1,
                 math:1,emoji:1,fangsong:1 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             function isBlocked(fams) {
 
                 if (_hostHwNow()) return false;
-                return fams.length > 0 && fams.some(function(f) { return !_sfG[f] && !sf[f]; });
+                return fams.length > 0 && fams.some(function(f) {
+                    return !_sfG[f] && !sf[f] && !_isWebFont(f);
+                });
             }
 
 
@@ -9491,7 +9585,33 @@ if (!_STEALTH)     (function() {
                     else dropped = true;
                 }
                 if (!dropped) return null;
-                return kept.length ? kept.join(', ') : 'sans-serif';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                return kept.length ? kept.join(', ') : 'monospace';
             }
 
 
@@ -11218,9 +11338,28 @@ if (!_STEALTH)     (function() {
 
 
             var _gridCache = new WeakMap();
+
+
+
+
+
+
+
+
+
+
+
+
+            var _hostDprFn = null;
+            try { _hostDprFn = (MW && typeof MW.hostDpr === 'function') ? MW.hostDpr : null; } catch (eHD) {}
             function _onPixelGrid(v) {
                 var dpr = 1;
-                try { dpr = window.devicePixelRatio || 1; } catch (e) {}
+                try {
+
+
+
+                    dpr = (_hostDprFn ? _hostDprFn() : (window.devicePixelRatio || 1)) || 1;
+                } catch (e) {}
                 var s = v * dpr;
                 return Math.abs(s - Math.round(s)) < 1e-6;
             }

@@ -1247,6 +1247,53 @@ if (!_STEALTH)     (function() {
                 'system-ui':1,'ui-serif':1,'ui-sans-serif':1,'ui-monospace':1,'ui-rounded':1,
                 'math':1,'emoji':1,'fangsong':1 };
 
+            // [FIX the-web-font-exemption-reached-only-one-predicate] A family the page
+            // registered through @font-face says nothing about this machine, so collapsing it
+            // to the fallback buys nothing and costs the one thing
+            // [FIX dom-font-enumeration-contradicted-canvas] was written to remove. That fix
+            // made DOM layout agree with canvas for LOCAL families; the exemption for webfonts
+            // was then added to the DOM side only (_isWebFont in mw-misc.js), which split the
+            // two again — the other way round. Measured, one 64px string, a real @font-face:
+            //
+            //     clean   canvas 832.563   DOM 832.563   disagreement 0.000 px
+            //     ours    canvas 998.572   DOM 832.563   disagreement 166.009 px
+            //
+            // and 998.572 is EXACTLY what this build reports for a family nobody has, so the
+            // canvas had substituted the site's own font while getBoundingClientRect kept it.
+            // The note on that earlier fix says what 166 px is worth: "A clean browser never
+            // disagrees with itself like that, and that disagreement is far cheaper to detect
+            // than the font list is to collect." A page measures its OWN family both ways.
+            //
+            // The iteration is captured HERE, at document_start and before mw-misc.js loads:
+            // that file replaces forEach/keys/values/entries on document.fonts with stubs, so
+            // asking the patched set could only ever answer no and the exemption would never
+            // fire — the same trap its own _isWebFont records having fallen into.
+            var _natFontsForEach = null, _natFontSetSize = null;
+            try {
+                _natFontsForEach = document.fonts && document.fonts.forEach;
+                var _dFS = document.fonts &&
+                    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(document.fonts), 'size');
+                _natFontSetSize = (_dFS && _dFS.get) || null;
+            } catch (eFF) {}
+            function _isWebFont(fam) {
+                try {
+                    if (typeof _natFontsForEach !== 'function') return false;
+                    var found = false;
+                    _natFontsForEach.call(document.fonts, function (ff) {
+                        if (found) return;
+                        if (String(ff.family || '').replace(/^['"]|['"]$/g, '').toLowerCase() === fam) found = true;
+                    });
+                    return found;
+                } catch (e) { return false; }
+            }
+            /** How many faces the document has declared, read natively. Part of the cache key
+             *  below: a verdict of "blocked" that held only because the @font-face had not been
+             *  parsed yet must not outlive its arrival. */
+            function _fontSetCount() {
+                try { return _natFontSetSize ? Number(_natFontSetSize.call(document.fonts)) : -1; }
+                catch (e) { return -1; }
+            }
+
             // allowedFonts cache: rebuilt whenever the profile changes.
             // [FIX allowlist-cache-never-hit] The cache key was the allowedFonts ARRAY
             // itself, compared by identity against the previous one. But _prof() parses
@@ -1323,14 +1370,19 @@ if (!_STEALTH)     (function() {
             // the SAME array object and the identity test hits; a new profile parses into a
             // new array and misses. That is the trick _allowed() above already relies on,
             // used here for the same reason.
-            var _fiMap = null, _fiRef = 0, _FI_CAP = 512;
+            var _fiMap = null, _fiRef = 0, _fiFaces = -1, _FI_CAP = 512;
             function _fontInfo(fontStr) {
                 var ref = _hostHwNow() ? 'H' : ((_prof() && _prof().allowedFonts) || 0);
-                if (!_fiMap || _fiRef !== ref) { _fiMap = new Map(); _fiRef = ref; }
+                var faces = _fontSetCount();
+                if (!_fiMap || _fiRef !== ref || _fiFaces !== faces) {
+                    _fiMap = new Map(); _fiRef = ref; _fiFaces = faces;
+                }
                 var hit = _fiMap.get(fontStr);
                 if (hit) return hit;
                 var fams = _families(fontStr);
-                var blocked = fams.some(function (f) { return !_generics[f] && !_allowed(f); });
+                var blocked = fams.some(function (f) {
+                    return !_generics[f] && !_allowed(f) && !_isWebFont(f);
+                });
                 // The normalized string belongs to the same answer — it is what the width is
                 // hashed under ([FIX noise-undid-the-normalisation]) — so it is resolved here
                 // rather than rebuilt at each call site.
