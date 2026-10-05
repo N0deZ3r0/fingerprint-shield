@@ -1772,6 +1772,29 @@
             return (d && d.get) ? _winOracle(d.get) : null;
         })();
         var _natDpr = window.devicePixelRatio;
+        // [FIX the-grid-test-asked-our-own-answer] Published for mw-misc.js, which decides
+        // whether a DOMRect sits on the DEVICE PIXEL GRID and so carries no per-machine
+        // entropy ([FIX known-rect-was-noised]). That question is about the engine that did
+        // the layout, and the engine uses the host's ratio — but by the time mw-misc.js loads,
+        // window.devicePixelRatio is the accessor installed two lines below and answers the
+        // profile's claim instead. Asking our own substituted value about the platform's
+        // behaviour is the error; this is the only place the platform's getter is still
+        // reachable, so the answer is handed forward from here.
+        //
+        // A function and not the captured number: a window dragged to a monitor of a
+        // different density changes the host ratio, and a snapshot taken at document_start
+        // would go stale exactly where the grid moved.
+        try {
+            if (MW) MW.hostDpr = function () {
+                try {
+                    if (_natDprGet) {
+                        var v = _natDprGet.call(window);
+                        if (typeof v === 'number' && v > 0) return v;
+                    }
+                } catch (e) {}
+                return (typeof _natDpr === 'number' && _natDpr > 0) ? _natDpr : 1;
+            };
+        } catch (eHd) {}
         _def(window, 'devicePixelRatio', function () {
             // A foreign receiver goes to the platform first: it throws for {} / document /
             // Window.prototype exactly as clean does. If it ANSWERS, the receiver is a real
