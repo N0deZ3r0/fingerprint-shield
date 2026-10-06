@@ -790,6 +790,7 @@
 
 
 
+
     var _NATIVE_DPR = 0;
     try { _NATIVE_DPR = Number(window.devicePixelRatio) || 0; } catch (eND) {}
 
@@ -10219,6 +10220,8 @@ if (!_STEALTH)     (function() {
                     if (ql.indexOf('high') !== -1) return false;
                     if (ql.indexOf('standard') !== -1) return true;
                 }
+
+
 
 
 

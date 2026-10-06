@@ -149,7 +149,8 @@ from the audit page, so they are not renumbered.
 7. **The screen becomes the host's when the window is wider than the claim.** A screen
    cannot be smaller than the window, and one `100vw` proves the lower bound.
 8. **`@media` and `matchMedia` disagree on several features.** `matchMedia` answers from the
-   profile; the CSS engine answers from the real window, and the CSS engine is out of reach.
+   profile; the CSS engine answers from the real window, and the extension does not reach the
+   CSS engine on the terms it ships under — item 5 prices the door that would.
    The pixel-ratio half is closed since 2.5.27 — a claimed dpr the engine disproves is
    refutable in two lines, so the ratio yields to the host as the screen does above.
 9. **The install window.** For the first seconds after install or reload, dynamic DNR rules

@@ -971,10 +971,12 @@ if (!_STEALTH)     (function() {
                 // agent reads all four through matchMedia as its own probes. Two findings settled
                 // it the other way.
                 //
-                // 1. It did not hide them. @media is answered by the engine, which no extension can
-                //    reach, so three lines of CSS plus getComputedStyle read the real setting
-                //    whatever matchMedia says. Measured with the preference emulated at ENGINE
-                //    level (CDP Emulation.setEmulatedMedia), running dev-mediaparity.html:
+                // 1. It did not hide them. @media is answered by the engine, which this build does
+                //    not reach on the terms it ships under - the very next line uses that door as a
+                //    TEST instrument, and Limits 5 prices it as a shipped one - so three lines of
+                //    CSS plus getComputedStyle read the real setting whatever matchMedia says.
+                //    Measured with the preference emulated at ENGINE level (CDP
+                //    Emulation.setEmulatedMedia), running dev-mediaparity.html:
                 //
                 //      user set reduced-motion   2 disagreements  css=true  matchMedia=false
                 //      Windows High Contrast     2 disagreements

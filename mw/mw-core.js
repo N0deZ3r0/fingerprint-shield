@@ -168,7 +168,8 @@
     // [FIX the-dpr-claim-was-refutable-in-two-lines] The same rule, applied to the ratio.
     //
     // A claimed devicePixelRatio is answered by navigator, by window.devicePixelRatio and by
-    // matchMedia — and NOT by the CSS engine, which no extension can reach (LIMITS item 8).
+    // matchMedia — and NOT by the CSS engine, which this build does not reach on the terms it
+    // ships under (LIMITS item 8; item 5 prices the door that would).
     // So on any machine whose real ratio differs from the profile's, a page proves the lie
     // with two lines:
     //
