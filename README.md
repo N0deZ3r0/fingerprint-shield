@@ -116,7 +116,33 @@ from the audit page, so they are not renumbered.
 4. **The GPU is spoofed at the string level.** `UNMASKED_RENDERER_WEBGL` and
    `GPUAdapterInfo` answer from the profile; anything actually computed on the card does not.
 5. **A site's own service worker reads the real machine.** Measured on one page: 16 cores
-   against 18, `Europe/Berlin` against `Europe/Moscow`.
+   against 18, `Europe/Berlin` against `Europe/Moscow`. No content script runs there, and the
+   registration hook cannot help: a service worker script must be same-origin — the spec
+   refuses a `blob:` one — so the patched-blob route that covers dedicated and module workers
+   has nowhere to put the patch, and MV3 cannot rewrite a response body.
+
+   What WOULD close it, measured on 2026-10-06 against the platform with no extension loaded,
+   one CDP call per tab (`Emulation.setTimezoneOverride` + `setLocaleOverride`), host
+   `Europe/Riga`/`ru` and the claim `Pacific/Kiritimati`/`ja-JP`:
+
+   | realm | zone | offset | locale |
+   |---|---|---|---|
+   | window | Pacific/Kiritimati | −840 | ja-JP |
+   | dedicated worker | Pacific/Kiritimati | −840 | ja-JP |
+   | module worker | Pacific/Kiritimati | −840 | ja-JP |
+   | **the site's own service worker** | **Pacific/Kiritimati** | **−840** | **ja-JP** |
+   | iframe | Pacific/Kiritimati | −840 | ja-JP |
+
+   It survives a navigation, and the zone's display name comes out localised by the engine
+   (`ライン諸島`), which is what `MW.zoneNameLocalized` exists to approximate. One override
+   reaches every realm that fifty-three wrapped ICU doors cannot.
+
+   It is refused, and not on a guess about the cost. `chrome.debugger` paints "started
+   debugging this browser" on every tab, which cannot be suppressed; a target admits one
+   debugging client, so the user opening DevTools either breaks the override or is locked out
+   of their own tools; and the permission is reviewed as high-risk. The same trade is already
+   refused for the display in mw/mw-misc.js. So the gap stays, and the reason it stays is the
+   price of the fix rather than the absence of one.
 6. **On a `trusted-types` origin the machine becomes the host's** — coherently. Creating a
    policy raises a violation that the browser builds in C++ from the real stack and names
    the extension in; JS cannot reach that.

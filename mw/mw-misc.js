@@ -915,7 +915,8 @@ if (!_STEALTH)     (function() {
                 //   rec2020    0 disagreements   2   + (color-gamut: rec2020)
                 //
                 // The force bought NOTHING even where it "worked". @media is answered by the
-                // engine, an extension cannot reach the engine, and three lines of CSS plus
+                // engine, which an extension cannot reach on the terms it ships under — the
+                // mechanism exists and is named two paragraphs down — and three lines of CSS plus
                 // getComputedStyle read the real panel whether or not matchMedia is patched. So
                 // on a wide-gamut display the old branch did not hide the gamut: it published
                 // the gamut through CSS anyway AND added a contradiction, which reads as

@@ -10207,6 +10207,7 @@ if (!_STEALTH)     (function() {
 
 
 
+
                 if (ql.indexOf('video-dynamic-range') !== -1) {
                     if (!_vdrUsable) return undefined;
                     if (ql.indexOf('high') !== -1) return false;
