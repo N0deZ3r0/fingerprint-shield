@@ -1749,7 +1749,7 @@ const list = (src, re) => {
 // what is not part of this repository, so it is read here — self-maintaining, and it keeps
 // every suite under the ratchet rather than only the gated ones.
 {
-  const CEILING = 33;
+  const CEILING = 32;
   const ignored = new Set(read('.gitignore').split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.startsWith('test/') && !l.includes('*'))
