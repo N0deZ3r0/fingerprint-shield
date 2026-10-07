@@ -161,11 +161,23 @@ try {
     });
   });
   await page.reload({ waitUntil: 'load' });
-  await new Promise((r) => setTimeout(r, 1200));
-  const learned = await page.evaluate(() => ({
-    text: document.getElementById('learnedList').textContent,
-    btn: document.getElementById('learnedClearBtn').disabled
-  }));
+  // [FIX the-count-was-read-off-a-placeholder] Wait for the RENDER, not for 1200ms. The
+  // count arrives over sendMessage from the service worker, and options.html ships "—" in
+  // that div until renderLearned replaces it — so a round trip that has not finished reads
+  // as a rendered "—" rather than as "not ready", and the button's own HTML default makes
+  // `disabled: false` agree with it. That is how it failed: 2.5.38 added startup work to the
+  // worker, the reply landed past the sleep on the CI runner, and the assertion reported the
+  // placeholder as the count. Polling for the thing being measured removes the clock from
+  // the question instead of moving it.
+  let learned = null;
+  for (let i = 0; i < 80; i++) {
+    learned = await page.evaluate(() => ({
+      text: document.getElementById('learnedList').textContent,
+      btn: document.getElementById('learnedClearBtn').disabled
+    }));
+    if (learned.text !== '—') break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   console.log('learned      ' + JSON.stringify(learned));
   ok(learned.text.startsWith(M('optLearnedRows').replace('$1', '4').split('$2')[0]),
     `the learned lists are counted on screen (${learned.text})`);

@@ -1102,14 +1102,25 @@ try {
     'restart, page opened before the registration returns: one machine, not a hybrid — ' +
     `cores ${beforeReg.snap.cores} with ${String(beforeReg.snap.gpu).slice(0, 46)}`);
   sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
-  let registered = [];
-  for (let i = 0; i < 60 && !registered.length; i++) {
-    registered = await sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
-    if (!registered.length) await new Promise((r) => setTimeout(r, 100));
+  // [FIX the-boot-entry-was-whichever-registration-came-back-first] By ID, and the wait is
+  // for THAT entry rather than for any entry at all. This read `registered[0]` and waited
+  // for the list to be non-empty, which was the same thing only while afp-boot was the only
+  // registration a fresh profile had. 2.5.38 seeds the blob-refusing list, so afp-noblob is
+  // registered on every profile — and after a restart it can come back first, at which point
+  // all five assertions below read noblob.js's one-file list: four "is registered" failures
+  // and "the assembler is last — got noblob.js". Measured on the CI runner, green on this
+  // machine, which is what an index into an unordered list buys. getRegisteredContentScripts
+  // promises no order, so the index was never the thing being measured.
+  let boot = null;
+  for (let i = 0; i < 60 && !boot; i++) {
+    const regs = await sw.evaluate(() => chrome.scripting.getRegisteredContentScripts());
+    boot = regs.find((r) => r.id === 'afp-boot') || null;
+    if (!boot) await new Promise((r) => setTimeout(r, 100));
   }
+  eq(!!boot, true, 'after restart: the boot registration is back');
   // Named files rather than the whole list: the platformVersion entry depends on the
   // host's Windows family, so a literal would only pass on the machine that wrote it.
-  const js = (registered[0] && registered[0].js) || [];
+  const js = (boot && boot.js) || [];
   eq(js.includes('dyn/dev/pc_gaming.js'), true, 'after restart: the machine file is registered');
   eq(js.includes('dyn/cc/GB.js'), true, 'after restart: the country file is registered');
   eq(js.includes('dyn/mode/stealth.js'), true, 'after restart: the mode file is registered');
