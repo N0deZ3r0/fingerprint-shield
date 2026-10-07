@@ -168,6 +168,7 @@
   "optLearnedRows":     { "message": "$1 записей: $2" },
   "optLearnedEmpty":    { "message": "Пусто — ничего ещё не выучено." },
   "optLearnedCleared":  { "message": "Забыто. Каждый сайт будет выучен заново — ценой одной загрузки страницы." },
+  "optLearnedSeeded":   { "message": "Плюс эти поставляются с расширением, и «Очистить» их не затрагивает: $1" },
   "optRisky":           { "message": "осторожно" },
 
   "whoTagline":         { "message": "Что видят сайты с текущим профилем" },

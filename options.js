@@ -414,6 +414,7 @@ resetBtn.addEventListener('click', resetSafe);
 // grow on their own.
 var learnedList = document.getElementById('learnedList');
 var learnedClearBtn = document.getElementById('learnedClearBtn');
+var learnedSeeded = document.getElementById('learnedSeeded');
 
 // The key names are the extension's, not the reader's: a screen that says afp_csp_ns tells
 // nobody anything, and a screen that says nothing at all is what this fixes.
@@ -426,7 +427,7 @@ var LEARNED_LABEL = {
   afp_csp_mixed: T('optLearnMixed', 'ограничивают на одних маршрутах и не на других')
 };
 
-function renderLearned(lists) {
+function renderLearned(lists, seeded) {
   lists = lists || {};
   var total = 0, rows = [];
   Object.keys(LEARNED_LABEL).forEach(function (k) {
@@ -440,12 +441,28 @@ function renderLearned(lists) {
   learnedList.textContent = total
     ? T('optLearnedRows', total + ' записей: ' + rows.join('; '), total, rows.join('; '))
     : T('optLearnedEmpty', 'Пусто — ничего ещё не выучено.');
+  // [FIX a-seeded-host-stood-down-for-no-visible-reason] Its OWN element, not appended to
+  // the count. A seed is not something the extension learned: Clear does not touch it, a
+  // profile that has learned nothing still has it, and concatenating the two would make
+  // "nothing learned yet" and the count above both false.
+  //
+  // And this one DOES print the host names, two lines under a rule that forbids exactly
+  // that. The rule is about the learned lists, which are a record of where this user has
+  // been; the seeds are a fixed list compiled into the extension, identical for everyone,
+  // and naming them reveals nothing about anybody. Printing a count instead would leave the
+  // reader knowing that something is in effect somewhere, which is the state this fixes.
+  var seed = (seeded || []).join(', ');
+  learnedSeeded.hidden = !seed;
+  if (seed) {
+    learnedSeeded.textContent = T('optLearnedSeeded',
+      'Плюс эти поставляются с расширением, и «Очистить» их не затрагивает: ' + seed, seed);
+  }
 }
 
 function loadLearned() {
   chrome.runtime.sendMessage({ type: 'getCspLearnedLists' }, function (res) {
     if (chrome.runtime.lastError) { learnedList.textContent = T('optStateReadFailed', 'не удалось прочитать состояние'); return; }
-    renderLearned(res && res.lists);
+    renderLearned(res && res.lists, res && res.seeded);
   });
 }
 

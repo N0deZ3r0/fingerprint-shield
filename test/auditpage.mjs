@@ -134,7 +134,9 @@ try {
   // Keys come back sorted through chrome.scripting's result serialisation.
   assert(/^page flags \(sessionStorage\): \{.*"v\.ui\.wb"/m.test(dump), 'and the per-site flags the page can read');
   assert(/^document headers \(service worker\): /m.test(dump), "and the document's own header verdict from the service worker");
-  assert(/^host lists: \{"noblob":("route"|"host"|false)/m.test(dump) && /^per-site switches: \{"cspRewrite":(true|false)/m.test(dump),
+  // "seeded" since [FIX a-seeded-host-stood-down-for-no-visible-reason]: the fourth answer
+  // this field can give, for a host whose stand-down was compiled in rather than learned.
+  assert(/^host lists: \{"noblob":("route"|"host"|"seeded"|false)/m.test(dump) && /^per-site switches: \{"cspRewrite":(true|false)/m.test(dump),
     'and the host lists and per-site switches for this host');
   // [AUDIT routes-of-this-host] The lists are per route, so the snapshot names the routes.
   assert(/^routes of this host: /m.test(dump), 'and which routes of this host are on which list');

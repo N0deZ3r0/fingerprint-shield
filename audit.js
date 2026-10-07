@@ -622,19 +622,28 @@ function buildDump(tabId, profile, page) {
     const host = (() => { try { return new URL(url).hostname; } catch (e) { return ''; } })();
     chrome.storage.local.get(KEYS, (st) => {
       st = st || {};
+      chrome.runtime.sendMessage({ type: 'getCspLearnedLists' }, (learned) => {
+      const seeded = (learned && learned.seeded) || [];
       chrome.runtime.sendMessage({ type: 'afpCspVerdictForTab', tabId }, (verdict) => {
         // Per route since [FIX csp-restrictions-learned-per-route]: 'route' is this
         // document's, 'host' is another route of the same host (the site restricts
         // somewhere else), false is neither.
         const scope = afpCspScope(url);
         const listed = (k) => afpCspScopeMatches(st[k], scope) ? 'route' : (afpCspHostListed(st[k], host) ? 'host' : false);
+        // [FIX a-seeded-host-stood-down-for-no-visible-reason] 'seeded' is a fourth answer
+        // for the one list that has seeds, and it has to be an answer rather than a
+        // separate line: this field is what a reader consults to find out why the worker
+        // here is native, and a flat "false" beside a window that has stood down is the
+        // wrong answer, not a missing one.
+        const listedNoBlob = () => listed('afp_csp_noblob') ||
+          (afpCspHostListed(seeded, host) ? 'seeded' : false);
         add('extension', chrome.runtime.getManifest().version);
         add('browser', navigator.userAgent);
         add('tab', url);
         add('verdict', $('verdict').textContent.trim());
         add('profile', { id: st.afp_profile_id, country: st.afp_country_code, mode: st.afp_mode, hostHw: !!profile.hostHw });
         add('document headers (service worker)', verdict || 'no record for this tab');
-        add('host lists', { noblob: listed('afp_csp_noblob'), tt: listed('afp_csp_tt'), tte: listed('afp_csp_tte'),
+        add('host lists', { noblob: listedNoBlob(), tt: listed('afp_csp_tt'), tte: listed('afp_csp_tte'),
           nc: listed('afp_csp_nc'), ns: listed('afp_csp_ns') });
         // [AUDIT routes-of-this-host] Since [FIX csp-restrictions-learned-per-route] the
         // lists hold host/segment, so "the site is listed" no longer says which documents
@@ -673,6 +682,7 @@ function buildDump(tabId, profile, page) {
         dump.value = lines.join('\n');
         dump.hidden = false;
         $('copy').disabled = false;
+      });
       });
     });
   });

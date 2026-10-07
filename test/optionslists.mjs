@@ -186,6 +186,29 @@ try {
   ok(!/example\.(com|net|org)/.test(learned.text),
     `no site name is printed (${learned.text})`);
 
+  // [FIX a-seeded-host-stood-down-for-no-visible-reason] The seeded hosts, in their own
+  // element and BY NAME. They are compiled in and identical for every install, so they are
+  // not the browsing record the rule above protects — and a count would leave the reader
+  // knowing only that something is in effect somewhere, which is the state being fixed.
+  // Asserted against the background's own answer rather than a literal, so adding a seed
+  // does not fail this suite.
+  // From the PAGE, not from bg: a message sent by the service worker is not delivered to
+  // the service worker's own onMessage listener, so asking there returns nothing and the
+  // assertion reads as "the build ships no seeds" while the screen shows two of them.
+  const seedHosts = await page.evaluate(() => new Promise((res) => {
+    chrome.runtime.sendMessage({ type: 'getCspLearnedLists' }, (r) => res((r && r.seeded) || []));
+  }));
+  const seedLine = await page.evaluate(() => ({
+    text: document.getElementById('learnedSeeded').textContent,
+    hidden: document.getElementById('learnedSeeded').hidden
+  }));
+  console.log('seeded       ' + JSON.stringify({ hosts: seedHosts, line: seedLine }));
+  ok(seedHosts.length > 0, `the build ships seeded hosts (${seedHosts.join(', ')})`);
+  ok(!seedLine.hidden && seedHosts.every((h) => seedLine.text.includes(h)),
+    `and each is named on screen (${seedLine.text})`);
+  ok(!seedLine.text.includes(M('optLearnedRows').split('$1')[0].trim() || '\u0000'),
+    'in its own element, so the learned count is not made false by it');
+
   await page.click('#learnedClearBtn');
   await emptied(page, 'learnedList', M('optLearnedEmpty'));
   const afterLearned = await page.evaluate(() => ({

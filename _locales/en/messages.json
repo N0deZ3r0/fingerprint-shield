@@ -168,6 +168,7 @@
   "optLearnedRows":     { "message": "$1 entries: $2" },
   "optLearnedEmpty":    { "message": "Empty — nothing learned yet." },
   "optLearnedCleared":  { "message": "Forgotten. Every site will be learned again — at the cost of one page load." },
+  "optLearnedSeeded":   { "message": "Plus these ship with the extension, and Clear does not touch them: $1" },
   "optRisky":           { "message": "careful" },
 
   "whoTagline":         { "message": "What sites see with the current profile" },

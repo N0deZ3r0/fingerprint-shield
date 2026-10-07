@@ -2583,7 +2583,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 CSP_LEARNED_KEYS.forEach(function (k) {
                     lists[k] = Array.isArray(got[k]) ? got[k] : [];
                 });
-                sendResponse({ ok: true, lists });
+                // [FIX a-seeded-host-stood-down-for-no-visible-reason] Beside the lists, not
+                // inside them. A seed is not something the extension learned — the panel this
+                // feeds is titled for what it learned by itself, Clear does not touch a seed,
+                // and folding the two together would make the count a lie in both directions.
+                // Without this the only honest surfaces in the extension said nothing at all
+                // about why github.com behaves differently from every other site.
+                const scopes = await afpNoBlobScopes();
+                sendResponse({ ok: true, lists, seeded: CSP_NOBLOB_SEEDS
+                    .map(function (s) { return s.host; })
+                    .filter(function (h) { return scopes.indexOf(h) !== -1; }) });
             } catch (e) { sendResponse({ ok: false, lists: {}, reason: e.message }); }
         })();
         return true;
