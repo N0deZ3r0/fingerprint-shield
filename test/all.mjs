@@ -32,6 +32,11 @@ const SUITES = [
   // suite instead of reaching a user who cannot act on it. Node-only.
   ['profile coherence', ['test/profilecoherence.mjs']],
   ['background.js functions', ['test/background-fns.mjs']],
+  // [FIX the-first-visit-paid-for-a-policy-this-tree-had-already-measured] The seeded
+  // blob-refusing hosts, each against the policy it was measured from, through the same
+  // lifted predicate background-fns uses. A claim about somebody else's CSP is the kind
+  // that rots without anything noticing, so the evidence ships with the claim.
+  ['CSP seeds', ['test/cspseed.mjs']],
   // protect.wasm is the one shipped artifact nothing here re-derives: no generator writes
   // it, no CI step rebuilds it, and tools/pack.mjs only asserts it EXISTS. The two dev
   // pages that do compare it against JS compare it against formulas retyped into the HTML

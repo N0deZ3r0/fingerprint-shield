@@ -1428,7 +1428,11 @@ const list = (src, re) => {
   assert(ru.includes(`badge/сьютов-${nodeSuites + browserSuites}-`) ||
     ru.includes(`badge/%D1%81%D1%8C%D1%8E%D1%82%D0%BE%D0%B2-${nodeSuites + browserSuites}-`),
     `README.ru.md's suite badge is ${nodeSuites + browserSuites}`);
-  assert(ru.includes(`${nodeSuites + browserSuites} сьютов`),
+  // The stem, not one inflected form: Russian numeral agreement makes it "60 сьютов",
+  // "61 сьют" and "62 сьюта", and pinning the plural had the suite demanding an
+  // ungrammatical front page the moment the total stopped ending in 0. The number is still
+  // exact — it is the ending that is none of this file's business.
+  assert(ru.includes(`${nodeSuites + browserSuites} сьют`),
     `README.ru.md: the total suite count is ${nodeSuites + browserSuites}`);
   // The front page links to files by name; a renamed one would leave a dead link on the
   // page every visitor lands on.

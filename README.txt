@@ -1,4 +1,4 @@
-Fingerprint Shield 2.5.37 — release package
+Fingerprint Shield 2.5.38 — release package
 ==========================================
 
   This is the document that ships INSIDE the package: structure, CI, and the suites that
@@ -17,7 +17,7 @@ Load in Chrome:
   `npm test`, so a file that stops shipping turns the suite red rather than an install.
 
 Continuous integration (.github/workflows/ci.yml):
-  node      lint + the 10 Node suites + the package check. Seconds, every push and PR.
+  node      lint + the 11 Node suites + the package check. Seconds, every push and PR.
             This is the one worth gating on: it includes test/parity-static.mjs, which
             re-runs both generators in memory, so a module edited without re-running
             tools/gen-bundle.mjs fails here instead of shipping.

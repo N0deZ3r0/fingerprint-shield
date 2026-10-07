@@ -739,27 +739,33 @@ t.section('11) dynamic rule ids');
     afp_country_code: 'DE', afp_profile_id: 'laptop_mid',
     afp_profile_data: { screenW: 1920, screenH: 1080, dpr: 1, cores: 8, memory: 8, gpu: 'intel_iris', platform: 'Win32' },
     afp_noise_seed: 123456789, afp_mode: 'normal', afp_host_platform_version: '15.0.0',
-    afp_csp_noblob: ['github.com'],
+    afp_csp_noblob: ['sd.test'],
     afp_ch_optin: { 'sec-ch-ua-platform-version': ['example.com'] }
   });
-  const { updateDynamicLanguageRule, afpDynamicRuleIds, AFP_HINT_STRIP_RULE_ID, standDownScopes } =
-    loadBackground(['updateDynamicLanguageRule', 'afpDynamicRuleIds', 'AFP_HINT_STRIP_RULE_ID', 'standDownScopes'], { chrome });
+  const { updateDynamicLanguageRule, afpDynamicRuleIds, AFP_HINT_STRIP_RULE_ID, standDownScopes, CSP_NOBLOB_SEEDS } =
+    loadBackground(['updateDynamicLanguageRule', 'afpDynamicRuleIds', 'AFP_HINT_STRIP_RULE_ID', 'standDownScopes', 'CSP_NOBLOB_SEEDS'], { chrome });
+  // [FIX the-first-visit-paid-for-a-policy-this-tree-had-already-measured] The seeded hosts
+  // stand down on every profile, so they are in every answer below. They are production
+  // data, not this fixture's subject — test/cspseed.mjs is where they are asserted — and
+  // subtracting them here rather than listing them keeps a new seed from failing a suite
+  // that has nothing to do with it.
+  const own = (l) => (l || []).filter((h) => !CSP_NOBLOB_SEEDS.some((s) => s.host === h));
   // Let the worker's own startup pass settle before the call under test.
   await new Promise((r) => setTimeout(r, 300));
   const ids = afpDynamicRuleIds();
   t.eq(new Set(ids).size, ids.length, `afpDynamicRuleIds lists every id once (${ids.slice(0, 6).join(',')}…)`);
   t.assert(AFP_HINT_STRIP_RULE_ID !== 1001 && AFP_HINT_STRIP_RULE_ID !== 1002, `the strip has an id of its own (${AFP_HINT_STRIP_RULE_ID})`);
-  t.eq((await standDownScopes()).hosts.join(), 'github.com', 'the fixture has one stand-down host');
+  t.eq(own((await standDownScopes()).hosts).join(), 'sd.test', 'the fixture has one stand-down host of its own');
   await updateDynamicLanguageRule();
   const r1001 = rules.get(1001), r1002 = rules.get(1002), strip = rules.get(AFP_HINT_STRIP_RULE_ID);
   t.eq(r1001 && r1001.action.type, 'allow', 'rule 1001 is the requestDomains allow');
-  t.eq(r1001 && (r1001.condition.requestDomains || []).join(), 'github.com', 'scoped to the stand-down host');
+  t.eq(own(r1001 && r1001.condition.requestDomains).join(), 'sd.test', 'scoped to the stand-down host');
   t.eq(r1002 && r1002.action.type, 'allow', 'rule 1002 is the initiatorDomains allow — and it SURVIVES the function that wrote it');
-  t.eq(r1002 && (r1002.condition.initiatorDomains || []).join(), 'github.com', 'scoped to the same host as initiator');
+  t.eq(own(r1002 && r1002.condition.initiatorDomains).join(), 'sd.test', 'scoped to the same host as initiator');
   t.eq(strip && strip.action.type, 'modifyHeaders', 'the client-hint strip is installed beside them');
   t.assert(strip && strip.action.requestHeaders.every((h) => h.operation === 'remove'), 'and it only removes');
   const r1000 = rules.get(1000);
-  t.eq(r1000 && (r1000.condition.excludedInitiatorDomains || []).join(), 'github.com', 'rule 1000 still excludes the initiator');
+  t.eq(own(r1000 && r1000.condition.excludedInitiatorDomains).join(), 'sd.test', 'rule 1000 still excludes the initiator');
 }
 
 // ---- 16) Accept-CH from a host nobody had heard of -----------------------------------
@@ -1028,8 +1034,10 @@ t.section('15) CSP restrictions per route');
     afp_profile_data: { screenW: 1920, screenH: 1080, dpr: 1, cores: 8, memory: 8, gpu: 'intel_iris', platform: 'Win32' },
     afp_noise_seed: 5, afp_mode: 'normal', afp_host_platform_version: '15.0.0'
   });
-  const { afpNoteCsp, standDownScopes, afpApplySdRouteRules, afpSdTabFromUrl } =
-    loadBackground(['afpNoteCsp', 'standDownScopes', 'afpApplySdRouteRules', 'afpSdTabFromUrl'], { chrome });
+  const { afpNoteCsp, standDownScopes, afpApplySdRouteRules, afpSdTabFromUrl, CSP_NOBLOB_SEEDS } =
+    loadBackground(['afpNoteCsp', 'standDownScopes', 'afpApplySdRouteRules', 'afpSdTabFromUrl', 'CSP_NOBLOB_SEEDS'], { chrome });
+  // See the note in section 11: the seeded hosts are in every answer and are not the subject.
+  const own = (l) => (l || []).filter((h) => !CSP_NOBLOB_SEEDS.some((s) => s.host === h));
   const settle = () => new Promise((r) => setTimeout(r, 120));
   afpNoteCsp({ type: 'main_frame', tabId: 3, frameId: 0, url: 'https://mixed.test/app/1', responseHeaders: headersOf(STRICT) });
   await settle();
@@ -1052,7 +1060,7 @@ t.section('15) CSP restrictions per route');
   await settle();
   t.eq(sessionRules.get(1004).condition.tabIds.join(), '5', 'a tab that navigates to a document with no CSP leaves the rule');
   const sd = await standDownScopes();
-  t.eq(sd.hosts.join(), 'allstrict.test', 'the bare hosts go to rule 1000\'s exclusions and the 1001/1002 pair');
+  t.eq(own(sd.hosts).join(), 'allstrict.test', 'the bare hosts go to rule 1000\'s exclusions and the 1001/1002 pair');
   t.eq(sd.routes.map((r) => r.host + '/' + r.seg).sort().join(), 'mixed.test/app,mixed.test/blog,mixed.test/docs', 'the routes get rules of their own');
   await afpApplySdRouteRules(sd.routes);
   const { rules } = chrome.__mock;

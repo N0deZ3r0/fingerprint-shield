@@ -1536,7 +1536,7 @@ async function applyTteScript() {
 /** Same registration dance as the other two — see applyRtcOffScript for the why. */
 async function applyNoBlobScript() {
     try {
-        const matches = afpCspScopePatterns(await loadCspNoBlob());
+        const matches = afpCspScopePatterns(await afpNoBlobScopes());
         const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [NOBLOB_SCRIPT_ID] });
         const registered = !!(existing && existing.length);
         if (!matches.length) {
@@ -2521,7 +2521,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const map = await loadCspRewrite();
                 // "Needed" = the two restrictions the rewrite lifts. TT enforcement alone
                 // does not stop the wrapper (it wraps what the page passed as trusted).
-                const lists = await Promise.all([loadCspNoBlob(), loadCspTt()]);
+                const lists = await Promise.all([afpNoBlobScopes(), loadCspTt()]);
                 const needed = lists.some(function (l) { return afpCspHostListed(l, host); });
                 const on = Object.prototype.hasOwnProperty.call(map, host);
                 sendResponse({ host, on, needed, learned: on && !!map[host], count: Object.keys(map).length });
@@ -3705,7 +3705,22 @@ function afpJudgeCsp(host, type, headers, raw, rw, rec, name, scope, tabId) {
 function afpNoteCspList(loader, key, restricted, host, scope) {
     loader().then(function (list) {
         if (!restricted) {
-            if (afpCspHostListed(list, host)) afpMarkCspMixed(host);
+            // [FIX the-first-visit-paid-for-a-policy-this-tree-had-already-measured] A SEEDED
+            // host counts as listed here, and this line is the whole reason seeding is
+            // allowed at all. README "Limits", item 13 rejected a hard-coded list on two grounds: that
+            // it would be invented rather than measured, and that it would go stale SILENTLY
+            // and in the direction of losing protection — a host that relaxes its CSP keeping
+            // unpatched workers until somebody notices. The first is answered by shipping the
+            // measured policy with each seed and running the predicate over it in
+            // test/cspseed.mjs. The second is answered here: `list` is the LEARNED list, so
+            // without this clause a relaxed policy on a seeded host would mark nothing and
+            // the seed would outlive its evidence forever. With it, the observer that would
+            // have learned the host is also the one that un-seeds it, on the first response
+            // that no longer refuses — which is a measurement, not a release.
+            if (afpCspHostListed(list, host) ||
+                (key === CSP_NOBLOB_KEY && CSP_NOBLOB_SEEDS.some(function (s) { return s.host === host; }))) {
+                afpMarkCspMixed(host);
+            }
             return;
         }
         if (afpCspScopeMatches(list, scope)) return;
@@ -3770,7 +3785,7 @@ function afpSdTabForRoute(tabId, url) {
     if (typeof tabId !== 'number' || tabId < 0) return;
     const scope = afpCspScope(url);
     if (!scope) { afpSetSdTab(tabId, false); return; }
-    Promise.all([loadCspNoBlob(), loadCspTt(), loadCspRewrite()]).then(function (r) {
+    Promise.all([afpNoBlobScopes(), loadCspTt(), loadCspRewrite()]).then(function (r) {
         const host = afpCspScopeHost(scope);
         const rewritten = Object.prototype.hasOwnProperty.call(r[2] || {}, host);
         afpSetSdTab(tabId, !rewritten && (afpCspScopeMatches(r[0], scope) || afpCspScopeMatches(r[1], scope)));
@@ -4174,7 +4189,7 @@ let _cspTt = null;
  */
 async function standDownScopes() {
     try {
-        const [wb, tt, rw] = await Promise.all([loadCspNoBlob(), loadCspTt(), loadCspRewrite()]);
+        const [wb, tt, rw] = await Promise.all([afpNoBlobScopes(), loadCspTt(), loadCspRewrite()]);
         const hosts = [], routes = [], seen = new Set();
         [].concat(wb || [], tt || []).forEach(function (e) {
             if (typeof e !== 'string' || !e || seen.has(e)) return;
@@ -4295,7 +4310,7 @@ function afpSdTabFromUrl(tabId, url) {
     if (typeof tabId !== 'number' || tabId < 0 || !url) return;
     const scope = afpCspScope(url);
     if (!scope) return;
-    Promise.all([loadCspNoBlob(), loadCspTt(), loadCspRewrite()]).then(function (r) {
+    Promise.all([afpNoBlobScopes(), loadCspTt(), loadCspRewrite()]).then(function (r) {
         const host = afpCspScopeHost(scope);
         if (Object.prototype.hasOwnProperty.call(r[2] || {}, host)) { afpSetSdTab(tabId, false); return; }
         // Only ON: "not on the list" is not yet "this document does not restrict" — the
@@ -4308,7 +4323,7 @@ function afpSdTabFromUrl(tabId, url) {
 /** At worker start the set is empty and the session rule may be stale: rebuild from the open tabs. */
 async function afpRebuildSdTabs() {
     try {
-        const [tabs, wb, tt, rw] = await Promise.all([chrome.tabs.query({}), loadCspNoBlob(), loadCspTt(), loadCspRewrite()]);
+        const [tabs, wb, tt, rw] = await Promise.all([chrome.tabs.query({}), afpNoBlobScopes(), loadCspTt(), loadCspRewrite()]);
         _sdTabs.clear();
         (tabs || []).forEach(function (t) {
             if (!t || typeof t.id !== 'number' || !/^https?:/.test(t.url || '')) return;
@@ -4330,7 +4345,7 @@ async function loadCspMixed() {
 }
 /** A document with no CSP at all, on a host that restricts somewhere: the loose route the collapse must keep. */
 function afpNoteLooseDocument(host) {
-    Promise.all([loadCspNoBlob(), loadCspTt(), loadCspNc(), loadCspNs()]).then(function (lists) {
+    Promise.all([afpNoBlobScopes(), loadCspTt(), loadCspNc(), loadCspNs()]).then(function (lists) {
         if (lists.some(function (l) { return afpCspHostListed(l, host); })) afpMarkCspMixed(host);
     }, function () {});
 }
@@ -4368,6 +4383,99 @@ async function loadCspNs() {
 
 async function loadCspNoBlob() {
     return afpLoadStored(CSP_NOBLOB_KEY, function () { return _cspNoBlob; }, function (v) { _cspNoBlob = v; }, afpStoredList);
+}
+
+// [FIX the-first-visit-paid-for-a-policy-this-tree-had-already-measured]
+// THE LEARNING VISIT, for two hosts there was never anything to learn about.
+//
+// Reported twice from a real github.com tab, at two different bundle lines because the
+// build had moved under it between the reports:
+//
+//   Creating a worker from 'blob:https://github.com/…' violates the following Content
+//   Security Policy directive: "worker-src github.githubassets.com …". The action has
+//   been blocked.        mw-bundle.js (_wrapModuleWorker)
+//
+// Both halves of that are costs. The page did not get the worker it asked for, and the
+// browser printed OUR file as the cause — the same report channel as
+// [FIX sync-xhr-violated-a-permissions-policy] and [FIX tt-violation-named-our-file], which
+// no JS reaches and whose only fix is not to make the call.
+//
+// The machinery for not making it already exists and works: afpJudgeCsp reads the header,
+// afpNoteCspList records the route, noblob.js is registered for it, and from the next load
+// on the wrapper hands back the native constructors. What it cannot do is help the load
+// that teaches it — nothing can be registered for a route nobody has visited — so visit one
+// of every route pays a dead worker and a console line naming us. test/blobcsp.mjs asserts
+// that cost rather than hiding it, and README "Limits", item 13 records it.
+//
+// For an unknown host that is irreducible. For these two it was never knowledge the browser
+// had to supply: this tree has had github.com's policy quoted in three separate comments,
+// and youtube.com's is the entire reason the per-site rewrite switch below exists. The limit
+// was being paid for facts the source already stated. Worse, github.com has a route per
+// repository and the collapse to a bare entry needs three restricted routes, so a heavy user
+// paid it again on repository after repository.
+//
+// Re-measured from the live headers on 2026-10-07 and judged by the SHIPPED predicate rather
+// than by eye — test/cspseed.mjs runs _cspListBlocksBlobWorkers over each policy recorded
+// below and fails if one stops meaning what this list claims. That test is why the first
+// draft of this list was wrong: read as ONE joined header, youtube.com's script-src carries
+// 'strict-dynamic', which ADMITS a blob: worker, and it looked like it did not belong here.
+// It sends THREE policies, a blob: worker must satisfy every one, and the first has no blob:
+// and no 'strict-dynamic'. A seed carries the header that justifies it for exactly that
+// reason: the claim and its evidence go stale together or not at all.
+//
+// A seed is not stronger than learning, it is earlier. It is skipped for a host the user has
+// switched to CSP rewriting (that switch's whole purpose is to make blob: workers legal
+// there), skipped for a host on the mixed list, and afpNoteLooseDocument puts it on that list
+// the first time any document of it arrives with no policy at all — so an origin that
+// genuinely relaxes is caught by the same observer that would have learned it, and the escape
+// hatch is a measurement instead of a release.
+const CSP_NOBLOB_SEEDS = [
+    {
+        host: 'github.com',
+        measured: '2026-10-07',
+        // Verbatim the directive the field report quoted: no blob:, no 'strict-dynamic'.
+        // The subdomain form of the match pattern is what carries gist.github.com, which
+        // serves this same policy.
+        //
+        // TWO independent reasons, which is why the negative control for this entry needs
+        // two edits: adding blob: to worker-src alone still judges as blocked, because
+        // default-src 'none' is the connect-src AND script-src fallback — so the worker
+        // could be created and then neither read nor imported, which step 2b of
+        // afpRewriteCsp calls strictly worse than refusing it.
+        csp: "default-src 'none'; worker-src github.githubassets.com github.com/assets-cdn/worker/ " +
+            'github.com/assets/ gist.github.com/assets-cdn/worker/'
+    },
+    {
+        host: 'youtube.com',
+        measured: '2026-10-07',
+        // Two of its three policies, joined with ',' exactly as the observer hands them
+        // over. The nonce is replaced with a placeholder because it changes per response and
+        // nothing here depends on it. The FIRST policy is the one that refuses; the second
+        // is kept precisely because it would admit a blob: worker on its own.
+        csp: "script-src 'unsafe-eval' 'self' 'unsafe-inline' https://www.google.com," +
+            "script-src 'report-sample' 'nonce-PLACEHOLDER' 'unsafe-inline' 'strict-dynamic' https: http: 'unsafe-eval'"
+    }
+];
+
+/**
+ * The learned routes plus the seeded hosts: what noblob.js is registered for, and what
+ * stands down. The seeds are static, so nothing of theirs is ever written to storage —
+ * "clear what the extension learned" stays a statement about learning, and the rewrite
+ * self-heal in applyCspRewriteRules has none of their entries to shed.
+ *
+ * A bare seed covers every route of its host, so a learned route under a seeded host is
+ * dropped here rather than registered twice: the same collapse afpNoteCspList performs
+ * once three routes of a host have restricted.
+ */
+async function afpNoBlobScopes() {
+    const [learned, rw, mixed] = await Promise.all([loadCspNoBlob(), loadCspRewrite(), loadCspMixed()]);
+    const seeded = CSP_NOBLOB_SEEDS.map(function (s) { return s.host; }).filter(function (h) {
+        return !Object.prototype.hasOwnProperty.call(rw || {}, h) && (mixed || []).indexOf(h) === -1;
+    });
+    if (!seeded.length) return (learned || []).slice();
+    const out = (learned || []).filter(function (e) { return seeded.indexOf(afpCspScopeHost(e)) === -1; });
+    seeded.forEach(function (h) { if (out.indexOf(h) === -1) out.push(h); });
+    return out;
 }
 
 // [FIX adblock-mask-contradicted-the-network] mw/mw-adblock.js makes a blocked ad slot read
