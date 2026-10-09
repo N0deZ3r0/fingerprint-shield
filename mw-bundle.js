@@ -10378,6 +10378,68 @@ if (!_STEALTH)     (function() {
                 return undefined;
             }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            function _mqDecide(ql) {
+
+
+
+
+
+                if (ql.indexOf(',') !== -1 || /(^|\s)(not|only)\s/.test(ql)) return undefined;
+                if (ql.indexOf(' and ') === -1) return _decide(ql);
+                var parts = ql.split(' and '), out = true;
+                for (var i = 0; i < parts.length; i++) {
+                    var t = parts[i].trim();
+
+                    if (!t || t.charAt(0) !== '(') return undefined;
+                    var d = _decide(t);
+                    if (d === undefined) return undefined;
+                    out = out && d;
+                }
+                return out;
+            }
+
             var _mqlProto = (typeof MediaQueryList !== 'undefined') && MediaQueryList.prototype;
             var _mDesc = _mqlProto && Object.getOwnPropertyDescriptor(_mqlProto, 'matches');
             if (_mDesc && typeof _mDesc.get === 'function') {
@@ -10394,7 +10456,7 @@ if (!_STEALTH)     (function() {
                         try {
                             var q = String(this.media || '');
                             if (!q) return real;
-                            var forced = _decide(q.toLowerCase().replace(/\s+/g, ' ').trim());
+                            var forced = _mqDecide(q.toLowerCase().replace(/\s+/g, ' ').trim());
                             if (forced !== undefined) return forced;
                         } catch (eD) {}
                         return real;

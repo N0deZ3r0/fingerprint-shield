@@ -1118,6 +1118,68 @@ if (!_STEALTH)     (function() {
                 return undefined;
             }
 
+            // [FIX a-compound-query-was-answered-from-one-word-inside-it]
+            // _decide MATCHES SUBSTRINGS of the whole query, which is right for the single
+            // feature test it was written for and wrong for everything else. A responsive
+            // framework does not ask `(hover: hover)`; it asks
+            //
+            //     screen and (min-width:600px) and (max-width:899.95px)
+            //
+            // and until this function a query like that reached _decide whole. One of its
+            // branches recognised a word somewhere inside, answered for the WHOLE query, and
+            // the width half — which this build does not spoof and could not answer — was
+            // never consulted. Measured against the CSS engine on the same page, 1600x900:
+            //
+            //   screen and (min-width:600px) and (max-width:899.95px)   js=true   css=false
+            //   (min-resolution:1.5dppx) and (min-width:900px)          js=true   css=false
+            //   not all and (min-width:900px)                           js=true   css=false
+            //
+            // `not all and …` is the one that shows what kind of answer it was: no browser
+            // says true to that, so this was not a spoof with a cost, it was a parser
+            // reporting on syntax it had not parsed.
+            //
+            // Reported from georgian-airways.com/ru as "the date cannot be picked". The
+            // booking widget asks the first query above to choose between its desktop
+            // calendar and its dialog one, got true from matchMedia while the CSS engine laid
+            // out the desktop variant, and rendered BOTH — 266 day cells against a clean
+            // browser's 133. The dialog's container covers the viewport, so every click on a
+            // date hit the overlay instead of the cell and the panel closed with nothing
+            // chosen. Measured in the reporter's browser: document.elementFromPoint at the
+            // centre of a day cell returned MuiDialog-container, and a click dispatched
+            // straight at the cell selected the date immediately. tools/probe-screenlayout.mjs
+            // bisects it to this function.
+            //
+            // THE RULE: we answer a compound query only when EVERY term in it is one
+            // _decide owns. One foreign term — a width, a height, a media type — and the
+            // whole query goes to the engine, which can answer all of it and already does so
+            // for the CSS side. `not`, `only` and a comma list are syntax this does not
+            // parse, so they go to the engine untouched rather than being guessed at.
+            //
+            // Residual, and it is the honest direction: a query that mixes one of our
+            // features with a width is now answered by the engine, i.e. truthfully about the
+            // display. That narrows the spoof in a case it never really had — the old answer
+            // was not the profile's, it was whatever one branch made of a string it did not
+            // understand — and it removes a contradiction, which reads louder than the truth.
+            function _mqDecide(ql) {
+                // Syntax this does not parse, checked BEFORE the single-term shortcut: a
+                // comma list carries no ' and ' at all, so putting this test inside the
+                // compound branch sent `(max-width:599.95px), (min-width:1536px)` straight
+                // back to the substring matcher. Caught by test/mediacompound.mjs on the
+                // first run of the fix, which is the whole reason that file lists one.
+                if (ql.indexOf(',') !== -1 || /(^|\s)(not|only)\s/.test(ql)) return undefined;
+                if (ql.indexOf(' and ') === -1) return _decide(ql);
+                var parts = ql.split(' and '), out = true;
+                for (var i = 0; i < parts.length; i++) {
+                    var t = parts[i].trim();
+                    // A media type ('screen', 'all', 'print') is not a feature we judge.
+                    if (!t || t.charAt(0) !== '(') return undefined;
+                    var d = _decide(t);
+                    if (d === undefined) return undefined;
+                    out = out && d;
+                }
+                return out;
+            }
+
             var _mqlProto = (typeof MediaQueryList !== 'undefined') && MediaQueryList.prototype;
             var _mDesc = _mqlProto && Object.getOwnPropertyDescriptor(_mqlProto, 'matches');
             if (_mDesc && typeof _mDesc.get === 'function') {
@@ -1134,7 +1196,7 @@ if (!_STEALTH)     (function() {
                         try {
                             var q = String(this.media || '');
                             if (!q) return real;
-                            var forced = _decide(q.toLowerCase().replace(/\s+/g, ' ').trim());
+                            var forced = _mqDecide(q.toLowerCase().replace(/\s+/g, ' ').trim());
                             if (forced !== undefined) return forced;
                         } catch (eD) {}
                         return real;

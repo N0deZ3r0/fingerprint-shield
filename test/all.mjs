@@ -137,6 +137,11 @@ if (withBrowser) SUITES.push(['host leaks (Chromium)', ['test/hostleak.mjs']]);
 // here and the page was green with a live contradiction one wide-gamut laptop away. This
 // re-runs it with the panel emulated in the ENGINE, and checks the emulation took first.
 if (withBrowser) SUITES.push(['emulated displays (Chromium)', ['test/mediadisplay.mjs']]);
+// [FIX a-compound-query-was-answered-from-one-word-inside-it] Its twin, one layer up. The
+// suite above asks every media FEATURE twice, one at a time, and every single-feature query
+// agreed while a booking site was unusable: the defect lived entirely in the step where
+// several features are combined, which nothing asked for.
+if (withBrowser) SUITES.push(['compound media queries (Chromium)', ['test/mediacompound.mjs']]);
 // Guards a REMOVED patch rather than a present one: the audio noise was measured as louder
 // than the fingerprint it hid and taken out, and until now only a comment kept it out.
 // Compares against a clean browser, so it carries to any rig or Chrome build.
