@@ -433,7 +433,7 @@ assert(/var _PATCH_MARK = '([^']+)'/.test(workers), 'worker patch marker is a na
   // replaced it with 128 named `<pos><hex>.js`. A surviving `0.js`..`f.js` from before that
   // rename is never regenerated, never registered and never compared, so it would have sat
   // in a shipped extension indefinitely with every suite green.
-  for (const dir of ['dyn/dev', 'dyn/cc', 'dyn/mode', 'dyn/pv', 'dyn/ns']) {
+  for (const dir of ['dyn/dev', 'dyn/cc', 'dyn/mode', 'dyn/pv', 'dyn/lang', 'dyn/ns']) {
     const abs = path.join(root, dir);
     if (!fs.existsSync(abs)) continue;
     for (const name of fs.readdirSync(abs)) if (!files[`${dir}/${name}`]) orphans.push(`${dir}/${name}`);

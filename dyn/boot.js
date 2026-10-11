@@ -28,7 +28,7 @@
 // still takes effect from the SECOND load of a tab onward.
 (function () {
     'use strict';
-    var dev = null, cc = null, mode = null, pv = null, ns = null, sl = null;
+    var dev = null, cc = null, mode = null, pv = null, ns = null, sl = null, hl = false;
     try { dev = self.__AFP_BOOT_DEV__ || null; } catch (e) {}
     try { cc = self.__AFP_BOOT_CC__ || null; } catch (e) {}
     try { mode = self.__AFP_BOOT_MODE__ || null; } catch (e) {}
@@ -38,6 +38,11 @@
     // generated copy of seed-lib.js that turns it into the per-domain value.
     try { ns = self.__AFP_BOOT_NS__ || null; } catch (e) {}
     try { sl = self.__AFP_BOOT_SL__ || null; } catch (e) {}
+    // [FIX host-language-arrived-300ms-late] Registered only while "Language — this
+    // browser's own" is on (dyn/lang/host.js). A flag and not a value: the host's language
+    // cannot be spelled as a file name, and does not need to be — profile-injector.js read
+    // it off the unpatched navigator before any of this ran.
+    try { hl = self.__AFP_BOOT_HL__ === true; } catch (e) {}
 
     // The markers exist for the length of this function. They are defined
     // non-enumerable so Object.keys(window) never sees them (CreepJS reads the tail of
@@ -49,6 +54,7 @@
     try { delete self.__AFP_BOOT_PV__; } catch (e) {}
     try { delete self.__AFP_BOOT_NS__; } catch (e) {}
     try { delete self.__AFP_BOOT_SL__; } catch (e) {}
+    try { delete self.__AFP_BOOT_HL__; } catch (e) {}
 
     // The per-domain seed. Derived HERE rather than shipped, because the seed is per site
     // and only the 32-bit master can be spelled with sixteen files. afpEffectiveHostname
@@ -152,6 +158,9 @@
                 // a copy of the tag — et-EE reports `et`, en-IE reports `en-GB`. Measured
                 // per locale; see tools/gen-locales.mjs.
                 intlLocale: cc.intlLocale,
+                // The language fields here are the COUNTRY's; with this set,
+                // profile-injector.js answers with the host's own instead.
+                hostLang: hl || undefined,
                 mode: mode || 'normal',
                 profileId: hw.id,
                 countryCode: hw.cc,

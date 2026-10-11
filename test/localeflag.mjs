@@ -27,6 +27,14 @@
  * as a numbered item in README "Limits" instead, which is where this project keeps what it knows
  * it has not closed. If part 3 ever prints that the scopes agree, close the item and turn
  * the note into an assertion.
+ *
+ * Part 4 is the options page's "Language — this browser's own", which no suite had ever
+ * switched on. Found by ticking it by hand and reading the page at four moments instead of
+ * one: the header said the host's language from the first request while the page said the
+ * country's from its first script until ~300ms past load, on every load of every tab. Only
+ * background.js knew about the switch; the two carriers that reach a page before the
+ * inject does went on publishing the country. So part 4 reads the page's FIRST script, not
+ * the loaded page — a read after the inject passes against the broken build.
  */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
@@ -57,6 +65,7 @@ const READ = `(function () {
 })()`;
 const WORKER_JS = `self.onmessage = function () { postMessage(${READ}); };\n`;
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>loc</title><script>
+window.__early = ${READ};
 window.__w = new Promise(function (res) {
   var done = false, f = function (v) { if (!done) { done = true; res(v); } };
   try {
@@ -69,7 +78,13 @@ window.__w = new Promise(function (res) {
 });
 <` + `/script></head><body>loc</body></html>`;
 
+// What the last DOCUMENT request announced, for part 4: the claim has two halves, and the
+// header is the one no script on the page can read back.
+let lastAcceptLanguage = null;
 const server = createServer((q, r) => {
+  if (!q.url.startsWith('/worker.js') && !q.url.startsWith('/favicon')) {
+    lastAcceptLanguage = q.headers['accept-language'] || '';
+  }
   if (q.url.startsWith('/worker.js')) {
     return r.writeHead(200, {
       'content-type': 'application/javascript', 'cache-control': 'no-store'
@@ -190,6 +205,62 @@ try {
     ? 'the scopes agree here after all — if this holds, close the LIMITS item and assert it'
     : `SPLIT as documented: window says ${R3.win.lang} but Intl ${R3.win.intl}; ` +
       `worker says ${R3.wrk.lang} and Intl ${R3.wrk.intl}`);
+
+  section('4) "Language — this browser\'s own": the host, from the first script, and on the wire');
+  // Back to the shipped flags, then the switch is thrown the way a user throws it: the box
+  // and Save on the options page. Writing the key into storage would skip the message that
+  // rebuilds the header rule and the cold-start file set, which is half of what is tested.
+  await run(afpCloneFeatures(), 'defaults again');
+  const id = new URL(sw.url()).host;
+  const opt = await ctx.newPage();
+  await opt.goto(`chrome-extension://${id}/options.html`, { waitUntil: 'load' });
+  await opt.waitForSelector('#feat_canvas');
+  // Save disables its button until the background has answered, so the button coming back
+  // is the event — not a number of milliseconds after the click.
+  const save = async (on) => {
+    await opt.setChecked('#hostLang', on);
+    await opt.click('#saveBtn');
+    await opt.waitForFunction(() => !document.getElementById('saveBtn').disabled, null, { timeout: 15000 });
+  };
+  const visit = async (label) => {
+    const page = await ctx.newPage();
+    lastAcceptLanguage = null;
+    await page.goto(BASE, { waitUntil: 'load' });
+    const early = await page.evaluate(() => window.__early);
+    const atLoad = await page.evaluate(`(${READ})`);
+    const wrk = await page.evaluate(() => window.__w);
+    await page.waitForTimeout(600);   // past the inject; a late flip is the other half of the defect
+    const late = await page.evaluate(`(${READ})`);
+    await page.close();
+    const f = (o) => `${o.lang} / ${o.langs0} / ${o.intl}`;
+    note(`${label}: header ${JSON.stringify(lastAcceptLanguage)}   first script ${f(early)}` +
+      `   load ${f(atLoad)}   later ${f(late)}   worker ${f(wrk)}`);
+    return { early, atLoad, late, wrk, header: lastAcceptLanguage };
+  };
+  const same = (a, b) => a.lang === b.lang && a.langs0 === b.langs0 && a.intl === b.intl;
+
+  await save(true);
+  const H = await visit('host language on');
+  if (HOST.lang === c.loc) {
+    note(`unprovable on this host: it already speaks ${c.loc}, the country's language and its own are one`);
+  } else {
+    ok(H.early.lang === HOST.lang && H.early.langs0 === HOST.lang,
+      `the page's FIRST script reads the host's language (${H.early.lang}, host ${HOST.lang}, country ${c.loc})`);
+    ok(H.early.intl === HOST.intl, `and the host's Intl default (${H.early.intl} vs ${HOST.intl})`);
+    ok(String(H.header).split(',')[0] === HOST.lang,
+      `the header leads with the same tag (${H.header})`);
+  }
+  ok(same(H.early, H.atLoad) && same(H.early, H.late),
+    'one answer for the life of the page — first script, load, and after the inject');
+  ok(H.wrk.lang === H.early.lang && H.wrk.intl === H.early.intl, 'and the worker agrees with the window');
+
+  await save(false);
+  const C = await visit('host language off again');
+  ok(C.early.lang === c.loc && C.early.intl === wantIntl,
+    `switched off, the first script is back on the country's (${C.early.lang} / ${C.early.intl})`);
+  ok(String(C.header).split(',')[0] === c.loc, `and so is the header (${C.header})`);
+  ok(same(C.early, C.atLoad) && same(C.early, C.late), 'again one answer for the life of the page');
+  await opt.close();
 } finally {
   await ctx.close();
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows */ }

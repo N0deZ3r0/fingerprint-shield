@@ -32,7 +32,7 @@
     // background.js). Goal: cold-start pages get the last known country +
     // hardware skeleton as early as the async storage read allows, instead of
     // a hard-coded Tallinn/et-EE bootstrap.
-    function publish(tz, locale, mode, noiseSeed, features, profileData, profileId) {
+    function publish(tz, locale, mode, noiseSeed, features, profileData, profileId, hostLang) {
         try {
             // [FIX bridge-attributes-were-an-extension-detector] tz/lc/md/ft are no longer
             // written to the DOM. A clean browser has ZERO attributes on <html>; every one
@@ -88,6 +88,11 @@
                 detail: {
                     timezone: tz || '',
                     locale: locale || '',
+                    // [FIX host-language-arrived-300ms-late] afp_resolved_locale is the
+                    // country's whatever the language switch says; without this flag every
+                    // publish from here put the country's language back on a page that
+                    // dyn/boot.js had just told to speak the host's.
+                    hostLang: hostLang === true ? true : undefined,
                     mode: mode || 'normal',
                     noiseSeed: (typeof noiseSeed === 'number' && isFinite(noiseSeed)) ? (noiseSeed >>> 0) : undefined,
                     // Extra fields for early coherent bootstrap (variant-4)
@@ -374,7 +379,7 @@
     var STORAGE_KEYS = [
         'afp_resolved_timezone', 'afp_resolved_locale', 'afp_mode',
         'afp_noise_seed', 'afp_features', 'afp_profile_data', 'afp_profile_id',
-        GL_KEY, CSP_NOBLOB_KEY, NET_BLOCK_KEY, CSP_TT_KEY, CSP_TTE_KEY, CSP_NC_KEY, CSP_NS_KEY
+        'afp_host_language', GL_KEY, CSP_NOBLOB_KEY, NET_BLOCK_KEY, CSP_TT_KEY, CSP_TTE_KEY, CSP_NC_KEY, CSP_NS_KEY
     ];
 
     /** profileData + the resolved graphics fields, in the shape profile-injector maps. */
@@ -403,7 +408,8 @@
                 items.afp_noise_seed,
                 items.afp_features,
                 withGl(items.afp_profile_data, items[GL_KEY]),
-                items.afp_profile_id
+                items.afp_profile_id,
+                items.afp_host_language === true
             );
         });
         chrome.storage.onChanged.addListener(function(changes, area) {
@@ -419,7 +425,8 @@
             if (changes[NET_BLOCK_KEY]) applyNetBlock(changes[NET_BLOCK_KEY].newValue);
             if (changes.afp_resolved_timezone || changes.afp_resolved_locale ||
                 changes.afp_mode || changes.afp_noise_seed || changes.afp_features ||
-                changes.afp_profile_data || changes.afp_profile_id || changes[GL_KEY]) {
+                changes.afp_profile_data || changes.afp_profile_id || changes[GL_KEY] ||
+                changes.afp_host_language) {
                 chrome.storage.local.get(STORAGE_KEYS, function(items) {
                     if (chrome.runtime.lastError || !items) return;
                     publish(
@@ -429,7 +436,8 @@
                         items.afp_noise_seed,
                         items.afp_features,
                         withGl(items.afp_profile_data, items[GL_KEY]),
-                        items.afp_profile_id
+                        items.afp_profile_id,
+                        items.afp_host_language === true
                     );
                 });
             }

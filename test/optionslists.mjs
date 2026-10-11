@@ -34,11 +34,26 @@ import { BROWSER, root, uiMessages, langArgs, bootSettled } from './harness.mjs'
  *
  * The wait has a name: the row says it is empty. If it never does within the budget, the
  * assertion that follows still fails, and now for the right reason.
+ *
+ * [FIX the-row-empties-before-the-background-has-finished] "The page re-renders on that
+ * answer" is true of the status line and NOT of the row. The row follows storage — options.js
+ * listens to chrome.storage.onChanged so that a change made from the popup shows up here —
+ * and the background's first step is the storage write. Unregistering the marker script and
+ * re-injecting every tab come after it, and the answer after those. So the row said "empty"
+ * while the work it was taken to announce was still running, and the two things read next
+ * were read too early:
+ *
+ *   FAIL: and drops its marker (afp-boot,afp-noblob,afp-rtc-off)
+ *   status still "Service Worker разрешён…", the PREVIOUS button's line, on the WebRTC clear
+ *
+ * in one full run of four here. `said` is the line only the answer writes; where the caller
+ * goes on to read what the background did, it waits for that as well.
  */
-async function emptied(page, id, want) {
+async function emptied(page, id, want, said) {
   await page.waitForFunction(
-    ([elId, text]) => (document.getElementById(elId) || {}).textContent === text,
-    [id, want], { timeout: 15000 }
+    ([elId, text, status]) => (document.getElementById(elId) || {}).textContent === text &&
+      (status === null || (document.getElementById('status') || {}).textContent === status),
+    [id, want, said === undefined ? null : said], { timeout: 15000 }
   ).catch(() => { /* the assertion that follows reports it in its own words */ });
 }
 const headed = process.argv.includes('--headed');
@@ -106,7 +121,7 @@ try {
 
   // ── cleared, through the page's own button ───────────────────────────────────
   await page.click('#swClearBtn');
-  await emptied(page, 'swList', M('optSwEmpty'));
+  await emptied(page, 'swList', M('optSwEmpty'), M('optSwCleared'));
   const afterSw = await read(page);
   console.log('SW cleared ' + JSON.stringify(afterSw));
   ok(afterSw.sw === M('optSwEmpty'), `Clear empties the SW list on screen (${afterSw.sw})`);
@@ -138,7 +153,7 @@ try {
   await bootSettled(bg);
 
   await page.click('#rtcClearBtn');
-  await emptied(page, 'rtcList', M('optRtcEmpty'));
+  await emptied(page, 'rtcList', M('optRtcEmpty'), M('optRtcCleared'));
   const afterRtc = await read(page);
   console.log('RTC cleared ' + JSON.stringify(afterRtc));
   ok(afterRtc.rtc === M('optRtcEmpty'), `the WebRTC button clears its own list (${afterRtc.rtc})`);

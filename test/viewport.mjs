@@ -25,13 +25,25 @@
  * pass against the broken build. The viewport below is deliberately wider and taller than the
  * largest screen any shipped profile claims. Same reasoning as test/windowchrome.mjs, which
  * forces a tall window for the same kind of clamp.
+ *
+ * THE OTHER DIRECTION — a claim that CONTAINS the machine — is the last section, and it was
+ * broken on real monitors while every rig stayed green. The screen accessors are installed
+ * only when the claim differs from the machine, and that was decided once, as the modules
+ * load, against profile-injector's stub (1920x1080) rather than against the selection, which
+ * arrives a moment later. On any monitor of 1920x1080 or more the stub compares equal, so no
+ * accessor existed when PC Gaming or PC Power turned up: the page read the host's monitor
+ * under a claim the popup showed as spoofed. Found by hand on a 2048x1280 screen. The same
+ * forced-wide window is what makes it reproducible here — the emulated screen follows the
+ * viewport, and 2200x1100 is one the stub does not contain.
  */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BROWSER, root, bootSettled } from './harness.mjs';
+import { BROWSER, root, bootSettled, loadPopup } from './harness.mjs';
+
+const { PROFILES } = loadPopup(['PROFILES']);
 
 const headed = process.argv.includes('--headed');
 let passed = 0, failed = 0;
@@ -51,7 +63,11 @@ const ok = (c, m) => { if (c) passed++; else { console.error('FAIL:', m); failed
 const PROFILE_SCREEN = { width: 1920, height: 1080 };
 const VIEW = { width: 2200, height: 1100 };
 
-const PAGE = '<!doctype html><html><body><p>vp</p></body></html>';
+// The inline script is the page's FIRST: what it reads is what a site's own first line
+// reads, before the inject that lands ~300ms after navigation.
+const PAGE = '<!doctype html><html><head><script>window.__first = { w: screen.width, h: screen.height, ' +
+  'aw: screen.availWidth, mq: matchMedia("(device-width: " + screen.width + "px)").matches };<' +
+  '/script></head><body><p>vp</p></body></html>';
 const server = createServer((q, r) =>
   r.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }).end(PAGE));
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -85,11 +101,13 @@ const READ = () => {
     vh100: mkH(),
     screenW: screen.width, screenH: screen.height,
     availW: screen.availWidth, availH: screen.availHeight,
-    cores: navigator.hardwareConcurrency
+    cores: navigator.hardwareConcurrency,
+    first: window.__first || null,
+    mqNow: matchMedia('(device-width: ' + screen.width + 'px)').matches
   };
 };
 
-async function read(clean) {
+async function read(clean, profileId) {
   const dir = mkdtempSync(join(tmpdir(), 'afp-vp-'));
   let browser = null;
   const ctx = clean
@@ -103,6 +121,29 @@ async function read(clean) {
     if (!clean) {
       try { ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 }); } catch { /* up */ }
       await bootSettled(ctx);
+      if (profileId) {
+        // Planted the way test/coldstart.mjs plants one, and waited for by the VALUE: the
+        // boot script naming this machine's file is what a new tab is built from.
+        const p = PROFILES.find((x) => x.id === profileId);
+        const sw = ctx.serviceWorkers()[0];
+        await sw.evaluate(async (d) => { await chrome.storage.local.set(d); }, {
+          afp_profile_id: p.id,
+          afp_profile_data: {
+            screenW: p.screenW, screenH: p.screenH, cores: p.cores,
+            memory: p.memory, gpu: p.gpuKey, platform: p.platform
+          }
+        });
+        const want = `dyn/dev/${p.id}.js`;
+        for (let i = 0; ; i++) {
+          const js = await sw.evaluate(async () => {
+            const reg = await chrome.scripting.getRegisteredContentScripts({ ids: ['afp-boot'] });
+            return (reg[0] && reg[0].js) || [];
+          });
+          if (js.includes(want)) break;
+          if (i > 200) throw new Error(`the boot script never named ${want}`);
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
     }
     const page = await ctx.newPage();
     await page.setViewportSize(VIEW);
@@ -133,6 +174,8 @@ async function read(clean) {
 
 const clean = await read(true);
 const ours = await read(false);
+const BIG = PROFILES.find((x) => x.id === 'pc_power');
+const big = await read(false, BIG.id);
 server.close();
 
 const show = (label, r) => {
@@ -199,6 +242,26 @@ if (ours.claim && ours.claim.w > 0) {
     (ours.claimErr ? ' — ' + ours.claimErr : ' — got ' + JSON.stringify(ours.claim)));
 }
 
+// [FIX the-screen-was-decided-against-the-stub] A claim that contains the machine is kept —
+// and it is kept from the page's first script, in a tab that has never seen another profile.
+console.log('');
+show(`ours, ${BIG.id}`, big);
+const f = big.first || {};
+console.log(`     first script: screen ${f.w}x${f.h}  availWidth ${f.aw}  (device-width: ${f.w}px) ${f.mq}`);
+// Both halves of the precondition, or the section proves nothing: the selection has to
+// contain the rig's screen, and the stub it replaces has to NOT contain it.
+ok(BIG.screenW >= clean.screenW && BIG.screenH >= clean.screenH &&
+   !(PROFILE_SCREEN.width >= clean.screenW && PROFILE_SCREEN.height >= clean.screenH),
+  `${BIG.id} (${BIG.screenW}x${BIG.screenH}) contains the rig's screen (${clean.screenW}x${clean.screenH}) ` +
+  `and the stub (${PROFILE_SCREEN.width}x${PROFILE_SCREEN.height}) does not — otherwise nothing is tested`);
+ok(f.w === BIG.screenW && f.h === BIG.screenH,
+  `the page's first script reads the claimed screen (${f.w}x${f.h}, claim ${BIG.screenW}x${BIG.screenH}, ` +
+  `machine ${clean.screenW}x${clean.screenH})`);
+ok(f.aw === BIG.screenW, `and the claimed availWidth (${f.aw})`);
+ok(big.screenW === BIG.screenW && big.screenH === BIG.screenH,
+  `it is still the claim after the inject (${big.screenW}x${big.screenH})`);
+ok(f.mq === true && big.mqNow === true,
+  `matchMedia's device-width agrees with screen.width (first script ${f.mq}, later ${big.mqNow})`);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

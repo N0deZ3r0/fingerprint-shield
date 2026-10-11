@@ -1638,21 +1638,54 @@
     // [ANTI-CREEP] Патчим instance screen, не Screen.prototype —
     // prototype остаётся чистым при сравнении с iframe в CreepJS.
     if (ID.screenWidth) { try {
-        // Only spoof screen when profile differs from native (avoids Prototype lies on real 1920x1080)
-        _defIfDiff(screen, 'width',  function() { return ID.screenWidth; });
-        _defIfDiff(screen, 'height', function() { return ID.screenHeight; });
+        // [FIX the-screen-was-decided-against-the-stub] "Install only when the claim differs
+        // from the machine" is the right rule and it was asked ONCE, as this file loads —
+        // when ID is still profile-injector's neutral stub (1920x1080), because dyn/boot.js,
+        // which carries the real selection, runs after every manifest script. So the
+        // question answered was "does 1920x1080 differ from this monitor", and on a monitor
+        // where it does not — exactly 1920x1080, or anything larger, which mw-core's clamp
+        // turns into the machine's own pair — no accessor was installed and none could be
+        // later. The selected machine then arrived with nothing to answer for it.
+        // Measured on a 2048x1280 monitor with PC Power (3840x2160) selected, and the popup
+        // showing no "host screen" tag:
+        //
+        //   top, sandboxed, data: and cross-origin frames   screen 2048x1280   (the host)
+        //   same-origin srcdoc frame (patched by its parent) screen 3840x2160
+        //   matchMedia('(device-width: 2048px)')             false
+        //
+        // The host's monitor under a claim that contains it, two frames of one page on two
+        // screens, and a media query contradicting screen.width in one line. No rig saw it:
+        // the emulated screen there is the viewport, smaller than the stub, so the accessor
+        // was always installed.
+        //
+        // The rule is unchanged; it is asked again whenever the profile changes. ui:state
+        // is how every later profile reaches mw-core, whose listener was registered before
+        // this one and has therefore already clamped the value ID answers with. The first
+        // of them is dyn/boot.js's, still ahead of the page's first script. _defIfDiff
+        // makes the repeat free: an installed accessor already answers the claim, so it
+        // compares equal and nothing is defined twice; a machine the claim never differs
+        // from still gets no accessor at all.
+        var _claimScreen = function () {
+            if (!ID.screenWidth) return;
+            _defIfDiff(screen, 'width',  function() { return ID.screenWidth; });
+            _defIfDiff(screen, 'height', function() { return ID.screenHeight; });
+            try {
+                var _aw = screen.availWidth, _ah = screen.availHeight;
+                var _tw = ID.screenWidth, _th = Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+                // If width already matches profile, keep native avail* (taskbar) — no defineProperty
+                if (!_sameVal(_aw, _tw)) _defIfDiff(screen, 'availWidth', function() { return ID.screenWidth; });
+                if (!_sameVal(_ah, _th)) _defIfDiff(screen, 'availHeight', function() {
+                    return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+                });
+            } catch (eAv) {
+                _defIfDiff(screen, 'availWidth',  function() { return ID.screenWidth; });
+                _defIfDiff(screen, 'availHeight', function() { return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8; });
+            }
+        };
+        _claimScreen();
         try {
-            var _aw = screen.availWidth, _ah = screen.availHeight;
-            var _tw = ID.screenWidth, _th = Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
-            // If width already matches profile, keep native avail* (taskbar) — no defineProperty
-            if (!_sameVal(_aw, _tw)) _defIfDiff(screen, 'availWidth', function() { return ID.screenWidth; });
-            if (!_sameVal(_ah, _th)) _defIfDiff(screen, 'availHeight', function() {
-                return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
-            });
-        } catch (eAv) {
-            _defIfDiff(screen, 'availWidth',  function() { return ID.screenWidth; });
-            _defIfDiff(screen, 'availHeight', function() { return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8; });
-        }
+            document.addEventListener('ui:state', function () { try { _claimScreen(); } catch (eCl) {} });
+        } catch (eLs) {}
         // [FIX avail-origin-and-second-monitor-were-never-touched] availWidth/availHeight
         // were spoofed for a long time; availLeft, availTop and isExtended never were.
         // Found by widening test/hostleak.mjs to the display traits nothing here measured.

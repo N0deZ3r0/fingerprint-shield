@@ -21,6 +21,7 @@
  *   dyn/cc/<CC>.js           country/tz/locale (one per COUNTRY_DATA key)
  *   dyn/mode/<mode>.js       normal | stealth (2 files)
  *   dyn/pv/<win10|win11>.js  the host's UA-CH platformVersion bucket (2 files)
+ *   dyn/lang/host.js         "the language is this browser's own" (registered only when on)
  *   dyn/ns/<pos><hex>.js     one hex digit of the master seed, AT one position (128 files)
  *   dyn/seedlib.js           seed-lib.js, wrapped, for the MAIN world
  *   dyn/boot.js              the assembler, hand-written, always registered last
@@ -169,6 +170,11 @@ export function generate() {
   files['dyn/pv/win10.js'] = slot('__AFP_BOOT_PV__', WIN10_PLATFORM_VERSION);
   files['dyn/pv/win11.js'] = slot('__AFP_BOOT_PV__', WIN11_PLATFORM_VERSION);
 
+  // "Language — this browser's own". A flag, because the value cannot be a file name and
+  // does not have to be: profile-injector.js reads the host's language off the unpatched
+  // navigator. One file, registered only while the switch is on — its absence is "off".
+  files['dyn/lang/host.js'] = slot('__AFP_BOOT_HL__', true);
+
   // ── the master noise seed, spelled as file names ──────────────────────────────
   //
   // [FIX seed-was-a-named-page-readable-key] The per-domain canvas seed used to reach the
@@ -284,7 +290,7 @@ for (const [rel, body] of Object.entries(files)) {
 
 // A file left behind by a country or profile that no longer exists would still be
 // registrable, so removal counts as drift too.
-for (const dir of ['dyn/dev', 'dyn/cc', 'dyn/mode', 'dyn/pv', 'dyn/ns']) {
+for (const dir of ['dyn/dev', 'dyn/cc', 'dyn/mode', 'dyn/pv', 'dyn/lang', 'dyn/ns']) {
   const abs = path.join(root, dir);
   if (!fs.existsSync(abs)) continue;
   for (const name of fs.readdirSync(abs)) {

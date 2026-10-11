@@ -274,6 +274,31 @@ async function run(profile) {
       ctx = await launch();
       ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
       await bootSettled(ctx);
+    } else {
+      // [FIX the-clean-side-was-launched-once-and-the-others-twice] "Both sides are
+      // launchPersistentContext, always" — and one of them was still a different shape.
+      // The extension sides restart on their profile directory, and a headless browser
+      // RELAUNCHED on a directory puts its window at 0,0 where a first launch puts it at
+      // 10,10. Measured without any extension, settled values:
+      //
+      //   clean, one launch          screenX,screenY 10,10
+      //   clean, relaunched          screenX,screenY  0,0
+      //   host mode (relaunched)     screenX,screenY  0,0
+      //
+      // The collector reads in the page's first script, where the position is still 0 on
+      // either side until the browser has found it (README "Limits", item 11) — so the two
+      // usually agreed by accident, and now and then — two runs of seven here, on the suite
+      // as it stood — the clean side got its real 10 in first:
+      //
+      //   host mode changes window.screenX: clean number:10 host number:0   (and Y, Left, Top)
+      //
+      // It had been filed as "fails in the full set, passes alone". It fails alone too, and
+      // on builds that differ in nothing relevant.
+      // Host mode was reporting its window's true position the whole time. With the same
+      // restart here, 0 is the answer before and after the browser knows, on both sides.
+      await ctx.close();
+      await new Promise((r) => setTimeout(r, 300));
+      ctx = await launch();
     }
     const p = await ctx.newPage();
     await p.goto(url, { waitUntil: 'load' });

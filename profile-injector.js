@@ -28,6 +28,50 @@
     var _cur = null;
     var _batonDone = false;
 
+    // [FIX host-language-arrived-300ms-late] "Language — this browser's own" was known to
+    // background.js alone. Both early carriers — dyn/boot.js and storage-bridge.js — went
+    // on publishing the COUNTRY's locale, so with the box ticked every load of every page
+    // read the country's language from its first script until the inject landed, while
+    // the Accept-Language rule had been sending the host's from the first request.
+    // Measured on a ru-RU host claiming US:
+    //
+    //   header  ru-RU,ru;q=0.9
+    //   inline  en-US / en-US / Intl en-US      dcl, load: the same
+    //   +1s     ru-RU / ru-RU / Intl ru
+    //
+    // The window/wire split the switch exists to remove, plus a flip in the middle of
+    // the page. The carriers now send a flag instead of a value, because the value needs
+    // no carrier: this file runs before anything is patched, so the host's language is
+    // simply what navigator says here. The Intl default is read lazily through the
+    // natives kept below — constructing a formatter on every document_start would be
+    // paid by every page for a switch most installs never throw.
+    var _hostLang = '';
+    try { _hostLang = String(navigator.language || ''); } catch (eHl) {}
+    var _DTF0 = null, _RO0 = null, _hostIntl = null;
+    try { _DTF0 = Intl.DateTimeFormat; _RO0 = _DTF0.prototype.resolvedOptions; } catch (eDtf) {}
+    function hostIntlLocale() {
+        if (_hostIntl === null) {
+            _hostIntl = '';
+            try { _hostIntl = String(_RO0.call(new _DTF0()).locale || ''); } catch (eRo) {}
+        }
+        return _hostIntl || _hostLang;
+    }
+    /**
+     * The detail as its carrier sent it, or — when it says the language is the host's —
+     * a copy whose three language fields are this browser's own. Same shape background.js
+     * gives the full profile in afpLanguageClaim: the tag, the tag alone as the list, and
+     * the browser's real Intl default.
+     */
+    function withHostLanguage(detail) {
+        if (!detail || detail.hostLang !== true || !_hostLang) return detail;
+        var out = {};
+        for (var k in detail) if (Object.prototype.hasOwnProperty.call(detail, k)) out[k] = detail[k];
+        out.locale = _hostLang;
+        out.intlLocale = hostIntlLocale();
+        out.languages = [_hostLang];
+        return out;
+    }
+
     // [FIX cold-start-machine-remainder] Verbatim from buildProfile() in background.js —
     // the MAIN world cannot importScripts, which is the same reason mw-core.js keeps its
     // own copy of AFP_DEFAULT_FEATURES. test/parity-static.mjs compares both copies and
@@ -207,9 +251,11 @@
             p.language = detail.locale;
             p.locale = detail.locale;
             // [FIX missing-countryCode] et-EE → EE до прихода полного профиля
+            // Not under the host's language: its region says where the machine's owner
+            // lives, not which country the profile claims.
             try {
                 var parts = String(detail.locale).split('-');
-                if (parts.length >= 2) p.countryCode = parts[parts.length - 1].toUpperCase();
+                if (parts.length >= 2 && detail.hostLang !== true) p.countryCode = parts[parts.length - 1].toUpperCase();
             } catch (eCc) {}
             var keepLangs = Array.isArray(p.languages) && p.languages.length > 0 &&
                 p.languages[0] === detail.locale;
@@ -312,13 +358,14 @@
         document.addEventListener('ui:ready', function(ev) {
             try {
                 if (!ev.detail) return;
+                var _d = withHostLanguage(ev.detail);
                 var _bp =(afpBag() && afpBag().getProfile && afpBag().getProfile()) || window.__AFP_PROFILE__;
                 if (_bp) {
-                    applyBridge(_bp, ev.detail);
+                    applyBridge(_bp, _d);
                     afpSetProfile(_bp);
                 } else {
                     // Cold start: build a better early profile from whatever the bridge gave us
-                    buildAndSetEarlyFromBridge(ev.detail);
+                    buildAndSetEarlyFromBridge(_d);
                 }
             } catch (e) {}
         });
@@ -365,7 +412,7 @@
         var earlyCc = 'US';
         try {
             var locParts = String(locale).split('-');
-            if (locParts.length >= 2) earlyCc = locParts[locParts.length - 1].toUpperCase();
+            if (locParts.length >= 2 && detail.hostLang !== true) earlyCc = locParts[locParts.length - 1].toUpperCase();
         } catch (eCc2) {}
 
         var ua = navigator.userAgent;

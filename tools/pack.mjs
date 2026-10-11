@@ -143,7 +143,7 @@ for (const f of files.filter((n) => n.endsWith('.html'))) {
 }
 
 // ---- dyn/ must be whole ----
-for (const sub of ['cc', 'dev', 'mode', 'ns', 'pv']) {
+for (const sub of ['cc', 'dev', 'lang', 'mode', 'ns', 'pv']) {
   const n = files.filter((f) => f.startsWith(`dyn/${sub}/`)).length;
   if (!n) fail(`dyn/${sub}/ is empty — run node tools/gen-dyn.mjs`);
 }

@@ -346,7 +346,27 @@ try {
 
   section('2) host mode: the hardware is the clean browser\'s, in the window');
   for (const k of HW_ALL_SCOPES.concat(HW_WINDOW)) {
+    if (k === 'battery') continue;
     eq(String(HOST.win[k]), String(CLEAN.win[k]), `window ${k} equals the clean browser`);
+  }
+  // [FIX the-battery-was-compared-across-two-launches-as-if-it-stood-still] Host mode hands
+  // the page the machine's REAL battery, and a real battery moves. The clean browser and
+  // this one are two launches some seconds apart, and on a laptop running on its battery
+  // the level ticked over between them:
+  //
+  //   FAIL: window battery equals the clean browser — got "0.98/true", want "0.99/true"
+  //
+  // which is host mode doing exactly what it promises. The runner has no battery (1/true,
+  // always), so this only ever went red on a developer's machine. One step of the level
+  // either way is the same battery; a profile's battery is not within a step of the real
+  // one except by coincidence, and part 6 still requires `battery` to move under a table row.
+  {
+    const bat = (s) => { const m = String(s).split('/'); return { level: Number(m[0]), charging: m[1] }; };
+    const h = bat(HOST.win.battery), c = bat(CLEAN.win.battery);
+    assert(String(HOST.win.battery) === String(CLEAN.win.battery) ||
+      (h.charging === c.charging && near(h.level, c.level, 0.02)),
+      `window battery is the clean browser's, give or take one step of a real battery ` +
+      `(${HOST.win.battery} vs ${CLEAN.win.battery})`);
   }
   assert(near(HOST.win.fontAgency, CLEAN.win.fontAgency, 0.05),
     `window: 'Agency FB' measures as the clean browser measures it, within the text-metric noise ` +

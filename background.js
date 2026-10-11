@@ -1844,7 +1844,7 @@ function registerBootScript() {
 
 async function applyBootScript() {
     try {
-        const st = await chrome.storage.local.get([PROFILE_KEY, STORAGE_KEY, 'afp_mode', NOISE_SEED_KEY]);
+        const st = await chrome.storage.local.get([PROFILE_KEY, STORAGE_KEY, 'afp_mode', NOISE_SEED_KEY, HOST_LANG_KEY]);
         const devId = BOOT_DEVICE_IDS.indexOf(st[PROFILE_KEY]) !== -1 ? st[PROFILE_KEY] : 'laptop_mid';
         const cc = COUNTRY_DATA[st[STORAGE_KEY]] ? st[STORAGE_KEY] : 'US';
         const mode = st['afp_mode'] === 'stealth' ? 'stealth' : 'normal';
@@ -1877,10 +1877,16 @@ async function applyBootScript() {
             ? ((st[NOISE_SEED_KEY] >>> 0).toString(16).padStart(8, '0').split('')
                 .map(function (c, i) { return `dyn/ns/${i}${c}.js`; }).concat(['dyn/seedlib.js']))
             : [];
+        // [FIX host-language-arrived-300ms-late] One more file while "Language — this
+        // browser's own" is on. Without it the cc file above was the only thing a cold
+        // page heard about its language, and it names the country's: the page said en-US
+        // from its first script to ~300ms past load under a header that had said ru-RU
+        // since the first request. See profile-injector.js for what the flag turns into.
+        const hlFiles = st[HOST_LANG_KEY] === true ? ['dyn/lang/host.js'] : [];
         const spec = {
             id: BOOT_SCRIPT_ID,
             js: [`dyn/dev/${devId}.js`, `dyn/cc/${cc}.js`, `dyn/mode/${mode}.js`, `dyn/pv/${pv}.js`]
-                .concat(nsFiles).concat(['dyn/boot.js']),
+                .concat(hlFiles).concat(nsFiles).concat(['dyn/boot.js']),
             matches: ['*://*/*'],
             runAt: 'document_start',
             world: 'MAIN',
@@ -2249,7 +2255,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
     // Смена машины/страны/режима меняет НАБОР файлов, из которых собран холодный старт.
     // Без этого новая вкладка продолжала бы грузить предыдущий выбор до перезапуска.
-    if (changes[PROFILE_KEY] || changes[STORAGE_KEY] || changes['afp_mode']) {
+    if (changes[PROFILE_KEY] || changes[STORAGE_KEY] || changes['afp_mode'] || changes[HOST_LANG_KEY]) {
         registerBootScript();
     }
     // The resolved graphics fields follow the record they describe.
@@ -2711,6 +2717,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 // announcing the country's language while navigator.language announced the
                 // machine's — the exact window/wire split this switch exists to remove.
                 await updateDynamicLanguageRule();
+                // And by a THIRD: the cold-start file set. Awaited, so that "Saved" is
+                // not shown while a tab opened right now would still boot on the old one.
+                await registerBootScript();
                 await injectProfileOnAllTabs();
                 sendResponse({ ok: true });
             } catch (e) {

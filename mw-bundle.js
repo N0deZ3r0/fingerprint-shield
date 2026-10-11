@@ -35,6 +35,50 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+    var _hostLang = '';
+    try { _hostLang = String(navigator.language || ''); } catch (eHl) {}
+    var _DTF0 = null, _RO0 = null, _hostIntl = null;
+    try { _DTF0 = Intl.DateTimeFormat; _RO0 = _DTF0.prototype.resolvedOptions; } catch (eDtf) {}
+    function hostIntlLocale() {
+        if (_hostIntl === null) {
+            _hostIntl = '';
+            try { _hostIntl = String(_RO0.call(new _DTF0()).locale || ''); } catch (eRo) {}
+        }
+        return _hostIntl || _hostLang;
+    }
+
+
+
+
+
+
+    function withHostLanguage(detail) {
+        if (!detail || detail.hostLang !== true || !_hostLang) return detail;
+        var out = {};
+        for (var k in detail) if (Object.prototype.hasOwnProperty.call(detail, k)) out[k] = detail[k];
+        out.locale = _hostLang;
+        out.intlLocale = hostIntlLocale();
+        out.languages = [_hostLang];
+        return out;
+    }
+
+
+
+
+
     var WIN_FONTS = [
         'Arial', 'Arial Black', 'Arial Narrow', 'Bahnschrift', 'Calibri', 'Calibri Light', 'Cambria',
         'Cambria Math', 'Candara', 'Candara Light', 'Comic Sans MS', 'Consolas', 'Constantia',
@@ -210,9 +254,11 @@
             p.language = detail.locale;
             p.locale = detail.locale;
 
+
+
             try {
                 var parts = String(detail.locale).split('-');
-                if (parts.length >= 2) p.countryCode = parts[parts.length - 1].toUpperCase();
+                if (parts.length >= 2 && detail.hostLang !== true) p.countryCode = parts[parts.length - 1].toUpperCase();
             } catch (eCc) {}
             var keepLangs = Array.isArray(p.languages) && p.languages.length > 0 &&
                 p.languages[0] === detail.locale;
@@ -315,13 +361,14 @@
         document.addEventListener('ui:ready', function(ev) {
             try {
                 if (!ev.detail) return;
+                var _d = withHostLanguage(ev.detail);
                 var _bp =(afpBag() && afpBag().getProfile && afpBag().getProfile()) || window.__AFP_PROFILE__;
                 if (_bp) {
-                    applyBridge(_bp, ev.detail);
+                    applyBridge(_bp, _d);
                     afpSetProfile(_bp);
                 } else {
 
-                    buildAndSetEarlyFromBridge(ev.detail);
+                    buildAndSetEarlyFromBridge(_d);
                 }
             } catch (e) {}
         });
@@ -368,7 +415,7 @@
         var earlyCc = 'US';
         try {
             var locParts = String(locale).split('-');
-            if (locParts.length >= 2) earlyCc = locParts[locParts.length - 1].toUpperCase();
+            if (locParts.length >= 2 && detail.hostLang !== true) earlyCc = locParts[locParts.length - 1].toUpperCase();
         } catch (eCc2) {}
 
         var ua = navigator.userAgent;
@@ -4468,20 +4515,53 @@
 
     if (ID.screenWidth) { try {
 
-        _defIfDiff(screen, 'width',  function() { return ID.screenWidth; });
-        _defIfDiff(screen, 'height', function() { return ID.screenHeight; });
-        try {
-            var _aw = screen.availWidth, _ah = screen.availHeight;
-            var _tw = ID.screenWidth, _th = Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
 
-            if (!_sameVal(_aw, _tw)) _defIfDiff(screen, 'availWidth', function() { return ID.screenWidth; });
-            if (!_sameVal(_ah, _th)) _defIfDiff(screen, 'availHeight', function() {
-                return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
-            });
-        } catch (eAv) {
-            _defIfDiff(screen, 'availWidth',  function() { return ID.screenWidth; });
-            _defIfDiff(screen, 'availHeight', function() { return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8; });
-        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        var _claimScreen = function () {
+            if (!ID.screenWidth) return;
+            _defIfDiff(screen, 'width',  function() { return ID.screenWidth; });
+            _defIfDiff(screen, 'height', function() { return ID.screenHeight; });
+            try {
+                var _aw = screen.availWidth, _ah = screen.availHeight;
+                var _tw = ID.screenWidth, _th = Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+
+                if (!_sameVal(_aw, _tw)) _defIfDiff(screen, 'availWidth', function() { return ID.screenWidth; });
+                if (!_sameVal(_ah, _th)) _defIfDiff(screen, 'availHeight', function() {
+                    return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+                });
+            } catch (eAv) {
+                _defIfDiff(screen, 'availWidth',  function() { return ID.screenWidth; });
+                _defIfDiff(screen, 'availHeight', function() { return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8; });
+            }
+        };
+        _claimScreen();
+        try {
+            document.addEventListener('ui:state', function () { try { _claimScreen(); } catch (eCl) {} });
+        } catch (eLs) {}
 
 
 
