@@ -116,12 +116,51 @@ const ctx = await chromium.launchPersistentContext(dir, {
   args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
 });
 
+// [FIX seven-hundred-milliseconds-was-the-whole-argument] Between the teaching load and the
+// measuring one, wait for the REGISTRATION, not for a duration.
+//
+// The first load is what tells background.js this route's CSP, and the stand-down the second
+// load measures only exists once a content script is registered for that route. The chain in
+// between is long — header seen, route appended to its list, storage.onChanged, the script
+// re-registered — and this file allowed it a flat 700ms. That is enough on this machine and
+// was not enough on the CI runner: v2.5.40's release job came back with
+//
+//     window: {cores: 8,  tz: America/New_York}    the profile
+//     worker: {cores: 4,  mem: 16, tz: UTC}        the runner's real machine
+//     flags : {tt: null, wb: null}                 nothing had arrived
+//
+// seven failed assertions, on a tree that passes 8/8 here with the flag present every time.
+// So the suite was measuring the delivery race, which test/blobcsp.mjs owns and asserts on
+// purpose, instead of the thing in its own title.
+//
+// Polling for the registration turns the delay into a number instead of a guess, and the
+// number is printed. `plain` carries no CSP, so nothing will ever register for it and the
+// wait is skipped rather than spent.
+const waitForRoute = async (name) => {
+  if (!CASES[name]) return -1;
+  const t0 = Date.now();
+  for (let i = 0; i < 100; i++) {
+    const sw = ctx.serviceWorkers()[0];
+    if (sw) {
+      const have = await sw.evaluate(async (seg) => {
+        const regs = await chrome.scripting.getRegisteredContentScripts();
+        return (regs || []).some((r) => (r.matches || []).some((m) => m.indexOf(seg) !== -1));
+      }, name).catch(() => false);
+      if (have) return Date.now() - t0;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return -2;
+};
+
 const readCase = async (name) => {
   const page = await ctx.newPage();
   const url = `http://127.0.0.1:${port}/${name}`;
   // Twice: the first load is what TEACHES background.js this origin's CSP.
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForTimeout(700);
+  const waited = await waitForRoute(name);
+  if (waited === -2) console.log(`  note ${name}: no content script registered for this route in 10s`);
+  else if (waited >= 0) console.log(`  note ${name}: the registration appeared ${waited}ms after the first load`);
   await page.goto(url + '?second=1', { waitUntil: 'load' });
   const got = await page.evaluate(async () => {
     for (let i = 0; i < 40 && !window.__scope; i++) await new Promise((r) => setTimeout(r, 250));
