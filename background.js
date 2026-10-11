@@ -3563,7 +3563,28 @@ function afpNoteCsp(details) {
             // [FIX a-meta-csp-was-never-learned] No header is not "no policy": a route learned
             // from a <meta> element sends none on every visit. See afpSdTabForRoute.
             afpSdTabForRoute(tabId, details.url);
-            afpNoteLooseDocument(host);
+            // [FIX a-favicon-counted-as-evidence-about-a-sites-policy] Only a DOCUMENT can
+            // carry a page CSP, so only a document's silence is evidence that the host has a
+            // route without one. A main_frame navigation straight to an image, a file or any
+            // other non-HTML response arrives with no CSP header BY NATURE, and reading that
+            // as "this host is loose somewhere" marked it mixed — which drops its seed for
+            // good and stops its learned routes from ever collapsing.
+            //
+            // Reported as the 2.5.38 fix coming undone: the github.com worker violation came
+            // back. Reproduced on a fresh profile — five ordinary github.com pages leave the
+            // mixed list empty, and one navigation to github.com/favicon.ico puts the host on
+            // it. From then on the seed is gone and the first visit to any route not yet
+            // learned pays the dead worker again, which is exactly the report.
+            //
+            // A missing content-type is treated as NOT a document on purpose: it is the
+            // conservative direction here, keeping a host seeded rather than dropping it on
+            // a response that said nothing either way.
+            let _ctIsDoc = false;
+            for (let i = 0; i < headers.length; i++) {
+                if (String(headers[i].name || '').toLowerCase() !== 'content-type') continue;
+                _ctIsDoc = /^\s*(text\/html|application\/xhtml\+xml)\s*(;|$)/i.test(String(headers[i].value || ''));
+            }
+            if (_ctIsDoc) afpNoteLooseDocument(host);
             return;
         }
         // [FIX the-csp-observer-judged-from-a-cache-that-had-not-loaded] The verdict waits

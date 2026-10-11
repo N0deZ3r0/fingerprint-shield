@@ -1074,9 +1074,15 @@ t.section('15) CSP restrictions per route');
     'the regex takes the route with a query on a subdomain, with a port, and not a longer segment');
   t.eq(routeRules[0].condition.resourceTypes.join(), 'main_frame,sub_frame', 'for document requests only');
   // A loose route that sends NO CSP at all (returns before the judge) still marks the host.
+  // [FIX a-favicon-counted-as-evidence-about-a-sites-policy] It has to LOOK like a document
+  // now: a main_frame response with no content-type is not read as one, because a navigation
+  // straight to an image carries no CSP by nature and says nothing about the site's policy.
+  // This fixture sent no content-type at all, which made it a weaker claim than the thing it
+  // was asserting — a real document has one. test/cspseed.mjs section 5 holds the other side.
+  const htmlNoCsp = [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }];
   afpNoteCsp({ type: 'main_frame', tabId: 6, frameId: 0, url: 'https://nocsp.test/app/', responseHeaders: headersOf(STRICT) });
   await settle();
-  afpNoteCsp({ type: 'main_frame', tabId: 6, frameId: 0, url: 'https://nocsp.test/', responseHeaders: [] });
+  afpNoteCsp({ type: 'main_frame', tabId: 6, frameId: 0, url: 'https://nocsp.test/', responseHeaders: htmlNoCsp });
   await settle();
   t.assert((store.get('afp_csp_mixed') || []).includes('nocsp.test'), 'a document with no CSP header on a listed host marks it mixed');
   afpNoteCsp({ type: 'main_frame', tabId: 6, frameId: 0, url: 'https://nocsp.test/docs/', responseHeaders: headersOf(STRICT) });

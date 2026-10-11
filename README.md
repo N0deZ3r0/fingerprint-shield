@@ -5,7 +5,7 @@
 **One coherent invented machine — the same one in the window, in every frame and in every worker.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-2.5.39-3b5bdb)
+![version](https://img.shields.io/badge/version-2.5.40-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
 ![suites](https://img.shields.io/badge/suites-62-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
@@ -25,7 +25,7 @@ browser rather than against an assumption.
 
 <div align="center">
 
-<img src="docs/ui-whoami.png?v=2.5.39" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
+<img src="docs/ui-whoami.png?v=2.5.40" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
 
 <sub><b>Who Am I</b> — the machine as a site reads it. Every value on this page is the
 claim, not the host, and the fingerprint hash at the top is what a tracker would key on.</sub>
@@ -53,14 +53,14 @@ To run from source instead, point **Load unpacked** at a clone of this repositor
 <tr>
 <td width="38%" valign="top" align="center">
 
-<img src="docs/ui-popup.png?v=2.5.39" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
+<img src="docs/ui-popup.png?v=2.5.40" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
 
 <sub>The popup: country, per-site switches, device profile.</sub>
 
 </td>
 <td width="62%" valign="top" align="center">
 
-<img src="docs/ui-modules.png?v=2.5.39" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
+<img src="docs/ui-modules.png?v=2.5.40" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
 
 <sub>Thirteen modules, switched one by one. `ClientRects` ships off — it is
 the one that makes CreepJS go red.</sub>
@@ -153,7 +153,7 @@ from the audit page, so they are not renumbered.
    CSS engine on the terms it ships under — item 5 prices the door that would.
    The pixel-ratio half is closed since 2.5.27 — a claimed dpr the engine disproves is
    refutable in two lines, so the ratio yields to the host as the screen does above.
-   COMPOUND queries are closed since 2.5.39. `matchMedia` recognised a query by the feature
+   COMPOUND queries are closed since 2.5.40. `matchMedia` recognised a query by the feature
    names anywhere inside it, so `screen and (min-width:600px) and (max-width:899.95px)` was
    answered from one word and came back `true` where the engine said `false` — and `not all
    and (min-width:900px)` came back `true`, which no browser says. A query is now answered
@@ -174,10 +174,12 @@ from the audit page, so they are not renumbered.
     The answer is learned from the response header and delivered by a content script, so from
     the second load on the page keeps its worker — but nothing can be registered for a route
     nobody has visited, so visit one loses it and the browser prints `mw-bundle.js` as the
-    cause. Since 2.5.39 `github.com` and `youtube.com` are seeded from policies measured on
+    cause. Since 2.5.40 `github.com` and `youtube.com` are seeded from policies measured on
     2026-10-07, so neither pays that visit; every other origin still does, once per route.
-    A seed is skipped where the CSP-rewrite switch is on, and dropped by the first response
-    from that host whose policy no longer refuses — the observer that would have learned the
+    A seed is skipped where the CSP-rewrite switch is on, and dropped by the first DOCUMENT
+    from that host whose policy no longer refuses — a document, because only a document can
+    carry a page CSP, and until 2.5.40 a navigation to an image counted, which dropped the
+    seed on a favicon — the observer that would have learned the
     host is the one that un-seeds it, so a site relaxing its CSP costs a measurement rather
     than a release. A policy sent in a `<meta>` tag is
     read from the page itself and costs no worker; what is left there is the first load's

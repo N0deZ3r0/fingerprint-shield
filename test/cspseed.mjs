@@ -162,4 +162,37 @@ section('4) a seeded host that relaxes its CSP un-seeds itself');
     'and the seed is gone, so its workers are patched again and the window stops standing down');
 }
 
+// ── and what counts as evidence that a host is loose ─────────────────────────
+//
+// [FIX a-favicon-counted-as-evidence-about-a-sites-policy] The un-seeding path above is only
+// as good as its trigger. It fires on a main_frame response with no CSP header — and an
+// image has no CSP header because it is an image, not because the site relaxed anything.
+// Measured on a fresh profile: five ordinary github.com pages leave the mixed list empty,
+// and one navigation to github.com/favicon.ico puts the host on it, which drops the seed for
+// good. That is the 2.5.38 fix coming undone, and it was reported as exactly that.
+section('5) only a document can testify about a document policy');
+{
+  const host = CSP_NOBLOB_SEEDS[0].host;
+  const trial = async (label, contentType, wantMixed) => {
+    const { chrome, store } = mockChrome({});
+    const { afpNoteCsp, afpNoBlobScopes: scopes } =
+      loadBackground(['afpNoteCsp', 'afpNoBlobScopes'], { chrome });
+    const responseHeaders = contentType ? [{ name: 'Content-Type', value: contentType }] : [];
+    afpNoteCsp({ type: 'main_frame', tabId: 11, frameId: 0, url: `https://${host}/thing`, responseHeaders });
+    await new Promise((r) => setTimeout(r, 300));
+    const mixed = (store.get('afp_csp_mixed') || []).indexOf(host) !== -1;
+    const seeded = (await scopes()).indexOf(host) !== -1;
+    eq(mixed, wantMixed, `${label}: host marked mixed = ${mixed}`);
+    eq(seeded, !wantMixed, `${label}: and the seed is ${seeded ? 'kept' : 'dropped'}`);
+  };
+  await trial('a favicon with no CSP', 'image/x-icon', false);
+  await trial('a PNG with no CSP', 'image/png', false);
+  await trial('a download with no CSP', 'application/octet-stream', false);
+  await trial('a JSON body with no CSP', 'application/json', false);
+  await trial('no content-type at all', '', false);
+  await trial('an HTML document with no CSP', 'text/html; charset=utf-8', true);
+  await trial('an XHTML document with no CSP', 'application/xhtml+xml', true);
+  note('an image is silent about a policy it could never carry; a document is not');
+}
+
 done();
