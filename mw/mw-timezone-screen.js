@@ -23,6 +23,8 @@
     // [FIX host-mode] The screen accessors go native through _def; the window-size clamps
     // below do not go through _def, so they ask this directly. See mw-core.
     var _hostHwNow = (MW && MW.hostHwNow) ? MW.hostHwNow : function () { return false; };
+    // [FIX the-taskbar-was-a-percentage] — see mw-core.js.
+    var _availFor = (MW && MW.availHeightFor) ? MW.availHeightFor : function (h) { return Math.max(0, (h | 0) - 48); };
     var _hostResolved = (MW && MW.hostResolved) ? MW.hostResolved : function () { return {}; };
     // [FIX intl-locale-contradicted-navigator-language] Read LIVE, not at install: the
     // Intl locale has to follow whatever navigator.language ends up being, and that is
@@ -1671,15 +1673,15 @@
             _defIfDiff(screen, 'height', function() { return ID.screenHeight; });
             try {
                 var _aw = screen.availWidth, _ah = screen.availHeight;
-                var _tw = ID.screenWidth, _th = Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+                var _tw = ID.screenWidth, _th = _availFor(ID.screenHeight || 1080);
                 // If width already matches profile, keep native avail* (taskbar) — no defineProperty
                 if (!_sameVal(_aw, _tw)) _defIfDiff(screen, 'availWidth', function() { return ID.screenWidth; });
                 if (!_sameVal(_ah, _th)) _defIfDiff(screen, 'availHeight', function() {
-                    return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+                    return _availFor(ID.screenHeight || 1080);
                 });
             } catch (eAv) {
                 _defIfDiff(screen, 'availWidth',  function() { return ID.screenWidth; });
-                _defIfDiff(screen, 'availHeight', function() { return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8; });
+                _defIfDiff(screen, 'availHeight', function() { return _availFor(ID.screenHeight || 1080); });
             }
         };
         _claimScreen();
@@ -2034,8 +2036,9 @@
             Object.defineProperty(window, 'innerHeight', { get: _mn(function innerHeight() {
                 return _inHv(_isSelfWin(this) ? _giH() : _rawFor(_giH, this));
             }, true), configurable: true });
-            // avail-like height (taskbar) — never report outerHeight === screen.height
-            function _availH() { return Math.round((sh() * 0.963) / 8) * 8; }
+            // avail-like height (taskbar) — never report outerHeight === screen.height.
+            // The same number screen.availHeight answers, from the same function.
+            function _availH() { return _availFor(sh()); }
             // [FIX outer-was-the-screen-while-inner-was-the-window] `outer <= 0` used to be
             // folded into the maximized test and answer the claimed SCREEN. But the browser
             // hands 0 for the window geometry before it knows it — measured in the first

@@ -1,4 +1,4 @@
-Fingerprint Shield 2.5.41 — release package
+Fingerprint Shield 2.5.42 — release package
 ==========================================
 
   This is the document that ships INSIDE the package: structure, CI, and the suites that

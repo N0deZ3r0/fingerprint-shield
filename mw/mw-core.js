@@ -192,20 +192,67 @@
     var _NATIVE_DPR = 0;
     try { _NATIVE_DPR = Number(window.devicePixelRatio) || 0; } catch (eND) {}
 
+    // [FIX the-panel-is-the-claim-the-scale-is-the-hosts] The two rules above, as one
+    // function, and with the ratio applied to the PANEL rather than beside the CSS size: the
+    // claim is size x ratio, divided by this machine's display scaling. The whole argument is
+    // at afpScreenFor in defaults.js; this is a copy of it, because the MAIN world cannot load
+    // that file, and test/profilecoherence.mjs compares the two between the markers.
+    // <afp-screen-rule>
+    var AFP_WIN_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5];
+    var AFP_ZOOM_LEVELS = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 0.8, 0.9, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+    function afpHostScale(dpr) {
+        if (!(dpr > 0)) return 1;
+        var i, j, best = 0, bestDev = Infinity;
+        for (i = 0; i < AFP_WIN_SCALES.length; i++) {
+            if (Math.abs(dpr - AFP_WIN_SCALES[i]) < 0.01) return AFP_WIN_SCALES[i];
+        }
+        for (i = 0; i < AFP_WIN_SCALES.length; i++) {
+            for (j = 0; j < AFP_ZOOM_LEVELS.length; j++) {
+                if (Math.abs(dpr - AFP_WIN_SCALES[i] * AFP_ZOOM_LEVELS[j]) < 0.01) {
+                    var dev = Math.abs(Math.log(AFP_ZOOM_LEVELS[j]));
+                    if (dev < bestDev) { bestDev = dev; best = AFP_WIN_SCALES[i]; }
+                }
+            }
+        }
+        return best || dpr;
+    }
+    function afpScreenFor(cw, ch, cdpr, nw, nh, ndpr) {
+        var d = (typeof cdpr === 'number' && cdpr > 0) ? cdpr : 1;
+        var out = { w: cw | 0, h: ch | 0, dpr: d, held: true };
+        if (typeof ndpr === 'number' && ndpr > 0) {
+            var s = afpHostScale(ndpr);
+            if (Math.abs(d - s) > 0.001) {
+                out.w = Math.round((cw | 0) * d / s);
+                out.h = Math.round((ch | 0) * d / s);
+            }
+            if (Math.abs(d - ndpr) > 0.001) out.dpr = ndpr;
+        }
+        if ((nw | 0) > 0 && (nh | 0) > 0 && !(out.w >= (nw | 0) && out.h >= (nh | 0))) {
+            out.w = nw | 0; out.h = nh | 0; out.held = false;
+        }
+        return out;
+    }
+    // </afp-screen-rule>
     function _screenAtLeastNative(p) {
         if (!p || typeof p !== 'object') return p;
         try {
-            // The ratio is judged on its own: the screen claim can hold while the ratio
-            // does not, and a page reads them separately.
-            if (_NATIVE_DPR > 0 && typeof p.devicePixelRatio === 'number' &&
-                Math.abs(p.devicePixelRatio - _NATIVE_DPR) > 0.001) {
-                p.devicePixelRatio = _NATIVE_DPR;
-            }
-            if (_NATIVE_SW <= 0 || _NATIVE_SH <= 0) return p;
-            var w = p.screenWidth | 0, h = p.screenHeight | 0;
-            if (w >= _NATIVE_SW && h >= _NATIVE_SH) return p;   // the claim contains the machine
-            p.screenWidth = _NATIVE_SW;
-            p.screenHeight = _NATIVE_SH;
+            // Applied to every profile that reaches this file, and some reach it twice — the
+            // same object comes back through ui:state after profile-injector has merged into
+            // it. The rule maps a CLAIM to an answer and the answer is not a claim: with the
+            // tab zoomed, ratio 1.65 on a 150% display, feeding an answer back in would scale
+            // it again by 1.1. So the answer is remembered, and only a triple that differs
+            // from it — a new claim merged in — is mapped.
+            var last = p.__scr;
+            if (last && last.w === p.screenWidth && last.h === p.screenHeight &&
+                last.d === p.devicePixelRatio) return p;
+            var r = afpScreenFor(p.screenWidth, p.screenHeight, p.devicePixelRatio,
+                _NATIVE_SW, _NATIVE_SH, _NATIVE_DPR);
+            p.screenWidth = r.w;
+            p.screenHeight = r.h;
+            p.devicePixelRatio = r.dpr;
+            Object.defineProperty(p, '__scr', {
+                value: { w: r.w, h: r.h, d: r.dpr }, configurable: true, writable: true, enumerable: false
+            });
         } catch (eSc) {}
         return p;
     }
@@ -1750,6 +1797,31 @@
     function _hostHwNow() {
         try { var p = _prof(); return !!(p && p.hostHw === true); } catch (e) { return false; }
     }
+    // [FIX the-taskbar-was-a-percentage] screen.availHeight was 0.963 of the height, rounded
+    // to a multiple of 8 — a rule that lands on a real Windows taskbar at one height only
+    // (1080 → 40) and by coincidence at a second (1280 → 48). Everywhere else the subtraction
+    // a page can make in one line, screen.height - screen.availHeight, named a taskbar no
+    // Windows has. Measured on a real monitor with each table row claimed:
+    //
+    //   720 → 24   768 → 32   800 → 32   864 → 32   1440 → 56   2160 → 80
+    //
+    // A Windows taskbar is a fixed number of effective pixels whatever the resolution and the
+    // scaling — 48 on Windows 11, 40 on Windows 10 — and CSS pixels are effective pixels, so
+    // the answer is a subtraction, not a ratio. The machine this was found on says so itself:
+    // chrome://gpu reports bounds 2048x1280 and workarea 2048x1232 at scale 1.5. The family
+    // is the one the profile already states in platformVersion (13 and up is Windows 11, the
+    // same line background.js draws), so the taskbar and the client hints cannot disagree.
+    // Read at effect time like _hostHwNow: the boot profile says '10.0.0' until dyn/boot.js
+    // has published the host's bucket, still ahead of the page's first script.
+    function _availHeightFor(h) {
+        var pv = '';
+        try {
+            var p = _prof();
+            pv = String((p && p.clientHints && p.clientHints.platformVersion) || '');
+        } catch (e) {}
+        var taskbar = (parseInt(pv, 10) >= 13) ? 48 : 40;
+        return Math.max(0, (h | 0) - taskbar);
+    }
     var _HW_PROPS = {
         hardwareConcurrency: 1, deviceMemory: 1, cpuPerformance: 1, maxTouchPoints: 1, bluetooth: 1,
         width: 1, height: 1, availWidth: 1, availHeight: 1, availLeft: 1, availTop: 1, isExtended: 1,
@@ -2180,6 +2252,9 @@
                 // [FIX host-mode] Read at effect time by every module with a hardware
                 // answer that does not go through _def — see the note at its definition.
                 hostHwNow: _hostHwNow,
+                // [FIX the-taskbar-was-a-percentage] Read by every place that answers
+                // availHeight or sizes a maximized window from it.
+                availHeightFor: _availHeightFor,
                 // [FIX a-meta-csp-was-never-learned] Asked by mw-workers at construction time.
                 metaCspBlocksBlob: _metaCspBlocksBlobWorkers
                 // [CLEANUP dead-export] nativeFns and DEFAULT_PROFILE were published here
@@ -2205,6 +2280,9 @@
                 def: _def, defIfDiff: _defIfDiff, sameVal: _sameVal, cpuTier: _cpuTier,
                 featKnown: _FEAT_KNOWN, featNow: _featNow, standDownNow: _standDownNow, hostResolved: _hostResolved, sdProp: _sdProp,
                 hostHwNow: _hostHwNow,
+                // [FIX the-taskbar-was-a-percentage] Read by every place that answers
+                // availHeight or sizes a maximized window from it.
+                availHeightFor: _availHeightFor,
                 // [FIX a-meta-csp-was-never-learned] Asked by mw-workers at construction time.
                 metaCspBlocksBlob: _metaCspBlocksBlobWorkers
                 // [CLEANUP dead-export] see the primary branch above — nativeFns and

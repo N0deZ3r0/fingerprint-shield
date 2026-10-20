@@ -5,7 +5,7 @@
 **Одна согласованная выдуманная машина — та же самая в окне, в каждом фрейме и в каждом воркере.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![версия](https://img.shields.io/badge/version-2.5.41-3b5bdb)
+![версия](https://img.shields.io/badge/version-2.5.42-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
 ![сьютов](https://img.shields.io/badge/сьютов-62-2f9e44)
 ![зависимостей в рантайме](https://img.shields.io/badge/зависимостей_в_рантайме-0-2f9e44)
@@ -25,7 +25,7 @@
 
 <div align="center">
 
-<img src="docs/ui-whoami.ru.png?v=2.5.41" width="100%" alt="Страница Who Am I: хеш отпечатка, платформа, язык и часовой пояс, затем выдуманное оборудование, экран, видеокарта, состояние canvas и WebRTC и список активных модулей">
+<img src="docs/ui-whoami.ru.png?v=2.5.42" width="100%" alt="Страница Who Am I: хеш отпечатка, платформа, язык и часовой пояс, затем выдуманное оборудование, экран, видеокарта, состояние canvas и WebRTC и список активных модулей">
 
 <sub><b>Who Am I</b> — машина такой, какой её читает сайт. Каждое значение на этой странице
 — это заявка, а не хозяйская машина; хеш отпечатка наверху — то, за что зацепится трекер.</sub>
@@ -53,14 +53,14 @@
 <tr>
 <td width="38%" valign="top" align="center">
 
-<img src="docs/ui-popup.ru.png?v=2.5.41" width="100%" alt="Попап расширения: защита активна, шесть из шести модулей, страна выхода, посайтовые переключатели WebRTC, Service Worker и CSP, выбор обычного или скрытого режима и профиль устройства">
+<img src="docs/ui-popup.ru.png?v=2.5.42" width="100%" alt="Попап расширения: защита активна, шесть из шести модулей, страна выхода, посайтовые переключатели WebRTC, Service Worker и CSP, выбор обычного или скрытого режима и профиль устройства">
 
 <sub>Попап: страна, посайтовые переключатели, профиль устройства.</sub>
 
 </td>
 <td width="62%" valign="top" align="center">
 
-<img src="docs/ui-modules.ru.png?v=2.5.41" width="100%" alt="Сетка модулей защиты в настройках: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network и Hide AdBlock — каждый галочкой с однострочным описанием">
+<img src="docs/ui-modules.ru.png?v=2.5.42" width="100%" alt="Сетка модулей защиты в настройках: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network и Hide AdBlock — каждый галочкой с однострочным описанием">
 
 <sub>Тринадцать модулей, включаются по одному. `ClientRects` выключен по
 умолчанию — именно от него краснеет CreepJS.</sub>
@@ -156,6 +156,12 @@ npm run test:all   # добавляет 51 браузерный сьют — ш�
    экран, а same-origin-фрейм — заявленный (измерено на 2048×1280). Теперь это решается
    заново при каждом приходе профиля, первый раз — до первого скрипта страницы. Держит
    test/viewport.mjs.
+   С 2.5.42 строка заявляет ПАНЕЛЬ, а не CSS-размер. Отношение пикселей уступает хозяйскому с
+   2.5.27 (пункт 8), и CSS-размер рядом с ним называл панель, которой не выпускают: строка по
+   умолчанию на 1080p-ноутбуке при 125% отвечала 1920×1080 при 1.25 — панель 2400×1350, а PC
+   Power при 150% — 5760×3240. Теперь панель делится на масштабирование Windows этой машины —
+   не на devicePixelRatio, который меняет зум страницы, пока screen.width стоит на месте, — и
+   к результату применяется правило выше. Держит test/profilecoherence.mjs.
 8. **`@media` и `matchMedia` расходятся по нескольким признакам.** `matchMedia` отвечает из
    профиля, CSS-движок — из настоящего окна, а до CSS-движка расширение не дотягивается на
    тех условиях, на которых поставляется — цена двери, которая дотягивается, в пункте 5.

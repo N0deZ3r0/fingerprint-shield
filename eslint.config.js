@@ -127,6 +127,11 @@ module.exports = [
         // defaults.js, read by audit.js and by dev-mediaparity.html. Two copies of it had
         // already drifted when it was hoisted; see its header there.
         AFP_MEDIA_PARITY_TRADE: 'readonly',
+        // [FIX the-panel-is-the-claim-the-scale-is-the-hosts] The screen rule — defaults.js,
+        // read by popup.js, whoami.js and audit.js. mw/mw-core.js keeps a copy of its own
+        // between the same markers, held to this one by test/profilecoherence.mjs.
+        afpScreenFor: 'readonly', afpHostScale: 'readonly',
+        AFP_WIN_SCALES: 'readonly', AFP_ZOOM_LEVELS: 'readonly',
       },
     },
     linterOptions: { reportUnusedDisableDirectives: true },

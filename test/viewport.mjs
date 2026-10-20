@@ -66,7 +66,7 @@ const VIEW = { width: 2200, height: 1100 };
 // The inline script is the page's FIRST: what it reads is what a site's own first line
 // reads, before the inject that lands ~300ms after navigation.
 const PAGE = '<!doctype html><html><head><script>window.__first = { w: screen.width, h: screen.height, ' +
-  'aw: screen.availWidth, mq: matchMedia("(device-width: " + screen.width + "px)").matches };<' +
+  'aw: screen.availWidth, ah: screen.availHeight, dpr: devicePixelRatio, mq: matchMedia("(device-width: " + screen.width + "px)").matches };<' +
   '/script></head><body><p>vp</p></body></html>';
 const server = createServer((q, r) =>
   r.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }).end(PAGE));
@@ -107,14 +107,14 @@ const READ = () => {
   };
 };
 
-async function read(clean, profileId) {
+async function read(clean, profileId, dsf) {
   const dir = mkdtempSync(join(tmpdir(), 'afp-vp-'));
   let browser = null;
   const ctx = clean
     ? await (browser = await chromium.launch({ ...BROWSER, headless: !headed }))
-      .newContext({ viewport: VIEW })
+      .newContext({ viewport: VIEW, ...(dsf ? { deviceScaleFactor: dsf } : {}) })
     : await chromium.launchPersistentContext(dir, {
-      ...BROWSER, headless: !headed, viewport: VIEW,
+      ...BROWSER, headless: !headed, viewport: VIEW, ...(dsf ? { deviceScaleFactor: dsf } : {}),
       args: [`--disable-extensions-except=${root}`, `--load-extension=${root}`]
     });
   try {
@@ -152,6 +152,12 @@ async function read(clean, profileId) {
     // clamp this checks is applied when it does.
     await page.waitForTimeout(1200);
     const got = await page.evaluate(READ);
+    // The OS family the page is told about, for the taskbar section: the one thing that
+    // decides how tall a Windows taskbar is.
+    got.pv = await page.evaluate(async () => {
+      try { return (await navigator.userAgentData.getHighEntropyValues(['platformVersion'])).platformVersion; }
+      catch (e) { return ''; }
+    });
     // What the PROFILE claims, read where it lives. Needed to tell "the claim was kept" from
     // "the machine's own pair was substituted" — the whole-pair assertion below needs both.
     if (!clean) {
@@ -176,6 +182,10 @@ const clean = await read(true);
 const ours = await read(false);
 const BIG = PROFILES.find((x) => x.id === 'pc_power');
 const big = await read(false, BIG.id);
+// [FIX the-panel-is-the-claim-the-scale-is-the-hosts] The same window on a display at 150%.
+const clean15 = await read(true, null, 1.5);
+const power15 = await read(false, 'pc_power', 1.5);
+const gaming15 = await read(false, 'pc_gaming', 1.5);
 server.close();
 
 const show = (label, r) => {
@@ -262,6 +272,48 @@ ok(big.screenW === BIG.screenW && big.screenH === BIG.screenH,
   `it is still the claim after the inject (${big.screenW}x${big.screenH})`);
 ok(f.mq === true && big.mqNow === true,
   `matchMedia's device-width agrees with screen.width (first script ${f.mq}, later ${big.mqNow})`);
+
+// [FIX the-taskbar-was-a-percentage] screen.height - screen.availHeight is the taskbar, and a
+// Windows taskbar is 48 effective pixels on Windows 11 and 40 on Windows 10 at every
+// resolution and scale. availHeight was 0.963 of the height, which made this 80 under PC
+// Power's 2160 and 44 under the 1100-pixel screen this rig reports. The family comes from
+// the page's own platformVersion, so the expectation holds on a Windows 10 runner as well.
+const taskbarFor = (pv) => (parseInt(pv, 10) >= 13 ? 48 : 40);
+for (const [label, r, h, ah] of [
+  [`${BIG.id}, first script`, big, f.h, f.ah],
+  [`${BIG.id}, after the inject`, big, big.screenH, big.availH],
+  ['laptop_mid (yields its screen to the rig)', ours, ours.screenH, ours.availH]
+]) {
+  const want = taskbarFor(r.pv);
+  ok(h - ah === want,
+    `${label}: the taskbar is a Windows one — screen.height ${h} - availHeight ${ah} = ${h - ah}, ` +
+    `want ${want} for platformVersion ${r.pv}`);
+}
+
+// [FIX the-panel-is-the-claim-the-scale-is-the-hosts] At 150% a page is given the machine's
+// ratio, so the claimed size has to be the panel at 150% — or the pair names a panel nobody
+// makes. Up to 2.5.41 PC Power reported 3840x2160 at 1.5 here: a 5760x3240 panel.
+console.log('');
+for (const [label, r] of [['clean, 150%', clean15], ['pc_power, 150%', power15], ['pc_gaming, 150%', gaming15]]) {
+  const q = r.first || {};
+  console.log(`  ${label.padEnd(16)} first script: screen ${q.w}x${q.h} at ${q.dpr}   after the inject: ${r.screenW}x${r.screenH}`);
+}
+const expect15 = (id) => {
+  const p = PROFILES.find((x) => x.id === id);
+  const w = Math.round(p.screenW * p.dpr / 1.5), h = Math.round(p.screenH * p.dpr / 1.5);
+  const c = clean15.first || {};
+  return (w >= c.w && h >= c.h) ? [w, h] : [c.w, c.h];
+};
+ok((clean15.first || {}).dpr === 1.5, `the rig really is at 150% (${(clean15.first || {}).dpr})`);
+for (const [id, r] of [['pc_power', power15], ['pc_gaming', gaming15]]) {
+  const [w, h] = expect15(id);
+  const q = r.first || {};
+  ok(q.w === w && q.h === h && q.dpr === 1.5,
+    `${id} at 150%: the first script reads ${q.w}x${q.h} at ${q.dpr}, want ${w}x${h} at 1.5 — the row's panel at 150%, or the machine's screen when that is smaller`);
+  ok(r.screenW === w && r.screenH === h, `${id} at 150%: and the same after the inject (${r.screenW}x${r.screenH})`);
+  ok(q.h - q.ah === taskbarFor(r.pv), `${id} at 150%: the taskbar is still a Windows one (${q.h - q.ah})`);
+}
+ok(!((power15.first || {}).w === 3840), 'PC Power at 150% no longer claims 3840 CSS pixels — a 5760-pixel panel');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

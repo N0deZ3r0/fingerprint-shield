@@ -35,7 +35,7 @@
   "popupHostSpecLong":  { "message": "this machine’s real hardware" },
   "popupTagHost":       { "message": "host" },
   "popupTagHostScreen": { "message": "host screen" },
-  "popupScreenDropped": { "message": "The screen is not substituted: $1×$2 is smaller than your $3×$4, and pages will see yours. Only a row at least as large as your screen on both sides is substituted." },
+  "popupScreenDropped": { "message": "The screen is not substituted: at your display scaling this row is $1×$2, smaller than your $3×$4, and pages will see yours. Only a row at least as large as your screen on both sides is substituted." },
   "popupScreenRest":    { "message": "Everything else — cores, memory, GPU — works as usual." },
 
   "popupExitMismatch":  { "message": "Exit address: $1 — does not match" },

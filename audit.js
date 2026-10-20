@@ -708,9 +708,30 @@ const WORKER_VISIBLE = {
   timezone: 1, locale: 1, gpu: 1,
 };
 
-const RAISED_TO_HOST = {
-  screenW: (claim, hostV) => Number(hostV) > Number(claim),
-  screenH: (claim, hostV) => Number(hostV) > Number(claim),
+// [FIX the-panel-is-the-claim-the-scale-is-the-hosts] These used to be "the host is larger
+// than the claim", a second and simpler copy of mw-core's rule — and the ratio had no entry
+// at all, so on any display not at 100% the row read THE HOST and counted as a failure while
+// README "Limits", item 8 said that was the design. They now ask the rule the page runs
+// (afpScreenFor, defaults.js, loaded by audit.html) and say which half of it applied.
+const screenRule = (p, host) => afpScreenFor(p.screenWidth, p.screenHeight, p.devicePixelRatio,
+  Number(host.screenW), Number(host.screenH), Number(host.dpr));
+const whyScreen = (r) => r.held
+  ? `the claimed panel at this machine's scaling — README "Limits", item 7`
+  : 'the host is larger than the claim — README "Limits", item 7';
+const BY_RULE = {
+  screenW: (p, host, seen) => { const r = screenRule(p, host); return String(seen) === String(r.w) ? whyScreen(r) : null; },
+  screenH: (p, host, seen) => { const r = screenRule(p, host); return String(seen) === String(r.h) ? whyScreen(r) : null; },
+  dpr: (p, host, seen) => {
+    const s = Number(seen), h = Number(host.dpr);
+    if (!(s > 0) || !(h > 0)) return null;
+    if (Math.abs(s - h) < 0.01) return `this machine's ratio — README "Limits", item 8`;
+    // The inspected tab can be zoomed where this page is not; zoom multiplies the ratio.
+    const z = s / h;
+    if (AFP_ZOOM_LEVELS.some((l) => Math.abs(z - l) < 0.01)) {
+      return `this machine's ratio, the tab zoomed to ${Math.round(z * 100)}% — README "Limits", item 8`;
+    }
+    return null;
+  },
 };
 
 /**
@@ -732,6 +753,7 @@ function render(profile, page, host, sdHalves) {
   let body = '';
   for (const key of Object.keys(CLAIM_OF)) {
     const claim = CLAIM_OF[key](profile);
+    let ruleWhy = null;
     const seen = page[key];
     const hostV = host[key];
     let state, text;
@@ -765,7 +787,7 @@ function render(profile, page, host, sdHalves) {
       }
     } else if (String(seen) === String(claim)) {
       state = 'ok'; text = 'matches the claim'; checked++;
-    } else if (RAISED_TO_HOST[key] && RAISED_TO_HOST[key](claim, hostV)) {
+    } else if (BY_RULE[key] && (ruleWhy = BY_RULE[key](profile, host, seen))) {
       // [FIX the-audit-called-a-documented-limit-a-failure] Reported from a real browser:
       // a green build, and "2 of 17 checks failed" — both of them the screen, on a machine
       // whose panel is 2008x1255 CSS px against a claim of 1920x1080.
@@ -781,7 +803,7 @@ function render(profile, page, host, sdHalves) {
       // the key: the host being LARGER than the claim is the case the clamp exists for. A
       // host SMALLER than the claim showing through is still a failure, because nothing
       // forces that and it would mean the spoof simply did not apply.
-      state = 'skip'; text = 'the host is larger than the claim — README "Limits", item 7';
+      state = 'skip'; text = ruleWhy;
     } else if (String(seen) === String(hostV)) {
       state = 'bad'; text = 'THE HOST — not patched here'; bad++; checked++;
     } else {

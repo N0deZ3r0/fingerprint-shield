@@ -381,3 +381,67 @@ function afpPersistSelection(store, mode, features) {
  */
 var AFP_MEDIA_PARITY_TRADE =
   /^\(?((min-|max-)?(device-)?(width|height)|(min-|max-)?resolution|-webkit-(min-|max-)?device-pixel-ratio|(any-)?(hover|pointer)|update)/;
+
+/**
+ * [FIX the-panel-is-the-claim-the-scale-is-the-hosts] What a page is told about the screen,
+ * for one claim on one machine. Shared by mw/mw-core.js (the answer itself — it keeps a copy
+ * between the same markers, because the MAIN world cannot load this file, and
+ * test/profilecoherence.mjs fails on any difference), the popup's "host screen" chip, Who Am
+ * I and the audit page's verdict.
+ *
+ * A row claims a PANEL: its CSS size at its own ratio — 1536x864 @1.25 is a 1080p panel at
+ * 125%. The ratio is never the row's to keep, because a claimed ratio the CSS engine
+ * disproves is refutable in two lines (README "Limits", item 8), so the page gets the machine's. Up
+ * to 2.5.41 the CSS size was kept beside the machine's ratio, and the pair named a panel
+ * nobody makes: the default row on the commonest laptop, 1080p at 125%, said 1920x1080 at
+ * 1.25 — a 2400x1350 panel; PC Power at 150% said 5760x3240. Now the panel is kept and
+ * divided by the machine's scaling, which is the pair a real machine with that panel at that
+ * scaling reports. Then the old rule (README "Limits", item 7): a screen cannot be smaller than the
+ * machine's, so a result that does not contain it gives way to the machine's own pair, whole.
+ *
+ * The divisor is Windows' display scaling, NOT devicePixelRatio. Browser zoom multiplies the
+ * ratio and leaves screen.width alone — measured on a clean Chromium, a 150% display at zoom
+ * 110 / 125 / 150 / 80% reads 1.65 / 1.875 / 2.25 / 1.2 and 2048 every time — so dividing by
+ * the ratio would move the screen with every zoomed site. afpHostScale takes the ratio back
+ * to the scaling it came from: a standard Windows step is taken as itself (zoom 100% is by
+ * far the common case), anything else as the step whose quotient is a Chrome zoom level
+ * closest to 100%.
+ *
+ * `held` is false when the machine's pair was reported instead of the claim's.
+ */
+// <afp-screen-rule>
+var AFP_WIN_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5];
+var AFP_ZOOM_LEVELS = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 0.8, 0.9, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+function afpHostScale(dpr) {
+  if (!(dpr > 0)) return 1;
+  var i, j, best = 0, bestDev = Infinity;
+  for (i = 0; i < AFP_WIN_SCALES.length; i++) {
+    if (Math.abs(dpr - AFP_WIN_SCALES[i]) < 0.01) return AFP_WIN_SCALES[i];
+  }
+  for (i = 0; i < AFP_WIN_SCALES.length; i++) {
+    for (j = 0; j < AFP_ZOOM_LEVELS.length; j++) {
+      if (Math.abs(dpr - AFP_WIN_SCALES[i] * AFP_ZOOM_LEVELS[j]) < 0.01) {
+        var dev = Math.abs(Math.log(AFP_ZOOM_LEVELS[j]));
+        if (dev < bestDev) { bestDev = dev; best = AFP_WIN_SCALES[i]; }
+      }
+    }
+  }
+  return best || dpr;
+}
+function afpScreenFor(cw, ch, cdpr, nw, nh, ndpr) {
+  var d = (typeof cdpr === 'number' && cdpr > 0) ? cdpr : 1;
+  var out = { w: cw | 0, h: ch | 0, dpr: d, held: true };
+  if (typeof ndpr === 'number' && ndpr > 0) {
+    var s = afpHostScale(ndpr);
+    if (Math.abs(d - s) > 0.001) {
+      out.w = Math.round((cw | 0) * d / s);
+      out.h = Math.round((ch | 0) * d / s);
+    }
+    if (Math.abs(d - ndpr) > 0.001) out.dpr = ndpr;
+  }
+  if ((nw | 0) > 0 && (nh | 0) > 0 && !(out.w >= (nw | 0) && out.h >= (nh | 0))) {
+    out.w = nw | 0; out.h = nh | 0; out.held = false;
+  }
+  return out;
+}
+// </afp-screen-rule>

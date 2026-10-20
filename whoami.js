@@ -97,11 +97,18 @@
     setText('memory', p.deviceMemory != null ? p.deviceMemory : navigator.deviceMemory);
     setText('touchPoints', p.maxTouchPoints != null ? p.maxTouchPoints : navigator.maxTouchPoints);
 
-    const sw = p.screenWidth || screen.width;
-    const sh = p.screenHeight || screen.height;
+    // [FIX the-panel-is-the-claim-the-scale-is-the-hosts] "What sites see" — so the claim
+    // as the page answers it on this machine, by the same rule (afpScreenFor, defaults.js),
+    // not the row as stored. This page is an extension page and reads the real screen.
+    const scr = (typeof afpScreenFor === 'function' && p.screenWidth)
+      ? afpScreenFor(p.screenWidth, p.screenHeight, p.devicePixelRatio,
+        screen.width, screen.height, window.devicePixelRatio)
+      : null;
+    const sw = scr ? scr.w : (p.screenWidth || screen.width);
+    const sh = scr ? scr.h : (p.screenHeight || screen.height);
     setText('resolution', sw + ' × ' + sh);
     setText('colorDepth', (p.colorDepth != null ? p.colorDepth : screen.colorDepth) + '-bit');
-    setText('pixelRatio', p.devicePixelRatio != null ? p.devicePixelRatio : window.devicePixelRatio);
+    setText('pixelRatio', scr ? scr.dpr : (p.devicePixelRatio != null ? p.devicePixelRatio : window.devicePixelRatio));
 
     setText('gpuVendor', p.webglVendor || '—');
     setText('gpuRenderer', p.webglRenderer || '—');

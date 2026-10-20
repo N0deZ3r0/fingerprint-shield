@@ -163,5 +163,92 @@ RULES.forEach(([name, f], n) => {
   ok(!!why, `the rule "${name}" can still fail (it did not fire on a row built to break it)`);
 });
 
+// ── the screen a page is told: the claimed PANEL, at this machine's scaling ─────────
+//
+// [FIX the-panel-is-the-claim-the-scale-is-the-hosts] A row claims a panel — CSS size at
+// its own ratio — and a page is given the machine's ratio, so the only honest CSS size is
+// the panel divided by the machine's scaling. Up to 2.5.41 the size was kept as it stood,
+// and on any machine not at the row's ratio the pair (screen, devicePixelRatio) named a
+// panel nobody makes: the default row on a 1080p laptop at 125% said 1920x1080 at 1.25, a
+// 2400x1350 panel. The invariant below is the whole fix in one line — whatever a page is
+// told is EITHER this machine's own panel OR the row's panel, never a third one — checked
+// for every row on the machines people actually have.
+{
+  const defaultsSrc = readFileSync(join(root, 'defaults.js'), 'utf8');
+  const coreSrc = readFileSync(join(root, 'mw/mw-core.js'), 'utf8');
+  const between = (s) => {
+    const a = s.indexOf('// <afp-screen-rule>'), b = s.indexOf('// </afp-screen-rule>');
+    if (a < 0 || b < a) return null;
+    return s.slice(a, b).split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+  };
+  const d = between(defaultsSrc), c = between(coreSrc);
+  ok(d !== null && c !== null, 'defaults.js and mw/mw-core.js both carry the screen rule between its markers');
+  ok(d === c, 'mw-core.js answers pages with the same screen rule the popup, Who Am I and the audit ' +
+    'page read from defaults.js — line for line');
+
+  const { afpScreenFor, afpHostScale } =
+    new Function(defaultsSrc + '\n;return { afpScreenFor, afpHostScale };')();
+
+  // [CSS width, CSS height, Windows scaling, what it is]
+  const MACHINES = [
+    [1920, 1080, 1, '1080p at 100%'], [1536, 864, 1.25, '1080p at 125%'],
+    [1280, 720, 1.5, '1080p at 150%'], [1366, 768, 1, '768p at 100%'],
+    [2560, 1440, 1, '1440p at 100%'], [2048, 1152, 1.25, '1440p at 125%'],
+    [2560, 1440, 1.5, '4K at 150%'], [3840, 2160, 1, '4K at 100%'],
+    [2048, 1280, 1.5, '3K 16:10 at 150%'], [1280, 800, 2, '2560x1600 at 200%']
+  ];
+  const rows = PROFILES.filter((p) => !p.host);
+  const near = (a, b) => Math.abs(a[0] - b[0]) <= 2 && Math.abs(a[1] - b[1]) <= 2;
+  let third = 0;
+  for (const [mw, mh, md, what] of MACHINES) {
+    for (const p of rows) {
+      const r = afpScreenFor(p.screenW, p.screenH, p.dpr, mw, mh, md);
+      const panel = [r.w * md, r.h * md];
+      const own = [mw * md, mh * md], claimed = [p.screenW * p.dpr, p.screenH * p.dpr];
+      if (!near(panel, own) && !near(panel, claimed)) {
+        third++;
+        ok(false, `${p.id} on ${what}: the page would be told ${r.w}x${r.h} at ${r.dpr}, a ` +
+          `${Math.round(panel[0])}x${Math.round(panel[1])} panel — neither this machine's ` +
+          `${own[0]}x${own[1]} nor the row's ${claimed[0]}x${claimed[1]}`);
+      }
+      ok(r.w >= mw && r.h >= mh, `${p.id} on ${what}: never smaller than the machine (${r.w}x${r.h})`);
+      ok(r.dpr === (Math.abs(p.dpr - md) > 0.001 ? md : p.dpr),
+        `${p.id} on ${what}: the ratio is the machine's whenever the row's differs (${r.dpr})`);
+    }
+  }
+  ok(third === 0, `every row on every machine names a real panel (${third} that do not)`);
+
+  // The divisor is the scaling, not the ratio: browser zoom multiplies devicePixelRatio and,
+  // measured on a clean Chromium, leaves screen.width where it was. So zoom must not move
+  // the answer either.
+  ok(afpHostScale(1) === 1 && afpHostScale(1.0000000298023224) === 1 && afpHostScale(1.25) === 1.25,
+    'a standard Windows step is taken as itself');
+  for (const [ratio, zoom] of [[1.6500000953674316, 110], [1.875, 125], [1.2000000476837158, 80]]) {
+    ok(afpHostScale(ratio) === 1.5, `a 150% display zoomed to ${zoom}% (ratio ${ratio}) is still 150%`);
+    for (const p of rows) {
+      const at100 = afpScreenFor(p.screenW, p.screenH, p.dpr, 2048, 1280, 1.5);
+      const zoomed = afpScreenFor(p.screenW, p.screenH, p.dpr, 2048, 1280, ratio);
+      ok(at100.w === zoomed.w && at100.h === zoomed.h,
+        `${p.id}: zoom ${zoom}% does not move the screen (${at100.w}x${at100.h} vs ${zoomed.w}x${zoomed.h})`);
+    }
+  }
+
+  // The cases that were reported, by name.
+  const row = (id) => PROFILES.find((x) => x.id === id);
+  const on = (id, mw, mh, md) => { const p = row(id); return afpScreenFor(p.screenW, p.screenH, p.dpr, mw, mh, md); };
+  const pw = on('pc_power', 2048, 1280, 1.5);
+  ok(pw.w === 2560 && pw.h === 1440 && pw.held,
+    `PC Power on a 2048x1280 display at 150% is a 4K panel at 150% — 2560x1440, not 3840x2160 (${pw.w}x${pw.h})`);
+  const gm = on('pc_gaming', 2048, 1280, 1.5);
+  ok(gm.w === 2048 && gm.h === 1280 && !gm.held,
+    `PC Gaming there is 1707x960, smaller than the machine, so the machine's screen is reported (${gm.w}x${gm.h})`);
+  const md = on('laptop_mid', 1536, 864, 1.25);
+  ok(md.w === 1536 && md.h === 864,
+    `the default row on a 1080p laptop at 125% is that laptop's own 1536x864, not 1920x1080 at 1.25 (${md.w}x${md.h})`);
+  const l125 = on('laptop_125', 1920, 1080, 1);
+  ok(l125.w === 1920 && l125.h === 1080 && l125.dpr === 1,
+    `the 125% laptop row on a 1080p desktop at 100% is its panel at 100% — 1920x1080, not 1536x864 (${l125.w}x${l125.h})`);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

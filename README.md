@@ -5,7 +5,7 @@
 **One coherent invented machine — the same one in the window, in every frame and in every worker.**
 
 [![CI](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml/badge.svg)](https://github.com/N0deZ3r0/fingerprint-shield/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-2.5.41-3b5bdb)
+![version](https://img.shields.io/badge/version-2.5.42-3b5bdb)
 ![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4c6ef5)
 ![suites](https://img.shields.io/badge/suites-62-2f9e44)
 ![runtime dependencies](https://img.shields.io/badge/runtime_dependencies-0-2f9e44)
@@ -25,7 +25,7 @@ browser rather than against an assumption.
 
 <div align="center">
 
-<img src="docs/ui-whoami.png?v=2.5.41" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
+<img src="docs/ui-whoami.png?v=2.5.42" width="100%" alt="The Who Am I page: fingerprint hash, platform, language and timezone, then the invented hardware, screen, GPU, canvas and WebRTC state, and the list of active modules">
 
 <sub><b>Who Am I</b> — the machine as a site reads it. Every value on this page is the
 claim, not the host, and the fingerprint hash at the top is what a tracker would key on.</sub>
@@ -53,14 +53,14 @@ To run from source instead, point **Load unpacked** at a clone of this repositor
 <tr>
 <td width="38%" valign="top" align="center">
 
-<img src="docs/ui-popup.png?v=2.5.41" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
+<img src="docs/ui-popup.png?v=2.5.42" width="100%" alt="The extension popup: protection active, six of six modules, the exit country, per-site WebRTC, Service Worker and CSP switches, the normal or stealth mode selector and the device profile">
 
 <sub>The popup: country, per-site switches, device profile.</sub>
 
 </td>
 <td width="62%" valign="top" align="center">
 
-<img src="docs/ui-modules.png?v=2.5.41" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
+<img src="docs/ui-modules.png?v=2.5.42" width="100%" alt="The protection modules grid in the options page: Canvas, WebGL, WebRTC, Navigator, Screen, Timezone, Geolocation, Battery, Fonts, ClientRects, Plugins, Network and Hide AdBlock, each a checkbox with a one-line description">
 
 <sub>Thirteen modules, switched one by one. `ClientRects` ships off — it is
 the one that makes CreepJS go red.</sub>
@@ -155,6 +155,12 @@ from the audit page, so they are not renumbered.
    reported the host's screen in the top window while a same-origin frame reported the
    claim (measured on 2048×1280). It is now decided again whenever the profile arrives, the
    first time before the page's first script. Held by test/viewport.mjs.
+   Since 2.5.42 a row claims its PANEL rather than its CSS size. The ratio has yielded to the
+   host since 2.5.27 (item 8), and keeping the CSS size beside it named a panel nobody makes:
+   the default row on a 1080p laptop at 125% said 1920×1080 at 1.25, a 2400×1350 panel, and
+   PC Power at 150% a 5760×3240 one. The panel is now divided by this machine's display
+   scaling — not by devicePixelRatio, which browser zoom changes while screen.width stays —
+   and the rule above applies to the result. Held by test/profilecoherence.mjs.
 8. **`@media` and `matchMedia` disagree on several features.** `matchMedia` answers from the
    profile; the CSS engine answers from the real window, and the extension does not reach the
    CSS engine on the terms it ships under — item 5 prices the door that would.

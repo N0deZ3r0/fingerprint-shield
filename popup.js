@@ -205,23 +205,32 @@ function hostGpuLabel() {
  * against, so the two answers cannot drift apart.
  */
 function hostScreenPair() {
-  try { return { w: screen.width | 0, h: screen.height | 0 }; } catch (e) { return { w: 0, h: 0 }; }
+  try {
+    return { w: screen.width | 0, h: screen.height | 0, dpr: window.devicePixelRatio || 1 };
+  } catch (e) { return { w: 0, h: 0, dpr: 1 }; }
 }
-/** Does this row's claim contain the machine's screen? The same test mw-core applies. */
+/**
+ * Does this row's claim contain the machine's screen? Not a second copy of the rule but the
+ * rule itself — afpScreenFor from defaults.js, the function mw-core keeps a guarded copy of
+ * — because since [FIX the-panel-is-the-claim-the-scale-is-the-hosts] the answer depends on
+ * this machine's scaling as well as its size: a 1440p row holds on a 1080p monitor at 100%
+ * and does not at 150%, where its panel is 1707×960.
+ */
 function screenClaimHolds(p) {
   // The host row claims nothing, so there is nothing to drop.
   if (!p || p.host) return true;
   const s = hostScreenPair();
   if (!s.w || !s.h) return true;   // nothing measured — say nothing
-  return (p.screenW | 0) >= s.w && (p.screenH | 0) >= s.h;
+  return afpScreenFor(p.screenW, p.screenH, p.dpr, s.w, s.h, s.dpr).held;
 }
-/** Why the chip is there, with both numbers in it. */
+/** Why the chip is there, with both numbers in it — the row's size at THIS scaling. */
 function screenClaimTitle(p) {
   const s = hostScreenPair();
+  const r = afpScreenFor(p.screenW, p.screenH, p.dpr, 0, 0, s.dpr);
   return T('popupScreenDropped',
-    `Экран не подменяется: ${p.screenW}×${p.screenH} меньше вашего ${s.w}×${s.h}, ` +
+    `Экран не подменяется: при вашем масштабе эта строка — ${r.w}×${r.h}, меньше вашего ${s.w}×${s.h}, ` +
     'и страницы увидят ваш. Подменяется только строка не меньше вашего экрана по обеим сторонам.',
-  p.screenW, p.screenH, s.w, s.h) + ' ' +
+  r.w, r.h, s.w, s.h) + ' ' +
     T('popupScreenRest', 'Остальное — ядра, память, GPU — работает как обычно.');
 }
 

@@ -309,7 +309,12 @@
             // skeleton follows the same buildProfile() derivations.
             if (pd.glVendor) p.webglVendor = pd.glVendor;
             if (pd.glRenderer) p.webglRenderer = pd.glRenderer;
+            // [FIX the-panel-is-the-claim-the-scale-is-the-hosts] A size and its ratio
+            // travel together: mw-core turns the pair into a panel, so a size arriving
+            // without its ratio must not be read against the ratio the LAST size was given.
+            // 1 is buildProfile's answer for a record that predates explicit ratios.
             if (typeof pd.dpr === 'number' && pd.dpr > 0) p.devicePixelRatio = pd.dpr;
+            else if (pd.screenW) p.devicePixelRatio = 1;
             if (typeof pd.bluetooth === 'boolean') p.hasBluetooth = pd.bluetooth;
             // [FIX cold-start-gl-limits] Numeric GL limits and the WebGPU adapter info.
             // Until these travelled, UNMASKED_RENDERER named the spoofed card while every

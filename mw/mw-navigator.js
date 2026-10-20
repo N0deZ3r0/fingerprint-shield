@@ -85,6 +85,8 @@
     var _sdProp = (MW && MW.sdProp) ? MW.sdProp : function () { return false; };
     // [FIX host-mode] Read at effect time — see the note at its definition in mw-core.
     var _hostHwNow = (MW && MW.hostHwNow) ? MW.hostHwNow : function () { return false; };
+    // [FIX the-taskbar-was-a-percentage] — see mw-core.js.
+    var _availFor = (MW && MW.availHeightFor) ? MW.availHeightFor : function (h) { return Math.max(0, (h | 0) - 48); };
     // [FIX cpu-performance-tier-was-the-host-machine] one tier function for the window
     // and for every frame patched below. mw-core.js owns it.
     var _cpuTier = MW.cpuTier;
@@ -1161,8 +1163,7 @@
                             _defWinProp(scr, 'height', function () { return _pv('screenHeight', 1080); }, scrProto);
                             _defWinProp(scr, 'availWidth', function () { return _pv('screenWidth', 1920); }, scrProto);
                             _defWinProp(scr, 'availHeight', function () {
-                                var h = _pv('screenHeight', 1080);
-                                return Math.round(h * 0.963 / 8) * 8;
+                                return _availFor(_pv('screenHeight', 1080));
                             }, scrProto);
                             // 24 — see [FIX color-depth-was-a-value-chrome-never-reports].
                             _defWinProp(scr, 'colorDepth', function () { return _pv('colorDepth', 24); }, scrProto);

@@ -197,27 +197,34 @@ try {
   // be green on a build that never renders a chip at all. The machine is therefore stubbed
   // to a known 1920×1080 for the real assertion, and the rig's own screen is read first
   // only as a consistency check.
-  const chipsFor = (mw, mh, select) => popup.evaluate(({ mw, mh, select }) => {
+  // [FIX the-panel-is-the-claim-the-scale-is-the-hosts] The machine is stubbed with its
+  // RATIO as well as its size: whether a row holds now depends on the scaling, because a
+  // row claims a panel and the page divides it by this machine's.
+  const chipsFor = (mw, mh, mdpr, select) => popup.evaluate(({ mw, mh, mdpr, select }) => {
     const S = Object.getPrototypeOf(screen);
     const dw = Object.getOwnPropertyDescriptor(S, 'width');
     const dh = Object.getOwnPropertyDescriptor(S, 'height');
+    const dd = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
     const wasSelected = selectedProfileId;
     try {
       if (mw) {
         Object.defineProperty(S, 'width', { configurable: true, get: () => mw });
         Object.defineProperty(S, 'height', { configurable: true, get: () => mh });
       }
+      if (mdpr) Object.defineProperty(window, 'devicePixelRatio', { configurable: true, get: () => mdpr });
       if (select) selectedProfileId = select;
       renderProfiles();
-      const s = { w: screen.width | 0, h: screen.height | 0 };
+      const s = { w: screen.width | 0, h: screen.height | 0, dpr: window.devicePixelRatio || 1 };
       const rows = [...document.querySelectorAll('#profileList .option')].map((el) => {
         const p = (typeof PROFILES !== 'undefined' ? PROFILES : []).find((x) => x.id === el.dataset.id) || {};
         const tag = el.querySelector('.tag');
+        // The rule, recomputed rather than called: the row's panel at this machine's ratio,
+        // then both dimensions or neither, as mw-core has it.
+        const cw = Math.round(p.screenW * (p.dpr || 1) / s.dpr), ch = Math.round(p.screenH * (p.dpr || 1) / s.dpr);
         return {
           id: el.dataset.id,
-          claim: p.host ? 'host' : `${p.screenW}×${p.screenH}`,
-          // The rule, recomputed: both dimensions or neither, as mw-core has it.
-          holds: p.host ? true : ((p.screenW | 0) >= s.w && (p.screenH | 0) >= s.h),
+          claim: p.host ? 'host' : `${p.screenW}×${p.screenH}@${p.dpr}`,
+          holds: p.host ? true : (cw >= s.w && ch >= s.h),
           chip: tag ? tag.textContent : '',
           titled: !!(tag && tag.title)
         };
@@ -229,16 +236,17 @@ try {
       };
     } finally {
       if (mw) { Object.defineProperty(S, 'width', dw); Object.defineProperty(S, 'height', dh); }
+      if (mdpr) { if (dd) Object.defineProperty(window, 'devicePixelRatio', dd); else delete window.devicePixelRatio; }
       selectedProfileId = wasSelected;
       renderProfiles();
     }
-  }, { mw, mh, select });
+  }, { mw, mh, mdpr, select });
 
-  const chips = await chipsFor(0, 0, '');
+  const chips = await chipsFor(0, 0, 0, '');
   const show = (c, label) => {
-    console.log(`screen chips          ${label}: machine ${c.s.w}×${c.s.h}`);
+    console.log(`screen chips          ${label}: machine ${c.s.w}×${c.s.h} @${c.s.dpr}`);
     for (const r of c.rows) {
-      console.log(`  ${r.id.padEnd(11)} claims ${r.claim.padEnd(10)} ${r.holds ? 'holds' : 'DROPPED'}` +
+      console.log(`  ${r.id.padEnd(11)} claims ${r.claim.padEnd(15)} ${r.holds ? 'holds' : 'DROPPED'}` +
         (r.chip ? `  chip "${r.chip}"` : ''));
     }
   };
@@ -259,25 +267,39 @@ try {
   ok(chips.rows.length > 0, `the picker rendered its rows (${chips.rows.length})`);
   agrees(chips);
 
-  // The real case: a 1920×1080 machine, which is the single largest bucket there is, and
-  // laptop_low / laptop_125 / laptop_150 sitting under it. The selected row is one of them,
-  // so the button chip is exercised in its VISIBLE state — on the rig's own screen it never
-  // is.
-  const small = await chipsFor(1920, 1080, 'laptop_low');
-  show(small, 'stubbed 1920×1080');
+  // The real case: a 1920×1080 machine at 100%, which is the single largest bucket there is.
+  // The selected row is one that drops, so the button chip is exercised in its VISIBLE state
+  // — on the rig's own screen it never is.
+  //
+  // [FIX the-panel-is-the-claim-the-scale-is-the-hosts] Until 2.5.41 laptop_125 and
+  // laptop_150 were marked here too: their CSS sizes (1536×864, 1280×720) are smaller than
+  // 1920×1080. But they claim a 1080p PANEL, and at 100% that is 1920×1080, which holds. Only
+  // the 768p row is smaller than this machine at every scaling.
+  const small = await chipsFor(1920, 1080, 1, 'laptop_low');
+  show(small, 'stubbed 1920×1080 at 100%');
   agrees(small);
-  const DROPPED = ['laptop_low', 'laptop_125', 'laptop_150'];
-  const HOLDS = ['laptop_mid', 'pc_gaming', 'pc_power'];
-  for (const id of DROPPED) {
-    const r = small.rows.find((x) => x.id === id);
-    ok(r && r.chip === M('popupTagHostScreen'),
-      `on a 1920×1080 machine ${id} (${r && r.claim}) is marked — its screen is never substituted`);
-  }
-  for (const id of HOLDS) {
-    const r = small.rows.find((x) => x.id === id);
-    ok(r && r.chip === '',
-      `and ${id} (${r && r.claim}) is not marked — it contains the machine`);
-  }
+  const marked = (c, label, dropped) => {
+    for (const r of c.rows) {
+      if (r.id === 'host') continue;
+      const want = dropped.includes(r.id);
+      ok((r.chip === M('popupTagHostScreen')) === want,
+        `on ${label} ${r.id} (${r.claim}) ${want ? 'is marked — its screen is not substituted' : 'is not marked — it contains the machine'}`);
+    }
+  };
+  marked(small, 'a 1920×1080 machine at 100%', ['laptop_low']);
+  // The commonest laptop: the same panel at 125%. Every 1080p-or-larger row holds, at the
+  // laptop's own 1536×864 or more.
+  const laptop = await chipsFor(1536, 864, 1.25, 'laptop_mid');
+  show(laptop, 'stubbed 1536×864 at 125%');
+  agrees(laptop);
+  marked(laptop, 'a 1080p laptop at 125%', ['laptop_low']);
+  // The machine this was found on: 2048×1280 at 150%. Only a 4K panel is bigger than it there
+  // — PC Gaming's 1440p is 1707×960 at 150%.
+  const here = await chipsFor(2048, 1280, 1.5, 'pc_power');
+  show(here, 'stubbed 2048×1280 at 150%');
+  agrees(here);
+  marked(here, 'a 2048×1280 display at 150%',
+    ['laptop_low', 'laptop_mid', 'laptop_125', 'laptop_150', 'laptop_1610', 'pc_gaming']);
   ok(small.btnHidden === false, 'the selected row repeats the chip in the button');
   ok(small.btnTitled, 'and the button chip carries the explanation on its title');
   ok(small.height === resting,

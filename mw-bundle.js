@@ -312,7 +312,12 @@
 
             if (pd.glVendor) p.webglVendor = pd.glVendor;
             if (pd.glRenderer) p.webglRenderer = pd.glRenderer;
+
+
+
+
             if (typeof pd.dpr === 'number' && pd.dpr > 0) p.devicePixelRatio = pd.dpr;
+            else if (pd.screenW) p.devicePixelRatio = 1;
             if (typeof pd.bluetooth === 'boolean') p.hasBluetooth = pd.bluetooth;
 
 
@@ -841,20 +846,67 @@
     var _NATIVE_DPR = 0;
     try { _NATIVE_DPR = Number(window.devicePixelRatio) || 0; } catch (eND) {}
 
+
+
+
+
+
+
+    var AFP_WIN_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5];
+    var AFP_ZOOM_LEVELS = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 0.8, 0.9, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+    function afpHostScale(dpr) {
+        if (!(dpr > 0)) return 1;
+        var i, j, best = 0, bestDev = Infinity;
+        for (i = 0; i < AFP_WIN_SCALES.length; i++) {
+            if (Math.abs(dpr - AFP_WIN_SCALES[i]) < 0.01) return AFP_WIN_SCALES[i];
+        }
+        for (i = 0; i < AFP_WIN_SCALES.length; i++) {
+            for (j = 0; j < AFP_ZOOM_LEVELS.length; j++) {
+                if (Math.abs(dpr - AFP_WIN_SCALES[i] * AFP_ZOOM_LEVELS[j]) < 0.01) {
+                    var dev = Math.abs(Math.log(AFP_ZOOM_LEVELS[j]));
+                    if (dev < bestDev) { bestDev = dev; best = AFP_WIN_SCALES[i]; }
+                }
+            }
+        }
+        return best || dpr;
+    }
+    function afpScreenFor(cw, ch, cdpr, nw, nh, ndpr) {
+        var d = (typeof cdpr === 'number' && cdpr > 0) ? cdpr : 1;
+        var out = { w: cw | 0, h: ch | 0, dpr: d, held: true };
+        if (typeof ndpr === 'number' && ndpr > 0) {
+            var s = afpHostScale(ndpr);
+            if (Math.abs(d - s) > 0.001) {
+                out.w = Math.round((cw | 0) * d / s);
+                out.h = Math.round((ch | 0) * d / s);
+            }
+            if (Math.abs(d - ndpr) > 0.001) out.dpr = ndpr;
+        }
+        if ((nw | 0) > 0 && (nh | 0) > 0 && !(out.w >= (nw | 0) && out.h >= (nh | 0))) {
+            out.w = nw | 0; out.h = nh | 0; out.held = false;
+        }
+        return out;
+    }
+
     function _screenAtLeastNative(p) {
         if (!p || typeof p !== 'object') return p;
         try {
 
 
-            if (_NATIVE_DPR > 0 && typeof p.devicePixelRatio === 'number' &&
-                Math.abs(p.devicePixelRatio - _NATIVE_DPR) > 0.001) {
-                p.devicePixelRatio = _NATIVE_DPR;
-            }
-            if (_NATIVE_SW <= 0 || _NATIVE_SH <= 0) return p;
-            var w = p.screenWidth | 0, h = p.screenHeight | 0;
-            if (w >= _NATIVE_SW && h >= _NATIVE_SH) return p;   // the claim contains the machine
-            p.screenWidth = _NATIVE_SW;
-            p.screenHeight = _NATIVE_SH;
+
+
+
+
+            var last = p.__scr;
+            if (last && last.w === p.screenWidth && last.h === p.screenHeight &&
+                last.d === p.devicePixelRatio) return p;
+            var r = afpScreenFor(p.screenWidth, p.screenHeight, p.devicePixelRatio,
+                _NATIVE_SW, _NATIVE_SH, _NATIVE_DPR);
+            p.screenWidth = r.w;
+            p.screenHeight = r.h;
+            p.devicePixelRatio = r.dpr;
+            Object.defineProperty(p, '__scr', {
+                value: { w: r.w, h: r.h, d: r.dpr }, configurable: true, writable: true, enumerable: false
+            });
         } catch (eSc) {}
         return p;
     }
@@ -2399,6 +2451,31 @@
     function _hostHwNow() {
         try { var p = _prof(); return !!(p && p.hostHw === true); } catch (e) { return false; }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    function _availHeightFor(h) {
+        var pv = '';
+        try {
+            var p = _prof();
+            pv = String((p && p.clientHints && p.clientHints.platformVersion) || '');
+        } catch (e) {}
+        var taskbar = (parseInt(pv, 10) >= 13) ? 48 : 40;
+        return Math.max(0, (h | 0) - taskbar);
+    }
     var _HW_PROPS = {
         hardwareConcurrency: 1, deviceMemory: 1, cpuPerformance: 1, maxTouchPoints: 1, bluetooth: 1,
         width: 1, height: 1, availWidth: 1, availHeight: 1, availLeft: 1, availTop: 1, isExtended: 1,
@@ -2830,6 +2907,9 @@
 
                 hostHwNow: _hostHwNow,
 
+
+                availHeightFor: _availHeightFor,
+
                 metaCspBlocksBlob: _metaCspBlocksBlobWorkers
 
 
@@ -2854,6 +2934,9 @@
                 def: _def, defIfDiff: _defIfDiff, sameVal: _sameVal, cpuTier: _cpuTier,
                 featKnown: _FEAT_KNOWN, featNow: _featNow, standDownNow: _standDownNow, hostResolved: _hostResolved, sdProp: _sdProp,
                 hostHwNow: _hostHwNow,
+
+
+                availHeightFor: _availHeightFor,
 
                 metaCspBlocksBlob: _metaCspBlocksBlobWorkers
 
@@ -2899,6 +2982,8 @@
 
 
     var _hostHwNow = (MW && MW.hostHwNow) ? MW.hostHwNow : function () { return false; };
+
+    var _availFor = (MW && MW.availHeightFor) ? MW.availHeightFor : function (h) { return Math.max(0, (h | 0) - 48); };
     var _hostResolved = (MW && MW.hostResolved) ? MW.hostResolved : function () { return {}; };
 
 
@@ -4547,15 +4632,15 @@
             _defIfDiff(screen, 'height', function() { return ID.screenHeight; });
             try {
                 var _aw = screen.availWidth, _ah = screen.availHeight;
-                var _tw = ID.screenWidth, _th = Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+                var _tw = ID.screenWidth, _th = _availFor(ID.screenHeight || 1080);
 
                 if (!_sameVal(_aw, _tw)) _defIfDiff(screen, 'availWidth', function() { return ID.screenWidth; });
                 if (!_sameVal(_ah, _th)) _defIfDiff(screen, 'availHeight', function() {
-                    return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8;
+                    return _availFor(ID.screenHeight || 1080);
                 });
             } catch (eAv) {
                 _defIfDiff(screen, 'availWidth',  function() { return ID.screenWidth; });
-                _defIfDiff(screen, 'availHeight', function() { return Math.round((ID.screenHeight || 1080) * 0.963 / 8) * 8; });
+                _defIfDiff(screen, 'availHeight', function() { return _availFor(ID.screenHeight || 1080); });
             }
         };
         _claimScreen();
@@ -4911,7 +4996,8 @@
                 return _inHv(_isSelfWin(this) ? _giH() : _rawFor(_giH, this));
             }, true), configurable: true });
 
-            function _availH() { return Math.round((sh() * 0.963) / 8) * 8; }
+
+            function _availH() { return _availFor(sh()); }
 
 
 
@@ -5239,6 +5325,8 @@
     var _sdProp = (MW && MW.sdProp) ? MW.sdProp : function () { return false; };
 
     var _hostHwNow = (MW && MW.hostHwNow) ? MW.hostHwNow : function () { return false; };
+
+    var _availFor = (MW && MW.availHeightFor) ? MW.availHeightFor : function (h) { return Math.max(0, (h | 0) - 48); };
 
 
     var _cpuTier = MW.cpuTier;
@@ -6315,8 +6403,7 @@
                             _defWinProp(scr, 'height', function () { return _pv('screenHeight', 1080); }, scrProto);
                             _defWinProp(scr, 'availWidth', function () { return _pv('screenWidth', 1920); }, scrProto);
                             _defWinProp(scr, 'availHeight', function () {
-                                var h = _pv('screenHeight', 1080);
-                                return Math.round(h * 0.963 / 8) * 8;
+                                return _availFor(_pv('screenHeight', 1080));
                             }, scrProto);
 
                             _defWinProp(scr, 'colorDepth', function () { return _pv('colorDepth', 24); }, scrProto);
